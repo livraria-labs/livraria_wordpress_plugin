@@ -254,6 +254,50 @@ class Livraria_API_Client {
         return $this->api_request('GET', '/expedition');
     }
     
+    /**
+     * Get current user information
+     * 
+     * @return array|false API response or false on failure
+     */
+    public function get_user_info() {
+        return $this->api_request('GET', '/users/me');
+    }
+    
+    /**
+     * Get sender profile information
+     * 
+     * @return array|false API response or false on failure
+     */
+    public function get_sender_profile() {
+        return $this->api_request('GET', '/users/me/sender-profile');
+    }
+    
+    
+    /**
+     * Convert localhost/127.0.0.1 to host.docker.internal for Docker
+     * 
+     * @param string $url Original URL
+     * @return string Converted URL
+     */
+    private function convert_localhost_for_docker($url) {
+        // Check if we're likely in Docker
+        $is_docker = (
+            file_exists('/.dockerenv') || 
+            getenv('DOCKER_CONTAINER') !== false ||
+            (function_exists('gethostname') && strpos(gethostname(), 'docker') !== false)
+        );
+        
+        if ($is_docker) {
+            // Replace localhost/127.0.0.1 with host.docker.internal
+            $url = preg_replace(
+                '/^(https?:\/\/)(127\.0\.0\.1|localhost)(:(\d+))?/i',
+                '$1host.docker.internal$3',
+                $url
+            );
+        }
+        
+        return $url;
+    }
     
     /**
      * Make a raw API request (without authentication)
@@ -271,6 +315,7 @@ class Livraria_API_Client {
         }
         
         $url = rtrim($this->api_base_url, '/') . $endpoint;
+        $url = $this->convert_localhost_for_docker($url);
         
         // Debug: Log the full URL being called
         $this->log_debug('Making request to URL: ' . $url);
@@ -350,6 +395,7 @@ class Livraria_API_Client {
         }
         
         $url = rtrim($this->api_base_url, '/') . $endpoint;
+        $url = $this->convert_localhost_for_docker($url);
         
         $args = array(
             'method' => $method,
@@ -491,8 +537,16 @@ class Livraria_API_Client {
             );
         }
         
+        // Convert localhost/127.0.0.1 to host.docker.internal for Docker environments
+        $original_url = $this->api_base_url;
+        $test_url = $this->convert_localhost_for_docker($original_url);
+        
+        if ($test_url !== $original_url) {
+            $this->log_debug('Docker detected: Converted ' . $original_url . ' to ' . $test_url);
+        }
+        
         // Try a simple GET request to the base URL or a health check endpoint
-        $test_url = rtrim($this->api_base_url, '/') . '/';
+        $test_url = rtrim($test_url, '/') . '/';
         
         $args = array(
             'method' => 'GET',
@@ -509,11 +563,19 @@ class Livraria_API_Client {
             $error = $response->get_error_message();
             $this->log_debug('Connectivity test failed: ' . $error);
             
+            $error_message = 'Network error: ' . $error;
+            
+            // Provide helpful Docker-specific guidance
+            if ($test_url !== $original_url && (strpos($original_url, 'localhost') !== false || strpos($original_url, '127.0.0.1') !== false)) {
+                $error_message .= '. Tip: In Docker, use "host.docker.internal" instead of "localhost". The URL was automatically converted to: ' . $test_url;
+            }
+            
             return array(
                 'success' => false,
-                'message' => 'Network error: ' . $error,
+                'message' => $error_message,
                 'details' => array(
                     'url' => $test_url,
+                    'original_url' => $original_url,
                     'error_code' => $response->get_error_code(),
                     'error_message' => $error
                 )
@@ -528,6 +590,7 @@ class Livraria_API_Client {
             'message' => 'Server is reachable (HTTP ' . $response_code . ')',
             'details' => array(
                 'url' => $test_url,
+                'original_url' => $original_url,
                 'response_code' => $response_code,
                 'headers' => wp_remote_retrieve_headers($response)
             )
