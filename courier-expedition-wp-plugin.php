@@ -26,6 +26,41 @@ class LivrariaPlugin {
     private $order_handler;
     private $admin_page;
     
+    /**
+     * Check if plugin is running in development mode
+     * 
+     * @return bool True if in development mode, false if in production
+     */
+    public static function is_development_mode() {
+        // Check for explicit development mode constant
+        if (defined('LIVRARIA_DEV_MODE')) {
+            return LIVRARIA_DEV_MODE === true;
+        }
+        
+        // Check if WP_DEBUG is enabled (common in development)
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            return true;
+        }
+        
+        // Check if plugin is running from source (has dev-scripts directory)
+        $plugin_dir = plugin_dir_path(__FILE__);
+        if (file_exists($plugin_dir . 'dev-scripts')) {
+            return true;
+        }
+        
+        // Check if we're in a development environment (common patterns)
+        $home_url = get_home_url();
+        if (strpos($home_url, 'localhost') !== false || 
+            strpos($home_url, '127.0.0.1') !== false ||
+            strpos($home_url, '.local') !== false ||
+            strpos($home_url, '.dev') !== false ||
+            strpos($home_url, 'staging') !== false) {
+            return true;
+        }
+        
+        return false;
+    }
+    
     public function __construct() {
         add_action('init', array($this, 'init'));
         add_action('admin_menu', array($this, 'add_admin_menu'));
@@ -53,6 +88,9 @@ class LivrariaPlugin {
         add_action('wp_ajax_auto_create_expedition_ajax', array($this, 'ajax_auto_create_expedition'));
         add_action('wp_ajax_test_courier_api_connection', array($this, 'ajax_test_api_connection'));
         add_action('wp_ajax_test_connectivity', array($this, 'ajax_test_connectivity'));
+        add_action('wp_ajax_livraria_logout', array($this, 'ajax_logout'));
+        add_action('wp_ajax_livraria_login', array($this, 'ajax_login'));
+        add_action('wp_ajax_update_option', array($this, 'ajax_update_option'));
         
         $this->api_base_url = get_option('courier_api_base_url', '');
         
@@ -117,6 +155,14 @@ class LivrariaPlugin {
         register_setting('courier_api_settings', 'courier_sender_staircase');
         register_setting('courier_api_settings', 'courier_sender_floor');
         register_setting('courier_api_settings', 'courier_sender_apartment');
+        
+        // In production, automatically set API Base URL to production endpoint
+        if (!self::is_development_mode()) {
+            $current_url = get_option('courier_api_base_url', '');
+            if ($current_url !== 'https://api.livraria.ro/') {
+                update_option('courier_api_base_url', 'https://api.livraria.ro/');
+            }
+        }
     }
     
     
@@ -1222,6 +1268,86 @@ class LivrariaPlugin {
         }
     }
     
+    /**
+     * AJAX handler for logout
+     */
+    public function ajax_logout() {
+        if (!wp_verify_nonce($_POST['nonce'], 'livraria_admin_nonce')) {
+            wp_send_json_error('Security check failed');
+        }
+        
+        // Clear tokens (simplest logout logic)
+        delete_option('livraria_api_token');
+        delete_option('livraria_token_expires_at');
+        
+        wp_send_json_success(array('message' => 'Logged out successfully'));
+    }
+    
+    /**
+     * AJAX handler for login
+     */
+    public function ajax_login() {
+        if (!wp_verify_nonce($_POST['nonce'], 'livraria_admin_nonce')) {
+            wp_send_json_error('Security check failed');
+        }
+        
+        $api_url = sanitize_url($_POST['api_url']);
+        $username = sanitize_text_field($_POST['username']);
+        $password = sanitize_text_field($_POST['password']);
+        
+        if (empty($api_url) || empty($username) || empty($password)) {
+            wp_send_json_error('API URL, username, and password are required');
+        }
+        
+        // Update API URL first
+        update_option('courier_api_base_url', $api_url);
+        
+        // Create API client and attempt login
+        $api_client = new Livraria_API_Client($api_url);
+        $result = $api_client->login($username, $password);
+        
+        if ($result['success']) {
+            // Also save credentials for future use
+            update_option('courier_api_username', $username);
+            update_option('courier_api_password', $password);
+            
+            wp_send_json_success(array('message' => 'Login successful'));
+        } else {
+            wp_send_json_error($result['message']);
+        }
+    }
+    
+    /**
+     * AJAX handler for updating a single option
+     */
+    public function ajax_update_option() {
+        if (!wp_verify_nonce($_POST['nonce'], 'livraria_admin_nonce')) {
+            wp_send_json_error('Security check failed');
+        }
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+        }
+        
+        $option_name = sanitize_text_field($_POST['option_name']);
+        $option_value = sanitize_text_field($_POST['option_value']);
+        
+        // Validate that this is an allowed option
+        $allowed_options = array('courier_auto_create');
+        if (!in_array($option_name, $allowed_options)) {
+            wp_send_json_error('Option not allowed');
+        }
+        
+        // Update the option (same as what happens when clicking "Save changes")
+        $result = update_option($option_name, $option_value);
+        
+        if ($result !== false) {
+            wp_send_json_success(array('message' => 'Option updated successfully'));
+        } else {
+            wp_send_json_error('Failed to update option');
+        }
+    }
+    
     public function save_expedition_meta($post_id) {
         // Check if this is an order post type
         if (get_post_type($post_id) !== 'shop_order') {
@@ -1480,5 +1606,4 @@ class LivrariaPlugin {
 }
 
 // Initialize the plugin
-new LivrariaPlugin();
 new LivrariaPlugin();

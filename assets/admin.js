@@ -6,12 +6,16 @@ jQuery(document).ready(function($) {
         
         var btn = $(this);
         var originalText = btn.text();
-        var resultDiv = $('#api-test-result');
+        var resultDiv = $('#api-test-result-connectivity');
         
-        // Get current form values
+        // Get API URL from form input or from debug modal data attribute
         var apiUrl = $('input[name="courier_api_base_url"]').val();
-        
         if (!apiUrl) {
+            // Try reading from debug modal data attribute
+            apiUrl = $('#livraria-debug-modal').find('td[data-api-url]').attr('data-api-url');
+        }
+        
+        if (!apiUrl || apiUrl === 'Not set') {
             resultDiv.html('<div class="notice notice-error"><p>Please enter API URL before testing connectivity.</p></div>');
             return;
         }
@@ -54,14 +58,31 @@ jQuery(document).ready(function($) {
         
         var btn = $(this);
         var originalText = btn.text();
-        var resultDiv = $('#api-test-result');
+        var resultDiv = $('#api-test-result-auth');
         
-        // Get current form values
+        // Get values from form inputs or from debug modal data attributes
         var apiUrl = $('input[name="courier_api_base_url"]').val();
         var username = $('input[name="courier_api_username"]').val();
         var password = $('input[name="courier_api_password"]').val();
         
-        if (!apiUrl || !username || !password) {
+        // If not found in form inputs, try reading from debug modal
+        if (!apiUrl) {
+            apiUrl = $('#livraria-debug-modal').find('td[data-api-url]').attr('data-api-url');
+        }
+        if (!username) {
+            username = $('#livraria-debug-modal').find('td[data-api-username]').attr('data-api-username');
+        }
+        if (!password) {
+            var passwordElement = $('#livraria-debug-modal').find('span[data-api-password]');
+            if (passwordElement.length) {
+                password = passwordElement.attr('data-api-password');
+            }
+        }
+        
+        // Validate values (check for empty strings, null, undefined, or 'Not set')
+        if (!apiUrl || apiUrl === '' || apiUrl === 'Not set' || 
+            !username || username === '' || username === 'Not set' || 
+            !password || password === '' || password === 'Not set') {
             resultDiv.html('<div class="notice notice-error"><p>Please enter API URL, Username, and Password before testing.</p></div>');
             return;
         }
