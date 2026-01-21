@@ -36,7 +36,9 @@ class LivrariaPlugin {
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), array($this, 'add_plugin_action_links'));
         
         // WooCommerce integration
-        add_action('woocommerce_order_status_completed', array($this, 'auto_create_expedition'));
+        // Hook into order status change - but use a flag to prevent immediate execution
+        // JavaScript will handle the actual auto-create to prevent page refresh
+        add_action('woocommerce_order_status_changed', array($this, 'handle_order_status_change'), 10, 3);
         add_action('add_meta_boxes', array($this, 'add_expedition_meta_box'));
         add_action('add_meta_boxes_shop_order', array($this, 'add_expedition_meta_box'));
         add_action('add_meta_boxes_woocommerce_page_wc-orders', array($this, 'add_expedition_meta_box'));
@@ -45,6 +47,10 @@ class LivrariaPlugin {
         // AJAX handlers
         add_action('wp_ajax_create_expedition', array($this, 'ajax_create_expedition'));
         add_action('wp_ajax_get_courier_quotes', array($this, 'ajax_get_courier_quotes'));
+        add_action('wp_ajax_get_quotes_for_order', array($this, 'ajax_get_quotes_for_order'));
+        add_action('wp_ajax_select_quote', array($this, 'ajax_select_quote'));
+        add_action('wp_ajax_generate_label', array($this, 'ajax_generate_label'));
+        add_action('wp_ajax_auto_create_expedition_ajax', array($this, 'ajax_auto_create_expedition'));
         add_action('wp_ajax_test_courier_api_connection', array($this, 'ajax_test_api_connection'));
         add_action('wp_ajax_test_connectivity', array($this, 'ajax_test_connectivity'));
         
@@ -155,15 +161,87 @@ class LivrariaPlugin {
         }
     }
     
-    public function expedition_meta_box_callback($post) {
-        // Debug log to confirm metabox is being called
-        error_log('Livraria Debug: Metabox callback called for post ID: ' . ($post->ID ?? 'unknown'));
+    public function expedition_meta_box_callback($post_or_order) {
+        // Handle both post-based orders and HPOS (order object)
+        $order_id = null;
+        $order = null;
+        
+        // Check if it's an order object (HPOS)
+        if (is_a($post_or_order, 'WC_Order')) {
+            $order = $post_or_order;
+            $order_id = $order->get_id();
+        } 
+        // Check if it's a post object with ID
+        elseif (isset($post_or_order->ID)) {
+            $order_id = $post_or_order->ID;
+            $order = wc_get_order($order_id);
+        }
+        // Fallback: try to get order ID from GET parameter (HPOS)
+        elseif (isset($_GET['id'])) {
+            $order_id = intval($_GET['id']);
+            $order = wc_get_order($order_id);
+        }
+        // Another fallback: try post parameter
+        elseif (isset($_GET['post'])) {
+            $order_id = intval($_GET['post']);
+            $order = wc_get_order($order_id);
+        }
+        
+        // Debug log
+        error_log('Livraria Debug: Metabox callback - Order ID: ' . ($order_id ?? 'unknown') . ', Order object: ' . ($order ? 'yes' : 'no'));
+        
+        if (!$order_id || !$order) {
+            echo '<p>Error: Could not load order information.</p>';
+            return;
+        }
         
         wp_nonce_field('courier_expedition_nonce', 'courier_expedition_nonce_field');
         
-        $expedition_id = get_post_meta($post->ID, '_courier_expedition_id', true);
-        $awb_number = get_post_meta($post->ID, '_courier_awb_number', true);
-        $tracking_url = get_post_meta($post->ID, '_courier_tracking_url', true);
+        $expedition_id = get_post_meta($order_id, '_courier_expedition_id', true);
+        $awb_number = get_post_meta($order_id, '_courier_awb_number', true);
+        $tracking_url = get_post_meta($order_id, '_courier_tracking_url', true);
+        
+        // Get order and check if payment method is COD
+        $cod_amount_default = '0';
+        $is_cod = false;
+        
+        if ($order) {
+            if ($order) {
+                // Get payment method ID (most reliable way to check)
+                $payment_method = $order->get_payment_method();
+                $payment_method_title = $order->get_payment_method_title();
+                
+                // Also check order meta directly as fallback
+                $payment_method_meta = get_post_meta($order_id, '_payment_method', true);
+                
+                // Debug: Log payment method info
+                error_log('Livraria Debug: Payment method ID: ' . $payment_method . ', Title: ' . $payment_method_title . ', Meta: ' . $payment_method_meta);
+                
+                // Primary check: payment method ID (WooCommerce COD gateway ID is 'cod')
+                if ($payment_method === 'cod' || $payment_method_meta === 'cod') {
+                    $is_cod = true;
+                } else {
+                    // Fallback: check payment method title for COD indicators (case-insensitive)
+                    $payment_method_title_lower = strtolower($payment_method_title);
+                    $cod_indicators = array('cash on delivery', 'payment on delivery', 'pay on delivery', 'cod');
+                    
+                    foreach ($cod_indicators as $indicator) {
+                        if (strpos($payment_method_title_lower, strtolower($indicator)) !== false) {
+                            $is_cod = true;
+                            break;
+                        }
+                    }
+                }
+                
+                // Set COD amount to order total if payment method is COD
+                if ($is_cod) {
+                    $cod_amount_default = $order->get_total();
+                    error_log('Livraria Debug: COD detected, setting amount to: ' . $cod_amount_default);
+                } else {
+                    error_log('Livraria Debug: Not COD payment method');
+                }
+            }
+        }
         
         ?>
         <div id="courier-expedition-meta">
@@ -204,8 +282,21 @@ class LivrariaPlugin {
                 <!-- Service Options -->
                 <div class="expedition-section">
                     <h4>Service Options</h4>
+                    <?php if ($order && $is_cod): ?>
+                        <p style="margin-bottom: 10px;">
+                            <span style="background: #00a32a; color: white; padding: 4px 8px; border-radius: 3px; font-size: 12px; font-weight: 600;">
+                                ✓ Cash on Delivery
+                            </span>
+                        </p>
+                    <?php else: ?>
+                        <p style="margin-bottom: 10px;">
+                            <span style="background: #646970; color: white; padding: 4px 8px; border-radius: 3px; font-size: 12px; font-weight: 600;">
+                                No COD
+                            </span>
+                        </p>
+                    <?php endif; ?>
                     <p>
-                        <label>COD Amount: <input type="number" name="cod_amount" step="0.01" min="0" value="<?php echo esc_attr($post->post_type === 'shop_order' ? wc_get_order($post->ID)->get_total() : '0'); ?>" style="width:80px;"> RON</label>
+                        <label>COD Amount: <input type="number" name="cod_amount" step="0.01" min="0" value="<?php echo esc_attr($cod_amount_default); ?>" style="width:80px;"> RON</label>
                     </p>
                     <p>
                         <label>Insurance Amount: <input type="number" name="insurance_amount" step="0.01" min="0" value="0" style="width:80px;"> RON</label>
@@ -219,9 +310,22 @@ class LivrariaPlugin {
                 </div>
 
                 <div class="expedition-section">
-                    <button type="button" id="create-expedition-btn" class="button button-primary">Create Expedition</button>
-                    <div id="expedition-loading" style="display:none;">Creating expedition...</div>
+                    <button type="button" id="create-expedition-btn" class="button button-primary">Get Quotes</button>
+                    <div id="expedition-loading" style="display:none;">Loading quotes...</div>
                     <div id="expedition-result"></div>
+                </div>
+                
+                <!-- Quotes Display Section -->
+                <div id="quotes-section" class="expedition-section" style="display:none;">
+                    <h4>Available Shipping Options</h4>
+                    <div id="quotes-container"></div>
+                </div>
+                
+                <!-- Generate Label Section -->
+                <div id="generate-label-section" class="expedition-section" style="display:none;">
+                    <button type="button" id="generate-label-btn" class="button button-primary">Generate Label</button>
+                    <div id="label-loading" style="display:none;">Generating label...</div>
+                    <div id="label-result"></div>
                 </div>
             <?php endif; ?>
         </div>
@@ -229,6 +333,336 @@ class LivrariaPlugin {
         <script>
         jQuery(document).ready(function($) {
             var packageCount = 1;
+            var quoteRequestId = null;
+            var selectedQuoteId = null;
+            var autoCreateInProgress = false;
+            
+            // Intercept order status change to "completed" for auto-create expeditions
+            // This prevents page refresh from interrupting the expedition creation flow
+            var autoCreateEnabled = <?php echo get_option('courier_auto_create') ? 'true' : 'false'; ?>;
+            var expeditionExists = <?php echo $expedition_id ? 'true' : 'false'; ?>;
+            var orderId = <?php echo $order_id; ?>;
+            
+            // Check if we need to run auto-create (set by server-side hook)
+            var shouldAutoCreate = <?php echo get_transient('livraria_auto_create_order_' . $order_id) ? 'true' : 'false'; ?>;
+            
+            if (autoCreateEnabled && !expeditionExists && shouldAutoCreate) {
+                // Clear the flag
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'clear_auto_create_flag',
+                        order_id: orderId,
+                        nonce: $('#courier_expedition_nonce_field').val()
+                    }
+                });
+                
+                // Run auto-create immediately
+                runAutoCreateExpedition();
+            }
+            
+            function runAutoCreateExpedition() {
+                if (autoCreateInProgress) return;
+                
+                autoCreateInProgress = true;
+                window.livrariaPreventUnload = true;
+                
+                // Show loading overlay
+                var $overlay = $('<div id="livraria-auto-create-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:999999;display:flex;align-items:center;justify-content:center;flex-direction:column;color:white;font-size:16px;"><div style="background:white;color:#333;padding:30px;border-radius:8px;max-width:500px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.3);"><h3 style="margin-top:0;color:#2271b1;">Creating Expedition...</h3><p>Please wait while we create the shipping expedition for this order.</p><div id="livraria-progress" style="margin:20px 0;"><div style="background:#f0f0f0;height:24px;border-radius:12px;overflow:hidden;border:2px solid #ddd;"><div id="livraria-progress-bar" style="background:#2271b1;height:100%;width:0%;transition:width 0.3s;display:flex;align-items:center;justify-content:center;color:white;font-size:12px;font-weight:bold;"></div></div></div><p id="livraria-status-text" style="margin:10px 0;font-size:14px;color:#666;">Getting quotes...</p></div></div>');
+                $('body').append($overlay);
+                
+                var updateProgress = function(percent, text) {
+                    $('#livraria-progress-bar').css('width', percent + '%').text(percent + '%');
+                    $('#livraria-status-text').text(text);
+                };
+                
+                // Step 1: Get quotes
+                updateProgress(20, 'Getting shipping quotes...');
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'get_quotes_for_order',
+                        order_id: orderId,
+                        nonce: $('#courier_expedition_nonce_field').val(),
+                        expedition_data: {}
+                    },
+                    success: function(response) {
+                        if (!response.success || !response.data.quotes || response.data.quotes.length === 0) {
+                            $overlay.find('h3').text('Error');
+                            $overlay.find('p').html('Failed to get quotes: ' + (response.data ? response.data.message : 'Unknown error') + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                            autoCreateInProgress = false;
+                            window.livrariaPreventUnload = false;
+                            return;
+                        }
+                        
+                        var quoteRequestId = response.data.quoteRequestId;
+                        var quotes = response.data.quotes;
+                        var selectedQuote = quotes[0];
+                        
+                        updateProgress(40, 'Selecting quote...');
+                        
+                        // Step 2: Select quote
+                        $.ajax({
+                            url: ajaxurl,
+                            type: 'POST',
+                            data: {
+                                action: 'select_quote',
+                                order_id: orderId,
+                                quote_request_id: quoteRequestId,
+                                courier_quote_id: selectedQuote.id,
+                                nonce: $('#courier_expedition_nonce_field').val()
+                            },
+                            success: function(selectResponse) {
+                                if (!selectResponse.success) {
+                                    $overlay.find('h3').text('Error');
+                                    $overlay.find('p').html('Failed to select quote. <br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                    autoCreateInProgress = false;
+                                    window.livrariaPreventUnload = false;
+                                    return;
+                                }
+                                
+                                updateProgress(60, 'Attaching billing information...');
+                                
+                                // Step 3: Generate label (auto-attach billing + create expedition)
+                                $.ajax({
+                                    url: ajaxurl,
+                                    type: 'POST',
+                                    data: {
+                                        action: 'generate_label',
+                                        order_id: orderId,
+                                        nonce: $('#courier_expedition_nonce_field').val()
+                                    },
+                                    success: function(labelResponse) {
+                                        if (!labelResponse.success) {
+                                            $overlay.find('h3').text('Error');
+                                            $overlay.find('p').html('Failed to create expedition: ' + (labelResponse.data || 'Unknown error') + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                            autoCreateInProgress = false;
+                                            window.livrariaPreventUnload = false;
+                                            return;
+                                        }
+                                        
+                                        updateProgress(100, 'Expedition created successfully!');
+                                        
+                                        // Show success message briefly, then reload
+                                        setTimeout(function() {
+                                            $overlay.find('h3').text('Success!');
+                                            $overlay.find('p').html('Expedition created successfully. Reloading page...');
+                                            
+                                            autoCreateInProgress = false;
+                                            window.livrariaPreventUnload = false;
+                                            
+                                            setTimeout(function() {
+                                                location.reload();
+                                            }, 1000);
+                                        }, 1000);
+                                    },
+                                    error: function() {
+                                        $overlay.find('h3').text('Error');
+                                        $overlay.find('p').html('AJAX error occurred while creating expedition.<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                        autoCreateInProgress = false;
+                                        window.livrariaPreventUnload = false;
+                                    }
+                                });
+                            },
+                            error: function() {
+                                $overlay.find('h3').text('Error');
+                                $overlay.find('p').html('AJAX error occurred while selecting quote.<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                autoCreateInProgress = false;
+                                window.livrariaPreventUnload = false;
+                            }
+                        });
+                    },
+                    error: function() {
+                        $overlay.find('h3').text('Error');
+                        $overlay.find('p').html('AJAX error occurred while getting quotes.<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                        autoCreateInProgress = false;
+                        window.livrariaPreventUnload = false;
+                    }
+                });
+            }
+            
+            // Also intercept save button clicks as backup (for when status is changed but flag wasn't set)
+            if (autoCreateEnabled && !expeditionExists) {
+                // Find order status select - try multiple selectors for compatibility
+                var $orderStatusSelect = $('#order_status, select[name="order_status"], #order-status-select, select#order_status, .order-status-select');
+                var $orderForm = $('#post, form[name="post"], form#post, form.edit-order').first();
+                var $saveButton = $('button.save_order, input#save-post, button[type="submit"], button[name="save"]').first();
+                
+                if ($orderStatusSelect.length) {
+                    var originalStatus = $orderStatusSelect.val() || $orderStatusSelect.find('option:selected').val();
+                    var formSubmitted = false;
+                    var statusChangedToCompleted = false;
+                    
+                    // Watch for status changes
+                    $orderStatusSelect.on('change', function() {
+                        var newStatus = $(this).val() || $(this).find('option:selected').val();
+                        var isCompleted = (newStatus === 'wc-completed' || newStatus === 'completed');
+                        statusChangedToCompleted = isCompleted && (originalStatus !== 'wc-completed' && originalStatus !== 'completed');
+                        originalStatus = newStatus;
+                    });
+                    
+                    // Intercept save button clicks
+                    $saveButton.on('click', function(e) {
+                        var newStatus = $orderStatusSelect.val() || $orderStatusSelect.find('option:selected').val();
+                        var isCompleted = (newStatus === 'wc-completed' || newStatus === 'completed');
+                        var isChangingToCompleted = isCompleted && (originalStatus !== 'wc-completed' && originalStatus !== 'completed');
+                        
+                        if (isChangingToCompleted && !autoCreateInProgress && !formSubmitted) {
+                            e.preventDefault();
+                            e.stopImmediatePropagation();
+                            e.stopPropagation();
+                            
+                            statusChangedToCompleted = true;
+                            autoCreateInProgress = true;
+                            
+                            // Prevent page unload
+                            window.livrariaPreventUnload = true;
+                            
+                            // Show loading overlay
+                            var $overlay = $('<div id="livraria-auto-create-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:999999;display:flex;align-items:center;justify-content:center;flex-direction:column;color:white;font-size:16px;"><div style="background:white;color:#333;padding:30px;border-radius:8px;max-width:500px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.3);"><h3 style="margin-top:0;color:#2271b1;">Creating Expedition...</h3><p>Please wait while we create the shipping expedition for this order.</p><div id="livraria-progress" style="margin:20px 0;"><div style="background:#f0f0f0;height:24px;border-radius:12px;overflow:hidden;border:2px solid #ddd;"><div id="livraria-progress-bar" style="background:#2271b1;height:100%;width:0%;transition:width 0.3s;display:flex;align-items:center;justify-content:center;color:white;font-size:12px;font-weight:bold;"></div></div></div><p id="livraria-status-text" style="margin:10px 0;font-size:14px;color:#666;">Getting quotes...</p></div></div>');
+                            $('body').append($overlay);
+                            
+                            var updateProgress = function(percent, text) {
+                                $('#livraria-progress-bar').css('width', percent + '%').text(percent + '%');
+                                $('#livraria-status-text').text(text);
+                            };
+                            
+                            // Step 1: Get quotes
+                            updateProgress(20, 'Getting shipping quotes...');
+                            $.ajax({
+                                url: ajaxurl,
+                                type: 'POST',
+                                data: {
+                                    action: 'get_quotes_for_order',
+                                    order_id: <?php echo $order_id; ?>,
+                                    nonce: $('#courier_expedition_nonce_field').val(),
+                                    expedition_data: {}
+                                },
+                                success: function(response) {
+                                    if (!response.success || !response.data.quotes || response.data.quotes.length === 0) {
+                                        $overlay.find('h3').text('Error');
+                                        $overlay.find('p').html('Failed to get quotes: ' + (response.data ? response.data.message : 'Unknown error') + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                        autoCreateInProgress = false;
+                                        window.livrariaPreventUnload = false;
+                                        return;
+                                    }
+                                    
+                                    var quoteRequestId = response.data.quoteRequestId;
+                                    var quotes = response.data.quotes;
+                                    var selectedQuote = quotes[0];
+                                    
+                                    updateProgress(40, 'Selecting quote...');
+                                    
+                                    // Step 2: Select quote
+                                    $.ajax({
+                                        url: ajaxurl,
+                                        type: 'POST',
+                                        data: {
+                                            action: 'select_quote',
+                                            order_id: <?php echo $order_id; ?>,
+                                            quote_request_id: quoteRequestId,
+                                            courier_quote_id: selectedQuote.id,
+                                            nonce: $('#courier_expedition_nonce_field').val()
+                                        },
+                                        success: function(selectResponse) {
+                                            if (!selectResponse.success) {
+                                                $overlay.find('h3').text('Error');
+                                                $overlay.find('p').html('Failed to select quote. <br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                                autoCreateInProgress = false;
+                                                window.livrariaPreventUnload = false;
+                                                return;
+                                            }
+                                            
+                                            updateProgress(60, 'Attaching billing information...');
+                                            
+                                            // Step 3: Generate label (auto-attach billing + create expedition)
+                                            $.ajax({
+                                                url: ajaxurl,
+                                                type: 'POST',
+                                                data: {
+                                                    action: 'generate_label',
+                                                    order_id: <?php echo $order_id; ?>,
+                                                    nonce: $('#courier_expedition_nonce_field').val()
+                                                },
+                                                success: function(labelResponse) {
+                                                    if (!labelResponse.success) {
+                                                        $overlay.find('h3').text('Error');
+                                                        $overlay.find('p').html('Failed to create expedition: ' + (labelResponse.data || 'Unknown error') + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                                        autoCreateInProgress = false;
+                                                        window.livrariaPreventUnload = false;
+                                                        return;
+                                                    }
+                                                    
+                                                    updateProgress(100, 'Expedition created successfully!');
+                                                    
+                                                    // Show success message briefly, then submit form
+                                                    setTimeout(function() {
+                                                        $overlay.find('h3').text('Success!');
+                                                        $overlay.find('p').html('Expedition created successfully. Reloading page...');
+                                                        
+                                                        formSubmitted = true;
+                                                        autoCreateInProgress = false;
+                                                        window.livrariaPreventUnload = false;
+                                                        
+                                                        // Submit the form to save the status change
+                                                        setTimeout(function() {
+                                                            if ($orderForm.length) {
+                                                                $orderForm.off('submit').submit();
+                                                            } else {
+                                                                location.reload();
+                                                            }
+                                                        }, 500);
+                                                    }, 1000);
+                                                },
+                                                error: function() {
+                                                    $overlay.find('h3').text('Error');
+                                                    $overlay.find('p').html('AJAX error occurred while creating expedition.<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                                    autoCreateInProgress = false;
+                                                    window.livrariaPreventUnload = false;
+                                                }
+                                            });
+                                        },
+                                        error: function() {
+                                            $overlay.find('h3').text('Error');
+                                            $overlay.find('p').html('AJAX error occurred while selecting quote.<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                            autoCreateInProgress = false;
+                                            window.livrariaPreventUnload = false;
+                                        }
+                                    });
+                                },
+                                error: function() {
+                                    $overlay.find('h3').text('Error');
+                                    $overlay.find('p').html('AJAX error occurred while getting quotes.<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                    autoCreateInProgress = false;
+                                    window.livrariaPreventUnload = false;
+                                }
+                            });
+                            
+                            return false;
+                        }
+                    });
+                    
+                    // Also intercept form submission as backup
+                    if ($orderForm.length) {
+                        $orderForm.on('submit', function(e) {
+                            if (statusChangedToCompleted && !formSubmitted && autoCreateInProgress) {
+                                e.preventDefault();
+                                e.stopImmediatePropagation();
+                                return false;
+                            }
+                        });
+                    }
+                    
+                    // Prevent page unload during auto-create
+                    $(window).on('beforeunload', function(e) {
+                        if (window.livrariaPreventUnload && autoCreateInProgress) {
+                            return 'An expedition is being created. Are you sure you want to leave?';
+                        }
+                    });
+                }
+            }
             
             // Add package functionality
             $('#add-package-btn').click(function() {
@@ -266,10 +700,14 @@ class LivrariaPlugin {
                 });
             }
             
+            // Get quotes when "Get Quotes" button is clicked
             $('#create-expedition-btn').click(function() {
                 var btn = $(this);
                 btn.prop('disabled', true);
                 $('#expedition-loading').show();
+                $('#expedition-result').html('');
+                $('#quotes-section').hide();
+                $('#generate-label-section').hide();
                 
                 // Collect package data
                 var packages = [];
@@ -297,24 +735,139 @@ class LivrariaPlugin {
                     url: ajaxurl,
                     type: 'POST',
                     data: {
-                        action: 'create_expedition',
-                        order_id: <?php echo $post->ID; ?>,
+                        action: 'get_quotes_for_order',
+                        order_id: <?php echo $order_id; ?>,
                         nonce: $('#courier_expedition_nonce_field').val(),
                         expedition_data: expeditionData
                     },
                     success: function(response) {
-                        if (response.success) {
-                            $('#expedition-result').html('<p style="color:green;">Expedition created successfully!</p>');
-                            location.reload();
+                        $('#expedition-loading').hide();
+                        if (response.success && response.data.quotes && response.data.quotes.length > 0) {
+                            quoteRequestId = response.data.quoteRequestId;
+                            displayQuotes(response.data.quotes);
+                            $('#quotes-section').show();
+                            btn.prop('disabled', false);
                         } else {
-                            $('#expedition-result').html('<p style="color:red;">Error: ' + response.data + '</p>');
+                            $('#expedition-result').html('<p style="color:red;">Error: ' + (response.data ? response.data.message : 'Failed to get quotes') + '</p>');
                             btn.prop('disabled', false);
                         }
-                        $('#expedition-loading').hide();
                     },
                     error: function() {
-                        $('#expedition-result').html('<p style="color:red;">AJAX error occurred</p>');
                         $('#expedition-loading').hide();
+                        $('#expedition-result').html('<p style="color:red;">AJAX error occurred</p>');
+                        btn.prop('disabled', false);
+                    }
+                });
+            });
+            
+            // Display quotes
+            function displayQuotes(quotes) {
+                var quotesHtml = '';
+                quotes.forEach(function(quote, index) {
+                    var isSelected = selectedQuoteId === quote.id;
+                    quotesHtml += '<div class="quote-item" data-quote-id="' + quote.id + '" style="border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 4px; ' + (isSelected ? 'border-color: #0073aa; background-color: #f0f8ff;' : '') + '">';
+                    quotesHtml += '<strong>' + (quote.courierName || 'Courier ' + (index + 1)) + '</strong>';
+                    if (quote.amount !== undefined) {
+                        quotesHtml += '<br>Price: <strong>' + quote.amount + ' ' + (quote.currency || 'RON') + '</strong>';
+                    }
+                    if (quote.deliveryDays !== undefined) {
+                        quotesHtml += '<br>Estimated delivery: ' + quote.deliveryDays + ' day(s)';
+                    }
+                    quotesHtml += '<br><button type="button" class="button select-quote-btn" data-quote-id="' + quote.id + '" ' + (isSelected ? 'disabled style="background-color: #46b450; color: white;"' : '') + '>';
+                    quotesHtml += isSelected ? '✓ Selected' : 'Select This Quote';
+                    quotesHtml += '</button>';
+                    quotesHtml += '</div>';
+                });
+                $('#quotes-container').html(quotesHtml);
+            }
+            
+            // Select quote
+            $(document).on('click', '.select-quote-btn', function() {
+                var quoteId = $(this).data('quote-id');
+                var btn = $(this);
+                
+                if (!quoteRequestId) {
+                    $('#expedition-result').html('<p style="color:red;">Quote request ID not found</p>');
+                    return;
+                }
+                
+                btn.prop('disabled', true);
+                $('#expedition-loading').show();
+                
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'select_quote',
+                        order_id: <?php echo $order_id; ?>,
+                        quote_request_id: quoteRequestId,
+                        courier_quote_id: quoteId,
+                        nonce: $('#courier_expedition_nonce_field').val()
+                    },
+                    success: function(response) {
+                        $('#expedition-loading').hide();
+                        if (response.success) {
+                            selectedQuoteId = quoteId;
+                            // Update UI to show selected quote
+                            $('.quote-item').removeClass('selected').css({'border-color': '#ddd', 'background-color': ''});
+                            $('.select-quote-btn').prop('disabled', false).text('Select This Quote').css({'background-color': '', 'color': ''});
+                            
+                            $('.quote-item[data-quote-id="' + quoteId + '"]').css({'border-color': '#0073aa', 'background-color': '#f0f8ff'});
+                            btn.prop('disabled', true).text('✓ Selected').css({'background-color': '#46b450', 'color': 'white'});
+                            
+                            // Show generate label button
+                            $('#generate-label-section').show();
+                            $('#expedition-result').html('<p style="color:green;">Quote selected successfully!</p>');
+                        } else {
+                            $('#expedition-result').html('<p style="color:red;">Error: ' + (response.data || 'Failed to select quote') + '</p>');
+                            btn.prop('disabled', false);
+                        }
+                    },
+                    error: function() {
+                        $('#expedition-loading').hide();
+                        $('#expedition-result').html('<p style="color:red;">AJAX error occurred</p>');
+                        btn.prop('disabled', false);
+                    }
+                });
+            });
+            
+            // Generate label
+            $('#generate-label-btn').click(function() {
+                var btn = $(this);
+                btn.prop('disabled', true);
+                $('#label-loading').show();
+                $('#label-result').html('');
+                
+                if (!quoteRequestId || !selectedQuoteId) {
+                    $('#label-result').html('<p style="color:red;">Please select a quote first</p>');
+                    $('#label-loading').hide();
+                    btn.prop('disabled', false);
+                    return;
+                }
+                
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'generate_label',
+                        order_id: <?php echo $order_id; ?>,
+                        nonce: $('#courier_expedition_nonce_field').val()
+                    },
+                    success: function(response) {
+                        $('#label-loading').hide();
+                        if (response.success) {
+                            $('#label-result').html('<p style="color:green;">Expedition created successfully! AWB: ' + (response.data.awb_number || 'N/A') + '</p>');
+                            setTimeout(function() {
+                                location.reload();
+                            }, 2000);
+                        } else {
+                            $('#label-result').html('<p style="color:red;">Error: ' + (response.data || 'Failed to generate label') + '</p>');
+                            btn.prop('disabled', false);
+                        }
+                    },
+                    error: function() {
+                        $('#label-loading').hide();
+                        $('#label-result').html('<p style="color:red;">AJAX error occurred</p>');
                         btn.prop('disabled', false);
                     }
                 });
@@ -324,12 +877,156 @@ class LivrariaPlugin {
         <?php
     }
     
-    public function auto_create_expedition($order_id) {
+    /**
+     * AJAX handler to clear auto-create flag
+     */
+    public function ajax_clear_auto_create_flag() {
+        $order_id = intval($_POST['order_id']);
+        if ($order_id) {
+            delete_transient('livraria_auto_create_order_' . $order_id);
+        }
+        wp_send_json_success();
+    }
+    
+    /**
+     * AJAX handler for auto-creating expedition
+     * Called from JavaScript when order status changes to "completed"
+     */
+    public function ajax_auto_create_expedition() {
+        if (!wp_verify_nonce($_POST['nonce'], 'courier_expedition_nonce')) {
+            wp_send_json_error('Security check failed');
+        }
+        
+        $order_id = intval($_POST['order_id']);
+        
+        if (!$order_id) {
+            wp_send_json_error('Order ID is required');
+        }
+        
+        // Run the auto-create process
+        $this->run_auto_create_expedition($order_id);
+    }
+    
+    /**
+     * Run auto-create expedition process
+     * This is the actual implementation that can be called from hook or AJAX
+     */
+    private function run_auto_create_expedition($order_id) {
+        error_log('Livraria Debug: auto_create_expedition called for order ID: ' . $order_id);
+        
         if (!get_option('courier_auto_create')) {
+            error_log('Livraria Debug: Auto-create expeditions is disabled');
             return;
         }
         
-        $this->order_handler->create_expedition_for_order($order_id);
+        // Check if expedition already exists
+        if (get_post_meta($order_id, '_courier_expedition_id', true)) {
+            error_log('Livraria Debug: Expedition already exists for order ID: ' . $order_id);
+            return;
+        }
+        
+        error_log('Livraria Debug: Starting auto-create expedition process for order ID: ' . $order_id);
+        
+        // Step 1: Get quotes (creates quote request)
+        $quotes_result = $this->order_handler->get_quotes_for_order($order_id);
+        
+        if (!$quotes_result['success']) {
+            error_log('Livraria Debug: Failed to get quotes: ' . $quotes_result['message']);
+            return;
+        }
+        
+        if (empty($quotes_result['quotes'])) {
+            error_log('Livraria Debug: No quotes available for order ID: ' . $order_id);
+            return;
+        }
+        
+        $quote_request_id = $quotes_result['quoteRequestId'];
+        $quotes = $quotes_result['quotes'];
+        
+        // Step 2: Automatically select the first quote (or best quote)
+        $selected_quote = $quotes[0]; // Select first quote
+        $selected_quote_id = $selected_quote['id'];
+        
+        error_log('Livraria Debug: Selected quote ID: ' . $selected_quote_id . ' for order ID: ' . $order_id);
+        
+        // Store selected quote in order meta
+        update_post_meta($order_id, '_courier_selected_quote_id', $selected_quote_id);
+        
+        // Step 3: Select the quote via API
+        $select_result = $this->api_client->select_courier_quote($quote_request_id, $selected_quote_id);
+        
+        if ($select_result === false) {
+            error_log('Livraria Debug: Failed to select quote via API for order ID: ' . $order_id);
+            return;
+        }
+        
+        // Step 4: Auto-attach billing info
+        $billing_response = $this->api_client->auto_attach_billing_info($quote_request_id);
+        
+        if ($billing_response === false || !isset($billing_response['id'])) {
+            error_log('Livraria Debug: Failed to attach billing information for order ID: ' . $order_id);
+            return;
+        }
+        
+        $billing_info_id = $billing_response['id'];
+        
+        // Step 5: Create expedition
+        $expedition_data = array(
+            'quoteRequestId' => $quote_request_id,
+            'courierQuoteId' => $selected_quote_id,
+            'billingInfoId' => $billing_info_id
+        );
+        
+        $expedition_response = $this->api_client->create_expedition($expedition_data);
+        
+        if ($expedition_response === false || !isset($expedition_response['id'])) {
+            error_log('Livraria Debug: Failed to create expedition for order ID: ' . $order_id);
+            return;
+        }
+        
+        // Step 6: Save expedition data
+        $order = wc_get_order($order_id);
+        if ($order) {
+            $this->order_handler->save_expedition_data($order_id, $expedition_response, $selected_quote);
+            $this->order_handler->add_expedition_order_note($order, $expedition_response);
+        }
+        
+        // Clean up temporary meta
+        delete_post_meta($order_id, '_courier_quote_request_id');
+        delete_post_meta($order_id, '_courier_selected_quote_id');
+        
+        error_log('Livraria Debug: Auto-create expedition completed successfully for order ID: ' . $order_id . ', Expedition ID: ' . $expedition_response['id']);
+        
+        // If called via AJAX, send JSON response
+        if (defined('DOING_AJAX') && DOING_AJAX) {
+            wp_send_json_success(array(
+                'message' => 'Expedition created successfully',
+                'expedition_id' => $expedition_response['id'],
+                'awb_number' => $expedition_response['awbNumber'] ?? null
+            ));
+        }
+    }
+    
+    /**
+     * Handle order status change
+     * Sets a flag that JavaScript can check to trigger auto-create
+     */
+    public function handle_order_status_change($order_id, $old_status, $new_status) {
+        if ($new_status === 'completed' && get_option('courier_auto_create')) {
+            // Set a transient flag that JavaScript can check
+            // This allows JS to run auto-create without page refresh interrupting
+            set_transient('livraria_auto_create_order_' . $order_id, true, 60); // Expires in 60 seconds
+            error_log('Livraria Debug: Order ' . $order_id . ' status changed to completed, flag set for JS');
+        }
+    }
+    
+    /**
+     * Legacy method - kept for backward compatibility
+     */
+    public function auto_create_expedition($order_id) {
+        // Don't run automatically on hook - let JavaScript handle it
+        // This prevents page refresh from interrupting the flow
+        return;
     }
     
     public function ajax_create_expedition() {
@@ -351,6 +1048,111 @@ class LivrariaPlugin {
             wp_send_json_success($result['message']);
         } else {
             wp_send_json_error($result['message']);
+        }
+    }
+    
+    /**
+     * AJAX handler to get quotes for an order (creates quote request)
+     */
+    public function ajax_get_quotes_for_order() {
+        if (!wp_verify_nonce($_POST['nonce'], 'courier_expedition_nonce')) {
+            wp_die('Security check failed');
+        }
+        
+        $order_id = intval($_POST['order_id']);
+        $custom_data = isset($_POST['expedition_data']) ? $_POST['expedition_data'] : array();
+        
+        // Sanitize custom data
+        if (!empty($custom_data)) {
+            $custom_data = $this->sanitize_expedition_data($custom_data);
+        }
+        
+        $result = $this->order_handler->get_quotes_for_order($order_id, $custom_data);
+        
+        if ($result['success']) {
+            wp_send_json_success($result);
+        } else {
+            wp_send_json_error($result['message']);
+        }
+    }
+    
+    /**
+     * AJAX handler to select a quote
+     */
+    public function ajax_select_quote() {
+        if (!wp_verify_nonce($_POST['nonce'], 'courier_expedition_nonce')) {
+            wp_die('Security check failed');
+        }
+        
+        $order_id = intval($_POST['order_id']);
+        $quote_request_id = sanitize_text_field($_POST['quote_request_id']);
+        $courier_quote_id = sanitize_text_field($_POST['courier_quote_id']);
+        
+        $result = $this->api_client->select_courier_quote($quote_request_id, $courier_quote_id);
+        
+        if ($result !== false) {
+            // Store selected quote info in order meta
+            update_post_meta($order_id, '_courier_quote_request_id', $quote_request_id);
+            update_post_meta($order_id, '_courier_selected_quote_id', $courier_quote_id);
+            
+            wp_send_json_success(array('message' => 'Quote selected successfully'));
+        } else {
+            wp_send_json_error('Failed to select quote');
+        }
+    }
+    
+    /**
+     * AJAX handler to generate label (create expedition after quote selection)
+     */
+    public function ajax_generate_label() {
+        if (!wp_verify_nonce($_POST['nonce'], 'courier_expedition_nonce')) {
+            wp_die('Security check failed');
+        }
+        
+        $order_id = intval($_POST['order_id']);
+        $quote_request_id = get_post_meta($order_id, '_courier_quote_request_id', true);
+        $courier_quote_id = get_post_meta($order_id, '_courier_selected_quote_id', true);
+        
+        if (!$quote_request_id || !$courier_quote_id) {
+            wp_send_json_error('Quote request ID or selected quote ID not found');
+        }
+        
+        // Auto-attach billing info
+        $billing_response = $this->api_client->auto_attach_billing_info($quote_request_id);
+        if ($billing_response === false || !isset($billing_response['id'])) {
+            wp_send_json_error('Failed to attach billing information');
+        }
+        
+        $billing_info_id = $billing_response['id'];
+        
+        // Create expedition
+        $expedition_data = array(
+            'quoteRequestId' => $quote_request_id,
+            'courierQuoteId' => $courier_quote_id,
+            'billingInfoId' => $billing_info_id
+        );
+        
+        $expedition_response = $this->api_client->create_expedition($expedition_data);
+        
+        if ($expedition_response !== false && isset($expedition_response['id'])) {
+            // Save expedition data
+            $order = wc_get_order($order_id);
+            if ($order) {
+                $this->order_handler->save_expedition_data($order_id, $expedition_response, array('id' => $courier_quote_id));
+                $this->order_handler->add_expedition_order_note($order, $expedition_response);
+            }
+            
+            // Clean up temporary meta
+            delete_post_meta($order_id, '_courier_quote_request_id');
+            delete_post_meta($order_id, '_courier_selected_quote_id');
+            
+            wp_send_json_success(array(
+                'message' => 'Expedition created successfully',
+                'expedition_id' => $expedition_response['id'],
+                'awb_number' => $expedition_response['awbNumber'] ?? null
+            ));
+        } else {
+            wp_send_json_error('Failed to create expedition');
         }
     }
     
@@ -643,6 +1445,34 @@ class LivrariaPlugin {
             border-left-color: #f0ad4e;
             background: #fcf8e3;
         }
+        
+        .quote-item {
+            border: 1px solid #ddd;
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            background: #fff;
+        }
+        
+        .quote-item.selected {
+            border-color: #0073aa;
+            background-color: #f0f8ff;
+        }
+        
+        .quote-item strong {
+            font-size: 14px;
+            color: #333;
+        }
+        
+        .select-quote-btn {
+            margin-top: 8px;
+        }
+        
+        .select-quote-btn:disabled {
+            background-color: #46b450 !important;
+            color: white !important;
+            cursor: not-allowed;
+        }
         ";
         
         wp_add_inline_style('wp-admin', $css);
@@ -650,4 +1480,5 @@ class LivrariaPlugin {
 }
 
 // Initialize the plugin
+new LivrariaPlugin();
 new LivrariaPlugin();

@@ -17,6 +17,99 @@ class Livraria_Order_Handler {
     }
     
     /**
+     * Get quotes for WooCommerce order (creates quote request)
+     * 
+     * @param int $order_id WooCommerce order ID
+     * @param array $custom_data Custom expedition data from admin interface
+     * @return array Result array with success status, quotes, and quoteRequestId
+     */
+    public function get_quotes_for_order($order_id, $custom_data = array()) {
+        if (!class_exists('WooCommerce') || !function_exists('wc_get_order')) {
+            return array('success' => false, 'message' => 'WooCommerce not found');
+        }
+        
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return array('success' => false, 'message' => 'Order not found');
+        }
+        
+        // Validate order has shipping address
+        if (!$this->validate_order_for_shipping($order)) {
+            $missing_fields_text = implode(', ', $this->last_validation_errors);
+            return array(
+                'success' => false, 
+                'message' => 'Order is missing required information: ' . $missing_fields_text . '. Please complete these fields in the order (shipping address for delivery details, billing for contact info).'
+            );
+        }
+        
+        try {
+            // Get available couriers first (with caching)
+            $courier_ids = $this->get_available_courier_ids();
+            if (empty($courier_ids)) {
+                return array('success' => false, 'message' => 'No couriers available');
+            }
+            
+            // Create quote request and get courier quotes
+            $quote_request_data = $this->prepare_quote_request_data($order, $custom_data, $courier_ids);
+            
+            // Debug: Log the data being sent
+            error_log('Livraria Debug: Quote request data structure: ' . print_r($quote_request_data, true));
+            error_log('Livraria Debug: Has sender: ' . (isset($quote_request_data['createQuoteRequestDto']['sender']) ? 'yes' : 'no'));
+            error_log('Livraria Debug: Has recipient: ' . (isset($quote_request_data['createQuoteRequestDto']['recipient']) ? 'yes' : 'no'));
+            
+            $quotes_response = $this->api_client->create_quote_request($quote_request_data);
+            
+            if (!$quotes_response) {
+                return array('success' => false, 'message' => 'Failed to create quote request');
+            }
+            
+            // Extract quotes and quoteRequestId from response
+            $quote_request_id = null;
+            $courier_quotes = array();
+            
+            if (isset($quotes_response['quoteRequest']['id'])) {
+                $quote_request_id = $quotes_response['quoteRequest']['id'];
+            } elseif (isset($quotes_response['quoteRequestId'])) {
+                $quote_request_id = $quotes_response['quoteRequestId'];
+            }
+            
+            if (isset($quotes_response['courierQuotes'])) {
+                $courier_quotes = $quotes_response['courierQuotes'];
+            } elseif (isset($quotes_response['data'])) {
+                $courier_quotes = is_array($quotes_response['data']) ? $quotes_response['data'] : array($quotes_response['data']);
+            } elseif (isset($quotes_response['quotes'])) {
+                $courier_quotes = is_array($quotes_response['quotes']) ? $quotes_response['quotes'] : array($quotes_response['quotes']);
+            }
+            
+            // Filter out locker quotes
+            $filtered_quotes = array_filter($courier_quotes, function($quote) {
+                return !isset($quote['isLockerQuote']) || !$quote['isLockerQuote'];
+            });
+            
+            if (empty($filtered_quotes)) {
+                return array('success' => false, 'message' => 'No courier quotes available');
+            }
+            
+            if (!$quote_request_id) {
+                return array('success' => false, 'message' => 'Quote request ID not found in response');
+            }
+            
+            // Store quote request ID in order meta temporarily
+            update_post_meta($order_id, '_courier_quote_request_id', $quote_request_id);
+            
+            return array(
+                'success' => true,
+                'quotes' => array_values($filtered_quotes), // Re-index array
+                'quoteRequestId' => $quote_request_id,
+                'message' => 'Quotes retrieved successfully'
+            );
+            
+        } catch (Exception $e) {
+            return array('success' => false, 'message' => 'Exception: ' . $e->getMessage());
+        }
+    }
+    
+    /**
      * Create expedition for WooCommerce order
      * 
      * @param int $order_id WooCommerce order ID
@@ -163,6 +256,83 @@ class Livraria_Order_Handler {
     }
     
     /**
+     * Build COD object for quote request
+     * Includes bankAccount if COD amount > 0 and sender profile has codIban
+     * 
+     * @param float $cod_amount COD amount
+     * @param mixed $sender_profile Sender profile from API
+     * @return array COD object
+     */
+    private function build_cod_object($cod_amount, $sender_profile) {
+        $cod_obj = array(
+            'amount' => $cod_amount,
+            'collector' => 'CLIENT'
+        );
+        
+        // Add bankAccount if COD amount > 0 and sender profile has codIban
+        if ($cod_amount > 0 && $sender_profile) {
+            $sender_profile = (array) $sender_profile;
+            $cod_iban = $sender_profile['codIban'] ?? null;
+            
+            if (!empty($cod_iban)) {
+                $cod_obj['bankAccount'] = $cod_iban;
+            }
+        }
+        
+        return $cod_obj;
+    }
+    
+    /**
+     * Remove Romanian diacritics from string
+     * 
+     * @param string $str String with Romanian diacritics
+     * @return string String without diacritics
+     */
+    private function remove_romanian_diacritics($str) {
+        if (empty($str)) {
+            return $str;
+        }
+        
+        $diacritics_map = array(
+            'ă' => 'a', 'Ă' => 'A',
+            'â' => 'a', 'Â' => 'A',
+            'î' => 'i', 'Î' => 'I',
+            'ș' => 's', 'Ș' => 'S', 'ş' => 's', 'Ş' => 'S',
+            'ț' => 't', 'Ț' => 'T', 'ţ' => 't', 'Ţ' => 'T',
+        );
+        
+        return strtr($str, $diacritics_map);
+    }
+    
+    /**
+     * Parse phone number into country code and NSN
+     * 
+     * @param string $phone Phone number (e.g., +40123456789)
+     * @return array Array with phoneCountryCode and phoneNSN
+     */
+    private function parse_phone_number($phone) {
+        $phone = trim($phone);
+        $phone = preg_replace('/\s+/', '', $phone); // Remove spaces
+        
+        if (empty($phone)) {
+            return array('phoneCountryCode' => '', 'phoneNSN' => '');
+        }
+        
+        if (preg_match('/^(\+\d{1,3})(.+)$/', $phone, $matches)) {
+            return array(
+                'phoneCountryCode' => $matches[1],
+                'phoneNSN' => $matches[2]
+            );
+        }
+        
+        // If no country code, return as-is (no fallback)
+        return array(
+            'phoneCountryCode' => '',
+            'phoneNSN' => $phone
+        );
+    }
+    
+    /**
      * Prepare quote request data from WooCommerce order
      * 
      * @param WC_Order $order
@@ -171,43 +341,200 @@ class Livraria_Order_Handler {
      * @return array
      */
     private function prepare_quote_request_data($order, $custom_data = array(), $courier_ids = array()) {
-        $sender_address = $this->get_sender_address();
+        $sender_profile = $this->get_sender_profile_from_api();
+        $sender_info = $this->get_sender_info();
         $packages = $this->calculate_packages_from_order($order, $custom_data);
         $service_options = $this->get_service_options($order, $custom_data);
         
-        // Convert date to proper format for the API
-        $pickup_date = new DateTime($this->calculate_pickup_date());
+        // Parse sender phone number
+        $sender_phone = $sender_info['phone'] ?: '';
+        if ($sender_profile && isset($sender_profile['phoneCountryCode']) && isset($sender_profile['phoneNSN'])) {
+            $sender_phone_parsed = array(
+                'phoneCountryCode' => $sender_profile['phoneCountryCode'],
+                'phoneNSN' => $sender_profile['phoneNSN']
+            );
+        } else {
+            $sender_phone_parsed = $this->parse_phone_number($sender_phone);
+        }
+        
+        // Get sender address - use profile directly if available
+        $sender_address = array();
+        if ($sender_profile) {
+            $sender_profile = (array) $sender_profile;
+            
+            // First, check if address fields are at top level (matching Shopify extension structure)
+            if (isset($sender_profile['street']) || isset($sender_profile['city']) || isset($sender_profile['country'])) {
+                // Address fields are at top level
+                $sender_address = array(
+                    'country' => $sender_profile['country'] ?? '',
+                    'county' => $sender_profile['county'] ?? '',
+                    'city' => $sender_profile['city'] ?? '',
+                    'postcode' => $sender_profile['postcode'] ?? '',
+                    'street' => $sender_profile['street'] ?? '',
+                    'streetNumber' => $sender_profile['streetNumber'] ?? '',
+                    'block' => $sender_profile['block'] ?? '',
+                    'staircase' => $sender_profile['staircase'] ?? '',
+                    'floor' => $sender_profile['floor'] ?? '',
+                    'apartment' => $sender_profile['apartment'] ?? '',
+                );
+            } elseif (isset($sender_profile['address']) && (is_array($sender_profile['address']) || is_object($sender_profile['address']))) {
+                // Address is nested in 'address' field
+                $nested_address = (array) $sender_profile['address'];
+                $sender_address = array(
+                    'country' => $nested_address['country'] ?? '',
+                    'county' => $nested_address['county'] ?? '',
+                    'city' => $nested_address['city'] ?? '',
+                    'postcode' => $nested_address['postcode'] ?? '',
+                    'street' => $nested_address['street'] ?? '',
+                    'streetNumber' => $nested_address['streetNumber'] ?? '',
+                    'block' => $nested_address['block'] ?? '',
+                    'staircase' => $nested_address['staircase'] ?? '',
+                    'floor' => $nested_address['floor'] ?? '',
+                    'apartment' => $nested_address['apartment'] ?? '',
+                );
+            } else {
+                // Try to find address in any nested object
+                foreach ($sender_profile as $field_key => $value) {
+                    if (is_array($value) || is_object($value)) {
+                        $value = (array) $value;
+                        if (isset($value['street']) || isset($value['city']) || isset($value['country'])) {
+                            $sender_address = array(
+                                'country' => $value['country'] ?? '',
+                                'county' => $value['county'] ?? '',
+                                'city' => $value['city'] ?? '',
+                                'postcode' => $value['postcode'] ?? '',
+                                'street' => $value['street'] ?? '',
+                                'streetNumber' => $value['streetNumber'] ?? '',
+                                'block' => $value['block'] ?? '',
+                                'staircase' => $value['staircase'] ?? '',
+                                'floor' => $value['floor'] ?? '',
+                                'apartment' => $value['apartment'] ?? '',
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Fallback to get_sender_address() if profile doesn't have address fields
+        if (empty($sender_address['street'])) {
+            try {
+                $fallback_address = $this->get_sender_address();
+                $sender_address = array_merge($sender_address, $fallback_address);
+            } catch (Exception $e) {
+                // If get_sender_address throws exception, use settings (no defaults)
+                $sender_address = array(
+                    'country' => get_option('courier_sender_country', ''),
+                    'county' => get_option('courier_sender_county', ''),
+                    'city' => get_option('courier_sender_city', ''),
+                    'postcode' => get_option('courier_sender_postcode', ''),
+                    'street' => get_option('courier_sender_street', ''),
+                    'streetNumber' => get_option('courier_sender_street_number', ''),
+                    'block' => get_option('courier_sender_block', ''),
+                    'staircase' => get_option('courier_sender_staircase', ''),
+                    'floor' => get_option('courier_sender_floor', ''),
+                    'apartment' => get_option('courier_sender_apartment', ''),
+                );
+            }
+        }
+        
+        $sender_address['localityPostcode'] = $sender_address['postcode'] ?? '';
+        
+        // Parse recipient phone number
+        $recipient_phone = trim($order->get_billing_phone());
+        $recipient_phone_parsed = $this->parse_phone_number($recipient_phone);
+        
+        // Build sender object - ensure proper data types
+        $sender_is_company = isset($sender_info['isCompany']) ? (bool)$sender_info['isCompany'] : false;
+        
+        // Uppercase and remove diacritics from sender county and city
+        $sender_county = !empty($sender_address['county']) 
+            ? strtoupper($this->remove_romanian_diacritics($sender_address['county'])) 
+            : '';
+        $sender_city = !empty($sender_address['city']) 
+            ? strtoupper($this->remove_romanian_diacritics($sender_address['city'])) 
+            : '';
+        
+        $sender_obj = array(
+            'name' => $sender_info['name'] ?? '',
+            'phoneCountryCode' => $sender_phone_parsed['phoneCountryCode'],
+            'phoneNSN' => $sender_phone_parsed['phoneNSN'],
+            'email' => $sender_info['email'] ?? '',
+            'address' => array(
+                'country' => 'Romania',
+                'county' => $sender_county,
+                'city' => $sender_city,
+                'postcode' => $sender_address['postcode'] ?? '',
+                'street' => $sender_address['street'] ?? '',
+                'streetNumber' => $sender_address['streetNumber'] ?? '',
+                'block' => $sender_address['block'] ?? '',
+                'staircase' => $sender_address['staircase'] ?? '',
+                'floor' => $sender_address['floor'] ?? '',
+                'apartment' => $sender_address['apartment'] ?? '',
+            ),
+            'isCompany' => $sender_is_company,
+            'companyName' => $sender_is_company ? ($sender_info['name'] ?? '') : '',
+            'cui' => $sender_info['cui'] ?? '',
+        );
+        
+        // Build recipient object
+        $recipient_name = trim($this->get_shipping_or_billing($order, 'first_name') . ' ' . $this->get_shipping_or_billing($order, 'last_name'));
+        
+        // Get state and convert code to full name if needed
+        $recipient_state = trim($this->get_shipping_or_billing($order, 'state'));
+        $recipient_county = $recipient_state;
+        
+        // Try to convert state code to full name using WooCommerce state mapping
+        if (!empty($recipient_state) && function_exists('WC') && WC()->countries) {
+            $romanian_states = WC()->countries->get_states('RO');
+            if ($romanian_states && isset($romanian_states[$recipient_state])) {
+                $recipient_county = $romanian_states[$recipient_state];
+            }
+        }
+        
+        // Remove diacritics from county and uppercase
+        $recipient_county = strtoupper($this->remove_romanian_diacritics($recipient_county));
+        
+        // Uppercase and remove diacritics from recipient city
+        $recipient_city = $this->get_shipping_or_billing($order, 'city');
+        $recipient_city = !empty($recipient_city) 
+            ? strtoupper($this->remove_romanian_diacritics($recipient_city)) 
+            : '';
+        
+        // Default phoneCountryCode to +40 if empty
+        $recipient_phone_country_code = !empty($recipient_phone_parsed['phoneCountryCode']) 
+            ? $recipient_phone_parsed['phoneCountryCode'] 
+            : '+40';
+        
+        $recipient_obj = array(
+            'name' => $recipient_name,
+            'phoneCountryCode' => $recipient_phone_country_code,
+            'phoneNSN' => $recipient_phone_parsed['phoneNSN'],
+            'email' => trim($order->get_billing_email()),
+            'isCompany' => false,
+            'address' => array(
+                'country' => 'Romania',
+                'county' => $recipient_county,
+                'city' => $recipient_city,
+                'postcode' => $this->get_shipping_or_billing($order, 'postcode'),
+                'street' => $this->get_shipping_or_billing($order, 'address_1'),
+                'streetNumber' => $this->get_shipping_or_billing($order, 'address_2'),
+                'block' => '',
+                'staircase' => '',
+                'floor' => '',
+                'apartment' => '',
+            )
+        );
+        
+        // Debug: Log sender and recipient data
+        error_log('Livraria Debug: Sender object: ' . PHP_EOL . json_encode($sender_obj, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        error_log('Livraria Debug: Recipient object: ' . PHP_EOL . json_encode($recipient_obj, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         
         return array(
             'createQuoteRequestDto' => array(
-                'sender' => array(
-                    'name' => trim(get_option('courier_default_sender_name', get_bloginfo('name'))) ?: 'Default Sender',
-                    'email' => trim(get_option('courier_default_sender_email', get_option('admin_email'))) ?: 'admin@example.com',
-                    'phone' => trim(get_option('courier_default_sender_phone', '')) ?: '0000000000',
-                    'isCompany' => true,
-                    'address' => array(
-                        'country' => $sender_address['country'] ?: 'Romania',
-                        'county' => $sender_address['county'] ?: 'Bucuresti',
-                        'city' => $sender_address['city'] ?: 'Sector 1',
-                        'postcode' => $sender_address['postcode'] ?: '000000',
-                        'street' => $sender_address['street'] ?: 'Default Street',
-                        'streetNumber' => $sender_address['streetNumber'] ?: '1'
-                    )
-                ),
-                'recipient' => array(
-                    'name' => trim($this->get_shipping_or_billing($order, 'first_name') . ' ' . $this->get_shipping_or_billing($order, 'last_name')) ?: 'Customer',
-                    'email' => trim($order->get_billing_email()) ?: 'customer@example.com',
-                    'phone' => trim($order->get_billing_phone()) ?: '0000000000',
-                    'isCompany' => false,
-                    'address' => array(
-                        'country' => $this->get_shipping_or_billing($order, 'country') ?: 'Romania',
-                        'county' => $this->get_shipping_or_billing($order, 'state') ?: 'Bucuresti',
-                        'city' => $this->get_shipping_or_billing($order, 'city') ?: 'Sector 1',
-                        'postcode' => $this->get_shipping_or_billing($order, 'postcode') ?: '000000',
-                        'street' => $this->get_shipping_or_billing($order, 'address_1') ?: 'Default Street',
-                        'streetNumber' => '1'
-                    )
-                ),
+                'sender' => $sender_obj,
+                'recipient' => $recipient_obj,
                 'content' => array(
                     'packages' => $packages
                 ),
@@ -216,15 +543,9 @@ class Livraria_Order_Handler {
                     $this->generate_package_description($order),
                 'shipmentNote' => 'Order from ' . get_bloginfo('name') . ' - Order #' . $order->get_order_number(),
                 'service' => array(
-                    'pickupDate' => $pickup_date->format('c'), // ISO 8601 format
-                    'earliestPickupTime' => '09:00',
-                    'latestPickupTime' => '18:00',
                     'saturdayDelivery' => $service_options['saturday_delivery'],
                     'openOnDelivery' => $service_options['open_on_delivery'],
-                    'cod' => array(
-                        'amount' => $service_options['cod_amount'],
-                        'collector' => 'CLIENT'
-                    ),
+                    'cod' => $this->build_cod_object($service_options['cod_amount'], $sender_profile),
                     'insurance' => array(
                         'amount' => $service_options['insurance_amount']
                     )
@@ -232,41 +553,190 @@ class Livraria_Order_Handler {
                 'paymentInfo' => array(
                     'courierServicePayer' => 'THIRD_PARTY'
                 )
-            ),
-            'courierNames' => !empty($courier_ids) ? $courier_ids : array()
+            )
         );
     }
     
     /**
-     * Get sender address from plugin settings
+     * Get sender profile from API
+     * Falls back to settings if API profile not available
+     * 
+     * @return array|null Sender profile data or null if not available
+     */
+    private function get_sender_profile_from_api() {
+        $sender_profile = $this->api_client->get_sender_profile();
+        
+        if ($sender_profile === false || is_wp_error($sender_profile)) {
+            return null;
+        }
+        
+        // Handle array of profiles - use first one
+        if (is_array($sender_profile) && isset($sender_profile[0])) {
+            return $sender_profile[0];
+        }
+        
+        return is_array($sender_profile) ? $sender_profile : null;
+    }
+    
+    /**
+     * Get sender address from API sender profile
+     * Uses the same logic as the admin page display to find address fields
+     * Falls back to plugin settings if API profile not available
      * 
      * @return array
+     * @throws Exception If required address fields are missing
      */
     private function get_sender_address() {
-        // Get individual address fields
+        $sender_profile = $this->get_sender_profile_from_api();
+        
+        // If we have a sender profile from API, use it
+        if ($sender_profile) {
+            $sender_profile = (array) $sender_profile;
+            
+            // Use the same logic as render_sender_profile() in admin page
+            // Iterate through all fields and find address-like nested objects
+            $address_data = null;
+            
+            // First, check if there's a direct 'address' field
+            if (isset($sender_profile['address']) && (is_array($sender_profile['address']) || is_object($sender_profile['address']))) {
+                $address_data = (array) $sender_profile['address'];
+            } else {
+                // Check if address fields are at top level
+                if (isset($sender_profile['street']) || isset($sender_profile['city']) || isset($sender_profile['country'])) {
+                    $address_data = $sender_profile;
+                } else {
+                    // Iterate through all fields to find nested address objects
+                    // This matches the logic in render_sender_profile()
+                    foreach ($sender_profile as $field_key => $value) {
+                        if (is_array($value) || is_object($value)) {
+                            $value = (array) $value;
+                            // Check if this nested object looks like an address
+                            // Same check as in render_sender_profile() line 328
+                            if (isset($value['street']) || isset($value['city']) || isset($value['country'])) {
+                                $address_data = $value;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if ($address_data) {
+                $address_data = (array) $address_data;
+                
+                // Extract address fields - use same field names as render_sender_profile() expects
+                $address = array(
+                    'country' => $address_data['country'] ?? '',
+                    'county' => $address_data['county'] ?? '',
+                    'city' => $address_data['city'] ?? '',
+                    'postcode' => $address_data['postcode'] ?? '',
+                    'street' => $address_data['street'] ?? '',
+                    'streetNumber' => $address_data['streetNumber'] ?? '',
+                    'block' => $address_data['block'] ?? '',
+                    'staircase' => $address_data['staircase'] ?? '',
+                    'floor' => $address_data['floor'] ?? '',
+                    'apartment' => $address_data['apartment'] ?? '',
+                    'localityPostcode' => $address_data['localityPostcode'] ?? $address_data['postcode'] ?? ''
+                );
+                
+                // Ensure all required fields are present
+                $required_fields = array('country', 'county', 'city', 'postcode', 'street');
+                $missing_fields = array();
+                foreach ($required_fields as $field) {
+                    if (empty($address[$field])) {
+                        $missing_fields[] = $field;
+                    }
+                }
+                
+                if (empty($missing_fields)) {
+                    error_log('Livraria: Using sender profile address from API');
+                    return $address;
+                } else {
+                    // Log what we got for debugging
+                    error_log('Livraria: Sender profile address incomplete. Missing: ' . implode(', ', $missing_fields));
+                    error_log('Livraria: Full sender profile: ' . print_r($sender_profile, true));
+                    error_log('Livraria: Address data found: ' . print_r($address_data, true));
+                    error_log('Livraria: Extracted address: ' . print_r($address, true));
+                }
+            } else {
+                error_log('Livraria: No address data found in sender profile');
+                error_log('Livraria: Full sender profile structure: ' . print_r($sender_profile, true));
+            }
+        } else {
+            error_log('Livraria: No sender profile available from API');
+        }
+        
+        // Fallback to settings if API profile not available or incomplete
+        // Get individual address fields from settings
         $address = array(
-            'country' => get_option('courier_sender_country', 'Romania'),
-            'county' => get_option('courier_sender_county', 'Bucharest'),
-            'city' => get_option('courier_sender_city', 'Bucharest'),
-            'postcode' => get_option('courier_sender_postcode', '010101'),
-            'street' => get_option('courier_sender_street', 'Default Street'),
-            'streetNumber' => get_option('courier_sender_street_number', '1'),
+            'country' => get_option('courier_sender_country', ''),
+            'county' => get_option('courier_sender_county', ''),
+            'city' => get_option('courier_sender_city', ''),
+            'postcode' => get_option('courier_sender_postcode', ''),
+            'street' => get_option('courier_sender_street', ''),
+            'streetNumber' => get_option('courier_sender_street_number', ''),
             'block' => get_option('courier_sender_block', ''),
             'staircase' => get_option('courier_sender_staircase', ''),
             'floor' => get_option('courier_sender_floor', ''),
             'apartment' => get_option('courier_sender_apartment', ''),
-            'localityPostcode' => get_option('courier_sender_postcode', '010101')
+            'localityPostcode' => get_option('courier_sender_postcode', '')
         );
         
         // Ensure all required fields are present
         $required_fields = array('country', 'county', 'city', 'postcode', 'street');
+        $missing_fields = array();
         foreach ($required_fields as $field) {
             if (empty($address[$field])) {
-                throw new Exception("Sender address missing required field: $field");
+                $missing_fields[] = $field;
             }
         }
         
+        if (!empty($missing_fields)) {
+            $error_msg = "Sender address missing required fields: " . implode(', ', $missing_fields) . ". ";
+            $error_msg .= "Please ensure your sender profile in the API has a complete address with fields: country, county, city, postcode, and street. ";
+            $error_msg .= "Check the 'Sender Profile' section in settings to see what address data is available from the API.";
+            throw new Exception($error_msg);
+        }
+        
+        error_log('Livraria: Using sender address from plugin settings (fallback)');
         return $address;
+    }
+    
+    /**
+     * Get sender info (name, email, phone) from API sender profile
+     * Falls back to settings if API profile not available
+     * 
+     * @return array
+     */
+    private function get_sender_info() {
+        $sender_profile = $this->get_sender_profile_from_api();
+        
+        // If we have a sender profile from API, use it
+        if ($sender_profile) {
+            $sender_profile = (array) $sender_profile;
+            return array(
+                'name' => $sender_profile['name'] ?? '',
+                'email' => $sender_profile['email'] ?? '',
+                'phone' => $sender_profile['phone'] ?? '',
+                'phoneCountryCode' => $sender_profile['phoneCountryCode'] ?? null,
+                'phoneNSN' => $sender_profile['phoneNSN'] ?? null,
+                'company' => $sender_profile['company'] ?? '',
+                'isCompany' => isset($sender_profile['isCompany']) ? (bool)$sender_profile['isCompany'] : !empty($sender_profile['company']),
+                'cui' => $sender_profile['cui'] ?? ''
+            );
+        }
+        
+        // Fallback to settings (no defaults)
+        return array(
+            'name' => trim(get_option('courier_default_sender_name', '')),
+            'email' => trim(get_option('courier_default_sender_email', '')),
+            'phone' => trim(get_option('courier_default_sender_phone', '')),
+            'phoneCountryCode' => null,
+            'phoneNSN' => null,
+            'company' => '',
+            'isCompany' => false,
+            'cui' => ''
+        );
     }
     
     /**
@@ -295,7 +765,7 @@ class Livraria_Order_Handler {
         // Otherwise, calculate from order items
         $total_weight = 0;
         $packages = array();
-        $default_weight = floatval(get_option('courier_default_package_weight', 0.5));
+        $default_weight = floatval(get_option('courier_default_package_weight', 1));
         $default_dimensions = array(
             'width' => floatval(get_option('courier_default_package_width', 20)),
             'height' => floatval(get_option('courier_default_package_height', 10)),
@@ -355,8 +825,38 @@ class Livraria_Order_Handler {
             $custom_data['open_on_delivery'] : get_option('courier_default_open_on_delivery', false);
         $insurance_amount = isset($custom_data['insurance_amount']) ? 
             floatval($custom_data['insurance_amount']) : floatval(get_option('courier_default_insurance_amount', 0));
-        $cod_amount = isset($custom_data['cod_amount']) ? 
-            floatval($custom_data['cod_amount']) : floatval($order->get_total());
+        
+        // Check if payment method is Cash on Delivery
+        $payment_method = $order->get_payment_method();
+        $payment_method_title = $order->get_payment_method_title();
+        $is_cod = false;
+        
+        // Primary check: WooCommerce COD payment gateway ID is 'cod'
+        if ($payment_method === 'cod') {
+            $is_cod = true;
+        } else {
+            // Fallback: check payment method title for COD indicators (case-insensitive)
+            $payment_method_title_lower = strtolower($payment_method_title);
+            $cod_indicators = array('cash on delivery', 'payment on delivery', 'pay on delivery', 'cod');
+            
+            foreach ($cod_indicators as $indicator) {
+                if (strpos($payment_method_title_lower, strtolower($indicator)) !== false) {
+                    $is_cod = true;
+                    break;
+                }
+            }
+        }
+        
+        // Set COD amount based on payment method or custom data
+        $cod_amount = 0;
+        if ($is_cod) {
+            // If COD payment method, use order total (or custom amount if provided)
+            $cod_amount = isset($custom_data['cod_amount']) ? 
+                floatval($custom_data['cod_amount']) : floatval($order->get_total());
+        } else if (isset($custom_data['cod_amount'])) {
+            // If custom data has COD amount but payment method is not COD, use custom amount
+            $cod_amount = floatval($custom_data['cod_amount']);
+        }
 
         return array(
             'saturday_delivery' => (bool)$saturday_delivery,
@@ -463,7 +963,7 @@ class Livraria_Order_Handler {
      * @param array $expedition_response
      * @param array $selected_quote
      */
-    private function save_expedition_data($order_id, $expedition_response, $selected_quote) {
+    public function save_expedition_data($order_id, $expedition_response, $selected_quote) {
         update_post_meta($order_id, '_courier_expedition_id', $expedition_response['id']);
         update_post_meta($order_id, '_courier_quote_id', $selected_quote['id']);
         update_post_meta($order_id, '_courier_name', $selected_quote['courierName'] ?? '');
@@ -487,7 +987,7 @@ class Livraria_Order_Handler {
      * @param WC_Order $order
      * @param array $expedition_response
      */
-    private function add_expedition_order_note($order, $expedition_response) {
+    public function add_expedition_order_note($order, $expedition_response) {
         $note = sprintf(
             'Courier expedition created successfully. ID: %s',
             $expedition_response['id']

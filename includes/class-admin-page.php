@@ -22,12 +22,15 @@ class Livraria_Admin_Page {
         ?>
         <div class="wrap">
             <h1>Livraria Settings</h1>
-            <form method="post" action="options.php">
-                <?php
-                settings_fields('courier_api_settings');
-                do_settings_sections('courier_api_settings');
-                ?>
-                <table class="form-table">
+            
+            <div style="background: #f7f7f7; border-left: 4px solid #2271b1; padding: 15px 20px; margin-top: 20px; margin-bottom: 20px; border-radius: 2px;">
+                <h2 style="margin: 0 0 15px 0; font-size: 18px; color: #1d2327;">API Configuration</h2>
+                <form method="post" action="options.php">
+                    <?php
+                    settings_fields('courier_api_settings');
+                    do_settings_sections('courier_api_settings');
+                    ?>
+                    <table class="form-table">
                     <tr>
                         <th scope="row">API Base URL</th>
                         <td><input type="url" name="courier_api_base_url" value="<?php echo esc_attr(get_option('courier_api_base_url')); ?>" class="regular-text" /></td>
@@ -44,74 +47,19 @@ class Livraria_Admin_Page {
                         <th scope="row">Auto-create expeditions</th>
                         <td><input type="checkbox" name="courier_auto_create" value="1" <?php checked(1, get_option('courier_auto_create'), true); ?> /></td>
                     </tr>
-                    <tr>
-                        <th scope="row">Default Sender Name</th>
-                        <td><input type="text" name="courier_default_sender_name" value="<?php echo esc_attr(get_option('courier_default_sender_name')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Default Sender Email</th>
-                        <td><input type="email" name="courier_default_sender_email" value="<?php echo esc_attr(get_option('courier_default_sender_email')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Default Sender Phone</th>
-                        <td><input type="text" name="courier_default_sender_phone" value="<?php echo esc_attr(get_option('courier_default_sender_phone')); ?>" class="regular-text" /></td>
-                    </tr>
                 </table>
-                
-                <h3>Sender Address</h3>
-                <table class="form-table">
-                    <tr>
-                        <th scope="row">Country</th>
-                        <td><input type="text" name="courier_sender_country" value="<?php echo esc_attr(get_option('courier_sender_country', 'Romania')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">County/State</th>
-                        <td><input type="text" name="courier_sender_county" value="<?php echo esc_attr(get_option('courier_sender_county', 'Bucharest')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">City</th>
-                        <td><input type="text" name="courier_sender_city" value="<?php echo esc_attr(get_option('courier_sender_city', 'Bucharest')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Postcode</th>
-                        <td><input type="text" name="courier_sender_postcode" value="<?php echo esc_attr(get_option('courier_sender_postcode', '010101')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Street</th>
-                        <td><input type="text" name="courier_sender_street" value="<?php echo esc_attr(get_option('courier_sender_street')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Street Number</th>
-                        <td><input type="text" name="courier_sender_street_number" value="<?php echo esc_attr(get_option('courier_sender_street_number')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Block <small>(optional)</small></th>
-                        <td><input type="text" name="courier_sender_block" value="<?php echo esc_attr(get_option('courier_sender_block')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Staircase <small>(optional)</small></th>
-                        <td><input type="text" name="courier_sender_staircase" value="<?php echo esc_attr(get_option('courier_sender_staircase')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Floor <small>(optional)</small></th>
-                        <td><input type="text" name="courier_sender_floor" value="<?php echo esc_attr(get_option('courier_sender_floor')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Apartment <small>(optional)</small></th>
-                        <td><input type="text" name="courier_sender_apartment" value="<?php echo esc_attr(get_option('courier_sender_apartment')); ?>" class="regular-text" /></td>
-                    </tr>
-                </table>
-                <?php submit_button(); ?>
-            </form>
+                    <?php submit_button(); ?>
+                </form>
+            </div>
             
             <?php
             // Display user info and sender profile if token is available
             $this->render_account_information();
             ?>
             
-            <div id="api-test-section" style="margin-top: 30px;">
-                <h3>Test API Connection</h3>
-                <p class="description">Test network connectivity and authentication separately to troubleshoot issues.</p>
+            <div id="api-test-section" style="background: #f7f7f7; border-left: 4px solid #2271b1; padding: 15px 20px; margin-top: 30px; border-radius: 2px;">
+                <h3 style="margin: 0 0 15px 0; font-size: 16px; color: #1d2327;">Test API Connection</h3>
+                <p class="description" style="margin-bottom: 15px;">Test network connectivity and authentication separately to troubleshoot issues.</p>
                 
                 <div style="margin-bottom: 15px;">
                     <button type="button" id="test-connectivity" class="button">1. Test Network Connectivity</button>
