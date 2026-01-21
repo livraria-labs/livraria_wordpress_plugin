@@ -19,66 +19,137 @@ class Livraria_Admin_Page {
      * Render the admin settings page
      */
     public function render() {
+        // Check if user is logged in (has valid token)
+        $api_token = get_option('livraria_api_token', '');
+        $token_expires_at = get_option('livraria_token_expires_at', 0);
+        $is_logged_in = !empty($api_token) && $token_expires_at > (time() + 300); // 5 minute buffer
+        
         ?>
         <div class="wrap">
-            <h1>Livraria Settings</h1>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h1 style="margin: 0;">Livraria Settings</h1>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <button type="button" id="livraria-debug-btn" class="button" style="display: flex; align-items: center; gap: 6px;">
+                        <span style="font-size: 16px;">🔧</span>
+                        <span>Debug</span>
+                    </button>
+                    <?php if ($is_logged_in): ?>
+                        <button type="button" id="livraria-logout-btn" class="button" style="background: #d63638; color: white; border-color: #d63638; display: flex; align-items: center; gap: 6px;">
+                            <span style="font-size: 16px;">↪</span>
+                            <span>Logout</span>
+                        </button>
+                    <?php endif; ?>
+                </div>
+            </div>
             
+            <?php if (!$is_logged_in): ?>
+            <!-- Login form (shown when not logged in) -->
             <div style="background: #f7f7f7; border-left: 4px solid #2271b1; padding: 12px 16px; margin-top: 15px; margin-bottom: 15px; border-radius: 2px;">
-                <h2 style="margin: 0 0 12px 0; font-size: 16px; color: #1d2327;">API Configuration</h2>
-                <form method="post" action="options.php">
-                    <?php
-                    settings_fields('courier_api_settings');
-                    do_settings_sections('courier_api_settings');
-                    ?>
-                    <table class="form-table">
+                <h2 style="margin: 0 0 12px 0; font-size: 16px; color: #1d2327;">Login to Livraria</h2>
+                <p class="description" style="margin-bottom: 15px;">Enter your API credentials to connect to Livraria.</p>
+                <table class="form-table">
+                    <?php if (LivrariaPlugin::is_development_mode()): ?>
                     <tr>
                         <th scope="row">API Base URL</th>
-                        <td><input type="url" name="courier_api_base_url" value="<?php echo esc_attr(get_option('courier_api_base_url')); ?>" class="regular-text" /></td>
+                        <td><input type="url" id="login-api-url" name="courier_api_base_url" value="<?php echo esc_attr(get_option('courier_api_base_url')); ?>" class="regular-text" /></td>
                     </tr>
+                    <?php else: ?>
+                    <!-- API Base URL is hidden in production and set to https://api.livraria.ro/ -->
+                    <input type="hidden" id="login-api-url" name="courier_api_base_url" value="https://api.livraria.ro/" />
+                    <?php endif; ?>
                     <tr>
                         <th scope="row">Username</th>
-                        <td><input type="text" name="courier_api_username" value="<?php echo esc_attr(get_option('courier_api_username')); ?>" class="regular-text" /></td>
+                        <td><input type="text" id="login-username" name="courier_api_username" value="<?php echo esc_attr(get_option('courier_api_username')); ?>" class="regular-text" /></td>
                     </tr>
                     <tr>
                         <th scope="row">Password</th>
-                        <td><input type="password" name="courier_api_password" value="<?php echo esc_attr(get_option('courier_api_password')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Auto-create expeditions</th>
-                        <td><input type="checkbox" name="courier_auto_create" value="1" <?php checked(1, get_option('courier_auto_create'), true); ?> /></td>
+                        <td><input type="password" id="login-password" name="courier_api_password" value="" class="regular-text" /></td>
                     </tr>
                 </table>
-                    <?php submit_button(); ?>
-                </form>
+                <p class="submit">
+                    <button type="button" id="livraria-login-btn" class="button button-primary">Login</button>
+                </p>
             </div>
+            <?php endif; ?>
             
             <?php
             // Display user info and sender profile if token is available
-            $this->render_account_information();
+            if ($is_logged_in) {
+                $this->render_account_information();
+            }
             ?>
             
-            <div id="api-test-section" style="background: #f7f7f7; border-left: 4px solid #2271b1; padding: 12px 16px; margin-top: 15px; border-radius: 2px;">
-                <h3 style="margin: 0 0 12px 0; font-size: 15px; color: #1d2327;">Test API Connection</h3>
-                <p class="description" style="margin-bottom: 15px;">Test network connectivity and authentication separately to troubleshoot issues.</p>
-                
-                <div style="margin-bottom: 15px;">
-                    <button type="button" id="test-connectivity" class="button">1. Test Network Connectivity</button>
-                    <span class="description" style="margin-left: 10px;">Check if the server can reach your API</span>
-                </div>
-                
-                <div style="margin-bottom: 15px;">
-                    <button type="button" id="test-api-connection" class="button button-primary">2. Test Authentication & API Access</button>
-                    <span class="description" style="margin-left: 10px;">Test login and API permissions</span>
-                </div>
-                
-                <div id="api-test-result"></div>
-                
-                <div id="test-steps" style="display:none; margin-top: 15px;">
-                    <h4>Test Steps:</h4>
-                    <ol>
-                        <li id="step-login">Login with credentials... <span class="status"></span></li>
-                        <li id="step-api">Test API access with token... <span class="status"></span></li>
-                    </ol>
+            <!-- Debug Modal -->
+            <div id="livraria-debug-modal" style="display: none; position: fixed; z-index: 100000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); overflow: auto;">
+                <div style="background-color: #fff; margin: 5% auto; padding: 0; border-radius: 8px; width: 90%; max-width: 700px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-height: 85vh; overflow: hidden; display: flex; flex-direction: column;">
+                    <div style="padding: 20px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; background: #f7f7f7;">
+                        <h2 style="margin: 0; font-size: 18px; color: #1d2327; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                            <span style="font-size: 20px;">🔧</span>
+                            <span>Debug Tools</span>
+                        </h2>
+                        <button type="button" id="livraria-debug-close" style="background: none; border: none; font-size: 24px; color: #646970; cursor: pointer; padding: 0; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 4px; transition: background-color 0.2s;" onmouseover="this.style.backgroundColor='#e5e5e5'" onmouseout="this.style.backgroundColor='transparent'">&times;</button>
+                    </div>
+                    <div style="padding: 20px; overflow-y: auto; flex: 1;">
+                        <!-- API Configuration Info -->
+                        <div style="background: #f0f6fc; border: 1px solid #c3d4e6; border-radius: 4px; padding: 12px; margin-bottom: 20px;">
+                            <h3 style="margin: 0 0 10px 0; font-size: 14px; color: #1d2327; font-weight: 600;">API Configuration</h3>
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <tr>
+                                    <td style="padding: 6px 0; font-size: 12px; color: #646970; width: 120px; vertical-align: top;">API Base URL:</td>
+                                    <td style="padding: 6px 0; font-size: 12px; color: #1d2327; font-family: monospace;" data-api-url="<?php echo esc_attr(get_option('courier_api_base_url', '')); ?>"><?php echo esc_html(get_option('courier_api_base_url', 'Not set')); ?></td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 6px 0; font-size: 12px; color: #646970; width: 120px; vertical-align: top;">Username:</td>
+                                    <td style="padding: 6px 0; font-size: 12px; color: #1d2327; font-family: monospace;" data-api-username="<?php echo esc_attr(get_option('courier_api_username', '')); ?>"><?php echo esc_html(get_option('courier_api_username', 'Not set')); ?></td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 6px 0; font-size: 12px; color: #646970; width: 120px; vertical-align: top;">Password:</td>
+                                    <td style="padding: 6px 0; font-size: 12px; color: #1d2327; font-family: monospace; display: flex; align-items: center; gap: 8px;">
+                                        <span id="livraria-password-display"><?php echo !empty(get_option('courier_api_password', '')) ? '••••••••' : 'Not set'; ?></span>
+                                        <?php if (!empty(get_option('courier_api_password', ''))): ?>
+                                        <button type="button" id="livraria-copy-password" style="background: #2271b1; border: 1px solid #2271b1; border-radius: 3px; padding: 3px 6px; cursor: pointer; display: flex; align-items: center; gap: 3px; font-size: 10px; color: #ffffff; transition: all 0.2s; line-height: 1.3;" onmouseover="this.style.background='#135e96'; this.style.borderColor='#135e96'; this.style.color='#ffffff'" onmouseout="this.style.background='#2271b1'; this.style.borderColor='#2271b1'; this.style.color='#ffffff'" title="Copy password">
+                                            <span style="font-size: 10px; color: #ffffff;">📋</span>
+                                            <span style="color: #ffffff;">Copy</span>
+                                        </button>
+                                        <span id="livraria-password-value" style="display: none;" data-api-password="<?php echo esc_attr(get_option('courier_api_password', '')); ?>"><?php echo esc_attr(get_option('courier_api_password', '')); ?></span>
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>
+                        
+                        <div id="api-test-section">
+                            <h3 style="margin: 0 0 12px 0; font-size: 15px; color: #1d2327;">Test API Connection</h3>
+                            <p class="description" style="margin-bottom: 20px;">Test network connectivity and authentication separately to troubleshoot issues.</p>
+                            
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                                <!-- Network Connectivity Test -->
+                                <div style="border: 1px solid #ddd; border-radius: 4px; padding: 15px; background: #fafafa;">
+                                    <div style="text-align: center; margin-bottom: 10px;">
+                                        <button type="button" id="test-connectivity" class="button" style="width: 100%;">Test Network Connectivity</button>
+                                    </div>
+                                    <p class="description" style="text-align: center; margin: 0 0 15px 0; font-size: 12px; color: #646970;">Check if the server can reach your API</p>
+                                    <div id="api-test-result-connectivity" style="min-height: 50px;"></div>
+                                </div>
+                                
+                                <!-- Authentication Test -->
+                                <div style="border: 1px solid #ddd; border-radius: 4px; padding: 15px; background: #fafafa;">
+                                    <div style="text-align: center; margin-bottom: 10px;">
+                                        <button type="button" id="test-api-connection" class="button button-primary" style="width: 100%;">Test Authentication & API Access</button>
+                                    </div>
+                                    <p class="description" style="text-align: center; margin: 0 0 15px 0; font-size: 12px; color: #646970;">Test login and API permissions</p>
+                                    <div id="api-test-result-auth" style="min-height: 50px;"></div>
+                                    <div id="test-steps" style="display:none; margin-top: 15px;">
+                                        <h4 style="margin: 0 0 10px 0; font-size: 13px;">Test Steps:</h4>
+                                        <ol style="margin: 0; padding-left: 20px; font-size: 12px;">
+                                            <li id="step-login" style="margin-bottom: 5px;">Login with credentials... <span class="status"></span></li>
+                                            <li id="step-api">Test API access with token... <span class="status"></span></li>
+                                        </ol>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -86,8 +157,193 @@ class Livraria_Admin_Page {
         <script>
         var livrariaAdmin = {
             nonce: '<?php echo wp_create_nonce('livraria_admin_nonce'); ?>',
-            ajaxurl: '<?php echo admin_url('admin-ajax.php'); ?>'
+            ajaxurl: '<?php echo admin_url('admin-ajax.php'); ?>',
+            isLoggedIn: <?php echo $is_logged_in ? 'true' : 'false'; ?>
         };
+        
+        jQuery(document).ready(function($) {
+            // Logout button handler
+            $('#livraria-logout-btn').on('click', function() {
+                if (!confirm('Are you sure you want to logout?')) {
+                    return;
+                }
+                
+                var btn = $(this);
+                btn.prop('disabled', true).text('Logging out...');
+                
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'livraria_logout',
+                        nonce: livrariaAdmin.nonce
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            location.reload();
+                        } else {
+                            alert('Logout failed: ' + (response.data || 'Unknown error'));
+                            btn.prop('disabled', false).text('Logout');
+                        }
+                    },
+                    error: function() {
+                        alert('AJAX error during logout');
+                        btn.prop('disabled', false).text('Logout');
+                    }
+                });
+            });
+            
+            // Login button handler
+            $('#livraria-login-btn').on('click', function() {
+                var apiUrl = $('#login-api-url').val() || $('input[name="courier_api_base_url"]').val() || 'https://api.livraria.ro/';
+                var username = $('#login-username').val() || $('input[name="courier_api_username"]').val();
+                var password = $('#login-password').val() || $('input[name="courier_api_password"]').val();
+                
+                if (!username || !password) {
+                    alert('Please fill in Username and Password before logging in.');
+                    return;
+                }
+                
+                var btn = $(this);
+                btn.prop('disabled', true).text('Logging in...');
+                
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'livraria_login',
+                        api_url: apiUrl,
+                        username: username,
+                        password: password,
+                        nonce: livrariaAdmin.nonce
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            location.reload();
+                        } else {
+                            alert('Login failed: ' + (response.data || 'Unknown error'));
+                            btn.prop('disabled', false).text('Login');
+                        }
+                    },
+                    error: function() {
+                        alert('AJAX error during login');
+                        btn.prop('disabled', false).text('Login');
+                    }
+                });
+            });
+        });
+        
+        // Debug modal handlers
+        jQuery(document).ready(function($) {
+            $('#livraria-debug-btn').on('click', function() {
+                $('#livraria-debug-modal').css('display', 'block');
+                $('body').css('overflow', 'hidden');
+            });
+            
+            $('#livraria-debug-close').on('click', function() {
+                $('#livraria-debug-modal').css('display', 'none');
+                $('body').css('overflow', 'auto');
+            });
+            
+            // Close modal when clicking outside
+            $('#livraria-debug-modal').on('click', function(e) {
+                if ($(e.target).attr('id') === 'livraria-debug-modal') {
+                    $(this).css('display', 'none');
+                    $('body').css('overflow', 'auto');
+                }
+            });
+            
+            // Copy password to clipboard
+            $('#livraria-copy-password').on('click', function() {
+                var passwordValue = $('#livraria-password-value').text();
+                if (!passwordValue) {
+                    return;
+                }
+                
+                // Use modern Clipboard API if available
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(passwordValue).then(function() {
+                        var btn = $('#livraria-copy-password');
+                        var originalHtml = btn.html();
+                        btn.html('<span style="font-size: 12px;">✓</span><span>Copied!</span>').css('background', '#d4edda').css('border-color', '#c3e6cb').css('color', '#155724');
+                        setTimeout(function() {
+                            btn.html(originalHtml).css('background', '').css('border-color', '').css('color', '');
+                        }, 2000);
+                    }).catch(function(err) {
+                        alert('Failed to copy password: ' + err);
+                    });
+                } else {
+                    // Fallback for older browsers
+                    var textArea = document.createElement('textarea');
+                    textArea.value = passwordValue;
+                    textArea.style.position = 'fixed';
+                    textArea.style.left = '-999999px';
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    try {
+                        var successful = document.execCommand('copy');
+                        if (successful) {
+                            var btn = $('#livraria-copy-password');
+                            var originalHtml = btn.html();
+                            btn.html('<span style="font-size: 12px;">✓</span><span>Copied!</span>').css('background', '#d4edda').css('border-color', '#c3e6cb').css('color', '#155724');
+                            setTimeout(function() {
+                                btn.html(originalHtml).css('background', '').css('border-color', '').css('color', '');
+                            }, 2000);
+                        } else {
+                            alert('Failed to copy password. Please select and copy manually.');
+                        }
+                    } catch (err) {
+                        alert('Failed to copy password: ' + err);
+                    }
+                    document.body.removeChild(textArea);
+                }
+            });
+            
+            // Auto-create expeditions checkbox auto-save
+            $('#courier_auto_create_account').on('change', function() {
+                var checkbox = $(this);
+                var isChecked = checkbox.is(':checked');
+                var originalValue = !isChecked; // Store original state (opposite of new state)
+                
+                checkbox.prop('disabled', true);
+                
+                // Create a form data object
+                var formData = {
+                    action: 'update_option',
+                    option_name: 'courier_auto_create',
+                    option_value: isChecked ? '1' : '0',
+                    nonce: livrariaAdmin.nonce
+                };
+                
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: formData,
+                    success: function(response) {
+                        if (response.success) {
+                            // Show brief success feedback without layout shift
+                            var feedback = $('#livraria-auto-save-feedback');
+                            feedback.css('opacity', '1');
+                            setTimeout(function() {
+                                feedback.css('opacity', '0');
+                            }, 2000);
+                        } else {
+                            // Revert on error
+                            checkbox.prop('checked', originalValue);
+                            alert('Failed to save setting: ' + (response.data || 'Unknown error'));
+                        }
+                        checkbox.prop('disabled', false);
+                    },
+                    error: function() {
+                        // Revert on error
+                        checkbox.prop('checked', originalValue);
+                        alert('AJAX error while saving setting');
+                        checkbox.prop('disabled', false);
+                    }
+                });
+            });
+        });
         </script>
         <?php
     }
@@ -199,8 +455,9 @@ class Livraria_Admin_Page {
         
         
         ?>
-        <div style="background: #f7f7f7; border-left: 4px solid #2271b1; padding: 12px 16px; margin-bottom: 15px; border-radius: 2px;">
+        <div style="background: #f7f7f7; border-left: 4px solid #2271b1; padding: 12px 16px; margin-bottom: 15px; border-radius: 2px; min-height: calc(100vh - 200px);">
             <h3 style="margin: 0 0 12px 0; font-size: 15px; color: #1d2327;">Livraria Account</h3>
+            
             <div style="display: flex; flex-direction: column; gap: 8px;">
                 <?php if (isset($contact_fields['name']) || isset($contact_fields['email'])): ?>
                     <div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;">
@@ -243,6 +500,16 @@ class Livraria_Admin_Page {
                         <?php endif; ?>
                     </div>
                 <?php endif; ?>
+            </div>
+            
+            <!-- Auto-create expeditions setting -->
+            <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #ddd;">
+                <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; position: relative;">
+                    <input type="checkbox" id="courier_auto_create_account" name="courier_auto_create" value="1" <?php checked(1, get_option('courier_auto_create'), true); ?> style="margin: 0;" />
+                    <span style="font-size: 14px; color: #1d2327;">Auto-create expeditions</span>
+                    <span id="livraria-auto-save-feedback" style="margin-left: 8px; color: #00a32a; font-size: 12px; white-space: nowrap; opacity: 0; transition: opacity 0.2s; display: inline-block;">✓ Saved</span>
+                </label>
+                <p class="description" style="margin: 8px 0 0 28px; font-size: 12px; color: #646970;">Automatically create expeditions when orders are marked as completed</p>
             </div>
             
             <?php if ($sender_profile): ?>
