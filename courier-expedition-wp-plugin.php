@@ -1481,4 +1481,3 @@ class LivrariaPlugin {
 
 // Initialize the plugin
 new LivrariaPlugin();
-new LivrariaPlugin();
