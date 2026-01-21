@@ -1,0 +1,21 @@
+# Example docker-compose.yml configuration for development
+# Add this volume mount to your existing docker-compose.yml
+
+version: '3.8'
+
+services:
+  wordpress:
+    # ... your existing configuration ...
+    
+    volumes:
+      # Mount your plugin source directory for continuous development
+      # Replace /path/to/livraria_wordpress_plugin with your actual path
+      - /Users/johnny/Developer/livraria_wordpress_plugin:/var/www/html/wp-content/plugins/livraria
+      
+      # ... your other volumes ...
+
+# After adding this volume:
+# 1. Restart your containers: docker-compose restart
+# 2. The plugin will use your source files directly
+# 3. Changes will appear immediately (just refresh WordPress)
+
