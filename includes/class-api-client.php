@@ -82,6 +82,13 @@ class Livraria_API_Client {
                 'expires_at' => $this->token_expires_at
             );
         } else {
+            // Clear existing tokens on failed login to prevent confusion
+            // This ensures that if a new login fails, the user isn't still authenticated with old credentials
+            $this->api_token = '';
+            $this->token_expires_at = 0;
+            delete_option('livraria_api_token');
+            delete_option('livraria_token_expires_at');
+            
             // Enhanced error message with debug info
             $error_details = array(
                 'response_received' => $response !== false,
