@@ -16,6 +16,7 @@ if (!defined('ABSPATH')) {
 // Include required classes
 require_once plugin_dir_path(__FILE__) . 'includes/class-api-client.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-order-handler.php';
+require_once plugin_dir_path(__FILE__) . 'includes/class-admin-page.php';
 
 class LivrariaPlugin {
     
@@ -23,6 +24,7 @@ class LivrariaPlugin {
     private $api_token;
     private $api_client;
     private $order_handler;
+    private $admin_page;
     
     public function __construct() {
         add_action('init', array($this, 'init'));
@@ -51,6 +53,7 @@ class LivrariaPlugin {
         // Initialize API client and order handler  
         $this->api_client = new Livraria_API_Client($this->api_base_url);
         $this->order_handler = new Livraria_Order_Handler($this->api_client);
+        $this->admin_page = new Livraria_Admin_Page($this->api_client);
     }
     
     public function init() {
@@ -84,7 +87,7 @@ class LivrariaPlugin {
             'Livraria',
             'manage_options',
             'courier-api-settings',
-            array($this, 'admin_page')
+            array($this->admin_page, 'render')
         );
     }
     
@@ -110,126 +113,6 @@ class LivrariaPlugin {
         register_setting('courier_api_settings', 'courier_sender_apartment');
     }
     
-    public function admin_page() {
-        ?>
-        <div class="wrap">
-            <h1>Livraria Settings</h1>
-            <form method="post" action="options.php">
-                <?php
-                settings_fields('courier_api_settings');
-                do_settings_sections('courier_api_settings');
-                ?>
-                <table class="form-table">
-                    <tr>
-                        <th scope="row">API Base URL</th>
-                        <td><input type="url" name="courier_api_base_url" value="<?php echo esc_attr(get_option('courier_api_base_url')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Username</th>
-                        <td><input type="text" name="courier_api_username" value="<?php echo esc_attr(get_option('courier_api_username')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Password</th>
-                        <td><input type="password" name="courier_api_password" value="<?php echo esc_attr(get_option('courier_api_password')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Auto-create expeditions</th>
-                        <td><input type="checkbox" name="courier_auto_create" value="1" <?php checked(1, get_option('courier_auto_create'), true); ?> /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Default Sender Name</th>
-                        <td><input type="text" name="courier_default_sender_name" value="<?php echo esc_attr(get_option('courier_default_sender_name')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Default Sender Email</th>
-                        <td><input type="email" name="courier_default_sender_email" value="<?php echo esc_attr(get_option('courier_default_sender_email')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Default Sender Phone</th>
-                        <td><input type="text" name="courier_default_sender_phone" value="<?php echo esc_attr(get_option('courier_default_sender_phone')); ?>" class="regular-text" /></td>
-                    </tr>
-                </table>
-                
-                <h3>Sender Address</h3>
-                <table class="form-table">
-                    <tr>
-                        <th scope="row">Country</th>
-                        <td><input type="text" name="courier_sender_country" value="<?php echo esc_attr(get_option('courier_sender_country', 'Romania')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">County/State</th>
-                        <td><input type="text" name="courier_sender_county" value="<?php echo esc_attr(get_option('courier_sender_county', 'Bucharest')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">City</th>
-                        <td><input type="text" name="courier_sender_city" value="<?php echo esc_attr(get_option('courier_sender_city', 'Bucharest')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Postcode</th>
-                        <td><input type="text" name="courier_sender_postcode" value="<?php echo esc_attr(get_option('courier_sender_postcode', '010101')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Street</th>
-                        <td><input type="text" name="courier_sender_street" value="<?php echo esc_attr(get_option('courier_sender_street')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Street Number</th>
-                        <td><input type="text" name="courier_sender_street_number" value="<?php echo esc_attr(get_option('courier_sender_street_number')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Block <small>(optional)</small></th>
-                        <td><input type="text" name="courier_sender_block" value="<?php echo esc_attr(get_option('courier_sender_block')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Staircase <small>(optional)</small></th>
-                        <td><input type="text" name="courier_sender_staircase" value="<?php echo esc_attr(get_option('courier_sender_staircase')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Floor <small>(optional)</small></th>
-                        <td><input type="text" name="courier_sender_floor" value="<?php echo esc_attr(get_option('courier_sender_floor')); ?>" class="regular-text" /></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Apartment <small>(optional)</small></th>
-                        <td><input type="text" name="courier_sender_apartment" value="<?php echo esc_attr(get_option('courier_sender_apartment')); ?>" class="regular-text" /></td>
-                    </tr>
-                </table>
-                <?php submit_button(); ?>
-            </form>
-            
-            <div id="api-test-section">
-                <h3>Test API Connection</h3>
-                <p class="description">Test network connectivity and authentication separately to troubleshoot issues.</p>
-                
-                <div style="margin-bottom: 15px;">
-                    <button type="button" id="test-connectivity" class="button">1. Test Network Connectivity</button>
-                    <span class="description" style="margin-left: 10px;">Check if the server can reach your API</span>
-                </div>
-                
-                <div style="margin-bottom: 15px;">
-                    <button type="button" id="test-api-connection" class="button button-primary">2. Test Authentication & API Access</button>
-                    <span class="description" style="margin-left: 10px;">Test login and API permissions</span>
-                </div>
-                
-                <div id="api-test-result"></div>
-                
-                <div id="test-steps" style="display:none; margin-top: 15px;">
-                    <h4>Test Steps:</h4>
-                    <ol>
-                        <li id="step-login">Login with credentials... <span class="status"></span></li>
-                        <li id="step-api">Test API access with token... <span class="status"></span></li>
-                    </ol>
-                </div>
-            </div>
-        </div>
-        
-        <script>
-        var livrariaAdmin = {
-            nonce: '<?php echo wp_create_nonce('livraria_admin_nonce'); ?>',
-            ajaxurl: '<?php echo admin_url('admin-ajax.php'); ?>'
-        };
-        </script>
-        <?php
-    }
     
     public function add_expedition_meta_box() {
         // Debug: Log when this method is called
