@@ -3,7 +3,9 @@
  * Plugin Name: Livraria
  * Description: WordPress plugin for generating shipping expeditions via courier API
  * Version: 1.0.0
- * Author: Your Company
+ * Author: Livraria S.R.L.
+ * 
+ * DEVELOPMENT MODE: This plugin is mounted from source for real-time development
  */
 
 // Prevent direct access
