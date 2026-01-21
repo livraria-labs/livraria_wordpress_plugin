@@ -130,7 +130,7 @@ Default package dimensions can be customized in the `prepare_quote_request_data(
 - Width: 20cm
 - Height: 10cm  
 - Length: 30cm
-- Weight: From product data or 0.5kg default
+- Weight: From product data or 1kg default
 
 ## Troubleshooting
 
