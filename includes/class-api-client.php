@@ -216,6 +216,29 @@ class Livraria_API_Client {
     }
     
     /**
+     * Select a courier quote for a quote request
+     * 
+     * @param string $quote_request_id Quote request ID
+     * @param string $courier_quote_id Courier quote ID to select
+     * @return array|false API response or false on failure
+     */
+    public function select_courier_quote($quote_request_id, $courier_quote_id) {
+        return $this->api_request('PUT', '/quote-request/' . $quote_request_id . '/selected-courier-quote', array(
+            'courierQuoteId' => $courier_quote_id
+        ));
+    }
+    
+    /**
+     * Auto-attach billing info to a quote request
+     * 
+     * @param string $quote_request_id Quote request ID
+     * @return array|false API response or false on failure
+     */
+    public function auto_attach_billing_info($quote_request_id) {
+        return $this->api_request('POST', '/quote-request/' . $quote_request_id . '/auto-attach-billing-info');
+    }
+    
+    /**
      * Create an expedition
      * 
      * @param array $expedition_data Expedition data
@@ -410,10 +433,21 @@ class Livraria_API_Client {
         );
         
         if ($data && in_array($method, array('POST', 'PUT', 'PATCH'))) {
-            $args['body'] = json_encode($data);
+            $json_body = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $args['body'] = $json_body;
             
             // Log request for debugging
             $this->log_debug('API Request: ' . $method . ' ' . $url, $data);
+            
+            // Log the actual JSON body being sent
+            if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+                error_log('Livraria API Debug: JSON body being sent: ' . $json_body);
+                if (isset($data['createQuoteRequestDto'])) {
+                    error_log('Livraria API Debug: Has createQuoteRequestDto: yes');
+                    error_log('Livraria API Debug: Has sender: ' . (isset($data['createQuoteRequestDto']['sender']) ? 'yes' : 'no'));
+                    error_log('Livraria API Debug: Has recipient: ' . (isset($data['createQuoteRequestDto']['recipient']) ? 'yes' : 'no'));
+                }
+            }
         }
         
         $response = wp_remote_request($url, $args);
