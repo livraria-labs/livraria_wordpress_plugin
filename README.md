@@ -2,6 +2,13 @@
 
 This WordPress plugin integrates with your Livraria expedition API to automatically create shipping expeditions for WooCommerce orders.
 
+## Source Code
+
+The complete source code for this plugin is publicly available and maintained at:
+**https://github.com/livraria-labs/livraria_wordpress_plugin**
+
+The source code is also included directly in the deployed plugin - all PHP files are unminified and readable.
+
 ## Features
 
 - **Automatic Expedition Creation**: Automatically creates expeditions when orders are completed
@@ -165,9 +172,61 @@ API errors will be logged to `/wp-content/debug.log`.
 - **WooCommerce**: 3.0+
 - **PHP**: 7.4+
 
+## Development
+
+### Source Code Access
+
+The complete source code is available at:
+- **GitHub Repository**: https://github.com/livraria-labs/livraria_wordpress_plugin
+- **Source Code**: Included in the deployed plugin (all files are unminified)
+
+### Build Tools
+
+This plugin uses the following development tools:
+
+#### Composer (PHP Dependency Management)
+```bash
+# Install dependencies
+composer install
+
+# Install development dependencies (PHPUnit)
+composer install --dev
+```
+
+#### PHPUnit (Testing)
+```bash
+# Run tests
+composer test
+# or
+vendor/bin/phpunit
+
+# Run tests with coverage
+composer test-coverage
+```
+
+See [TESTING.md](TESTING.md) for detailed testing documentation.
+
+#### Deployment Script
+```bash
+# Build plugin package
+./deploy.sh staging
+# or
+./deploy.sh production
+```
+
+The deployment script (`deploy.sh`) creates a WordPress-ready ZIP file in the `build/` directory.
+
+### Development Setup
+
+For local development with Docker, see:
+- [QUICKSTART.md](QUICKSTART.md) - Quick setup guide
+- [DEVELOPMENT.md](DEVELOPMENT.md) - Comprehensive development guide
+- [dev-scripts/](dev-scripts/) - Development helper scripts
+
 ## Support
 
 For issues related to:
 - **Plugin functionality**: Check WordPress error logs and ensure proper configuration
 - **API integration**: Verify your courier API credentials and endpoints
 - **WooCommerce compatibility**: Ensure WooCommerce is active and up to date
+- **Source code**: Visit https://github.com/livraria-labs/livraria_wordpress_plugin

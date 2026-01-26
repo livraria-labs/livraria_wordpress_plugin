@@ -39,3 +39,7 @@ yarn.lock
 *.bak
 *.backup
 
+# Test artifacts
+coverage/
+.phpunit.result.cache
+.phpunit.cache
