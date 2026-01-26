@@ -387,7 +387,7 @@ class LivrariaPlugin {
             // This prevents page refresh from interrupting the expedition creation flow
             var autoCreateEnabled = <?php echo get_option('courier_auto_create') ? 'true' : 'false'; ?>;
             var expeditionExists = <?php echo $expedition_id ? 'true' : 'false'; ?>;
-            var orderId = <?php echo $order_id; ?>;
+            var orderId = <?php echo absint($order_id); ?>;
             
             // Check if we need to run auto-create (set by server-side hook)
             var shouldAutoCreate = <?php echo get_transient('livraria_auto_create_order_' . $order_id) ? 'true' : 'false'; ?>;
@@ -582,7 +582,7 @@ class LivrariaPlugin {
                                 type: 'POST',
                                 data: {
                                     action: 'get_quotes_for_order',
-                                    order_id: <?php echo $order_id; ?>,
+                                    order_id: <?php echo absint($order_id); ?>,
                                     nonce: $('#courier_expedition_nonce_field').val(),
                                     expedition_data: {}
                                 },
@@ -607,7 +607,7 @@ class LivrariaPlugin {
                                         type: 'POST',
                                         data: {
                                             action: 'select_quote',
-                                            order_id: <?php echo $order_id; ?>,
+                                            order_id: <?php echo absint($order_id); ?>,
                                             quote_request_id: quoteRequestId,
                                             courier_quote_id: selectedQuote.id,
                                             nonce: $('#courier_expedition_nonce_field').val()
@@ -629,7 +629,7 @@ class LivrariaPlugin {
                                                 type: 'POST',
                                                 data: {
                                                     action: 'generate_label',
-                                                    order_id: <?php echo $order_id; ?>,
+                                                    order_id: <?php echo absint($order_id); ?>,
                                                     nonce: $('#courier_expedition_nonce_field').val()
                                                 },
                                                 success: function(labelResponse) {
