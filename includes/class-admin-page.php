@@ -156,8 +156,8 @@ class Livraria_Admin_Page {
         
         <script>
         var livrariaAdmin = {
-            nonce: '<?php echo wp_create_nonce('livraria_admin_nonce'); ?>',
-            ajaxurl: '<?php echo admin_url('admin-ajax.php'); ?>',
+            nonce: '<?php echo esc_js(wp_create_nonce('livraria_admin_nonce')); ?>',
+            ajaxurl: '<?php echo esc_js(admin_url('admin-ajax.php')); ?>',
             isLoggedIn: <?php echo $is_logged_in ? 'true' : 'false'; ?>
         };
         
@@ -569,16 +569,16 @@ class Livraria_Admin_Page {
                 $profile_id = 'livraria-profile-' . $index;
                 ?>
                 <div class="livraria-profile-card">
-                    <button type="button" onclick="openLivrariaProfileModal('<?php echo $profile_id; ?>')" style="width: 100%; height: 80px; padding: 14px; background: #fff; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; text-align: left; transition: all 0.2s ease; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center;" onmouseover="this.style.borderColor='#2271b1'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.1)'" onmouseout="this.style.borderColor='#ddd'; this.style.boxShadow='0 1px 2px rgba(0,0,0,0.05)'">
+                    <button type="button" onclick="openLivrariaProfileModal('<?php echo esc_js($profile_id); ?>')" style="width: 100%; height: 80px; padding: 14px; background: #fff; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; text-align: left; transition: all 0.2s ease; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center;" onmouseover="this.style.borderColor='#2271b1'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.1)'" onmouseout="this.style.borderColor='#ddd'; this.style.boxShadow='0 1px 2px rgba(0,0,0,0.05)'">
                         <span style="font-size: 13px; color: #1d2327; font-weight: 600; letter-spacing: 0.2px; line-height: 1.4;"><?php echo esc_html($profile_name); ?></span>
                     </button>
                     
                     <!-- Modal for this profile -->
-                    <div id="<?php echo $profile_id; ?>-modal" class="livraria-profile-modal-overlay" style="display: none; position: fixed; z-index: 100000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); overflow: auto;">
+                    <div id="<?php echo esc_attr($profile_id); ?>-modal" class="livraria-profile-modal-overlay" style="display: none; position: fixed; z-index: 100000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); overflow: auto;">
                         <div style="background-color: #fff; margin: 5% auto; padding: 0; border-radius: 8px; width: 90%; max-width: 700px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-height: 85vh; overflow: hidden; display: flex; flex-direction: column;">
                             <div style="padding: 20px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; background: #f7f7f7;">
                                 <h3 style="margin: 0; font-size: 16px; color: #1d2327; font-weight: 600;"><?php echo esc_html($profile_name); ?></h3>
-                                <button type="button" onclick="closeLivrariaProfileModal('<?php echo $profile_id; ?>')" style="background: none; border: none; font-size: 24px; color: #646970; cursor: pointer; padding: 0; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 4px; transition: background-color 0.2s;" onmouseover="this.style.backgroundColor='#e5e5e5'" onmouseout="this.style.backgroundColor='transparent'">&times;</button>
+                                <button type="button" onclick="closeLivrariaProfileModal('<?php echo esc_js($profile_id); ?>')" style="background: none; border: none; font-size: 24px; color: #646970; cursor: pointer; padding: 0; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 4px; transition: background-color 0.2s;" onmouseover="this.style.backgroundColor='#e5e5e5'" onmouseout="this.style.backgroundColor='transparent'">&times;</button>
                             </div>
                             <div style="padding: 20px; overflow-y: auto; flex: 1;">
                                 <?php $this->render_sender_profile($profile); ?>

@@ -387,7 +387,7 @@ class LivrariaPlugin {
             // This prevents page refresh from interrupting the expedition creation flow
             var autoCreateEnabled = <?php echo get_option('courier_auto_create') ? 'true' : 'false'; ?>;
             var expeditionExists = <?php echo $expedition_id ? 'true' : 'false'; ?>;
-            var orderId = <?php echo $order_id; ?>;
+            var orderId = <?php echo absint($order_id); ?>;
             
             // Check if we need to run auto-create (set by server-side hook)
             var shouldAutoCreate = <?php echo get_transient('livraria_auto_create_order_' . $order_id) ? 'true' : 'false'; ?>;
@@ -582,7 +582,7 @@ class LivrariaPlugin {
                                 type: 'POST',
                                 data: {
                                     action: 'get_quotes_for_order',
-                                    order_id: <?php echo $order_id; ?>,
+                                    order_id: <?php echo absint($order_id); ?>,
                                     nonce: $('#courier_expedition_nonce_field').val(),
                                     expedition_data: {}
                                 },
@@ -607,7 +607,7 @@ class LivrariaPlugin {
                                         type: 'POST',
                                         data: {
                                             action: 'select_quote',
-                                            order_id: <?php echo $order_id; ?>,
+                                            order_id: <?php echo absint($order_id); ?>,
                                             quote_request_id: quoteRequestId,
                                             courier_quote_id: selectedQuote.id,
                                             nonce: $('#courier_expedition_nonce_field').val()
@@ -629,7 +629,7 @@ class LivrariaPlugin {
                                                 type: 'POST',
                                                 data: {
                                                     action: 'generate_label',
-                                                    order_id: <?php echo $order_id; ?>,
+                                                    order_id: <?php echo absint($order_id); ?>,
                                                     nonce: $('#courier_expedition_nonce_field').val()
                                                 },
                                                 success: function(labelResponse) {
@@ -939,9 +939,7 @@ class LivrariaPlugin {
      * Called from JavaScript when order status changes to "completed"
      */
     public function ajax_auto_create_expedition() {
-        if (!wp_verify_nonce($_POST['nonce'], 'courier_expedition_nonce')) {
-            wp_send_json_error('Security check failed');
-        }
+        check_ajax_referer('courier_expedition_nonce', 'nonce');
         
         $order_id = intval($_POST['order_id']);
         
@@ -1076,9 +1074,7 @@ class LivrariaPlugin {
     }
     
     public function ajax_create_expedition() {
-        if (!wp_verify_nonce($_POST['nonce'], 'courier_expedition_nonce')) {
-            wp_die('Security check failed');
-        }
+        check_ajax_referer('courier_expedition_nonce', 'nonce');
         
         $order_id = intval($_POST['order_id']);
         $custom_data = isset($_POST['expedition_data']) ? $_POST['expedition_data'] : array();
@@ -1101,9 +1097,7 @@ class LivrariaPlugin {
      * AJAX handler to get quotes for an order (creates quote request)
      */
     public function ajax_get_quotes_for_order() {
-        if (!wp_verify_nonce($_POST['nonce'], 'courier_expedition_nonce')) {
-            wp_die('Security check failed');
-        }
+        check_ajax_referer('courier_expedition_nonce', 'nonce');
         
         $order_id = intval($_POST['order_id']);
         $custom_data = isset($_POST['expedition_data']) ? $_POST['expedition_data'] : array();
@@ -1126,9 +1120,7 @@ class LivrariaPlugin {
      * AJAX handler to select a quote
      */
     public function ajax_select_quote() {
-        if (!wp_verify_nonce($_POST['nonce'], 'courier_expedition_nonce')) {
-            wp_die('Security check failed');
-        }
+        check_ajax_referer('courier_expedition_nonce', 'nonce');
         
         $order_id = intval($_POST['order_id']);
         $quote_request_id = sanitize_text_field($_POST['quote_request_id']);
@@ -1151,9 +1143,7 @@ class LivrariaPlugin {
      * AJAX handler to generate label (create expedition after quote selection)
      */
     public function ajax_generate_label() {
-        if (!wp_verify_nonce($_POST['nonce'], 'courier_expedition_nonce')) {
-            wp_die('Security check failed');
-        }
+        check_ajax_referer('courier_expedition_nonce', 'nonce');
         
         $order_id = intval($_POST['order_id']);
         $quote_request_id = get_post_meta($order_id, '_courier_quote_request_id', true);
@@ -1209,11 +1199,14 @@ class LivrariaPlugin {
         if (isset($data['packages']) && is_array($data['packages'])) {
             $sanitized['packages'] = array();
             foreach ($data['packages'] as $package) {
+                if (!is_array($package)) {
+                    continue;
+                }
                 $sanitized['packages'][] = array(
-                    'weight' => floatval($package['weight']),
-                    'width' => floatval($package['width']),
-                    'height' => floatval($package['height']),
-                    'length' => floatval($package['length'])
+                    'weight' => isset($package['weight']) ? floatval($package['weight']) : 1,
+                    'width' => isset($package['width']) ? floatval($package['width']) : 10,
+                    'height' => isset($package['height']) ? floatval($package['height']) : 10,
+                    'length' => isset($package['length']) ? floatval($package['length']) : 10
                 );
             }
         }
@@ -1229,13 +1222,11 @@ class LivrariaPlugin {
     }
     
     public function ajax_test_api_connection() {
-        if (!wp_verify_nonce($_POST['nonce'], 'livraria_admin_nonce')) {
-            wp_die('Security check failed');
-        }
+        check_ajax_referer('livraria_admin_nonce', 'nonce');
         
         // Get test credentials from POST data
         $api_url = sanitize_url($_POST['api_url']);
-        $username = sanitize_email($_POST['username']);
+        $username = sanitize_text_field($_POST['username']);
         $password = sanitize_text_field($_POST['password']);
         
         // Create temporary API client and test login
@@ -1250,9 +1241,7 @@ class LivrariaPlugin {
     }
     
     public function ajax_test_connectivity() {
-        if (!wp_verify_nonce($_POST['nonce'], 'livraria_admin_nonce')) {
-            wp_die('Security check failed');
-        }
+        check_ajax_referer('livraria_admin_nonce', 'nonce');
         
         // Get API URL from POST data
         $api_url = sanitize_url($_POST['api_url']);
@@ -1272,9 +1261,7 @@ class LivrariaPlugin {
      * AJAX handler for logout
      */
     public function ajax_logout() {
-        if (!wp_verify_nonce($_POST['nonce'], 'livraria_admin_nonce')) {
-            wp_send_json_error('Security check failed');
-        }
+        check_ajax_referer('livraria_admin_nonce', 'nonce');
         
         // Clear tokens (simplest logout logic)
         delete_option('livraria_api_token');
@@ -1287,9 +1274,7 @@ class LivrariaPlugin {
      * AJAX handler for login
      */
     public function ajax_login() {
-        if (!wp_verify_nonce($_POST['nonce'], 'livraria_admin_nonce')) {
-            wp_send_json_error('Security check failed');
-        }
+        check_ajax_referer('livraria_admin_nonce', 'nonce');
         
         $api_url = sanitize_url($_POST['api_url']);
         $username = sanitize_text_field($_POST['username']);
@@ -1321,9 +1306,7 @@ class LivrariaPlugin {
      * AJAX handler for updating a single option
      */
     public function ajax_update_option() {
-        if (!wp_verify_nonce($_POST['nonce'], 'livraria_admin_nonce')) {
-            wp_send_json_error('Security check failed');
-        }
+        check_ajax_referer('livraria_admin_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
             wp_send_json_error('Insufficient permissions');
@@ -1354,7 +1337,7 @@ class LivrariaPlugin {
             return;
         }
         
-        // Verify nonce if present
+        // Verify nonce if present (form submission, not AJAX)
         if (isset($_POST['courier_expedition_nonce_field'])) {
             if (!wp_verify_nonce($_POST['courier_expedition_nonce_field'], 'courier_expedition_nonce')) {
                 return;
