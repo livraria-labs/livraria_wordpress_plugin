@@ -1209,11 +1209,14 @@ class LivrariaPlugin {
         if (isset($data['packages']) && is_array($data['packages'])) {
             $sanitized['packages'] = array();
             foreach ($data['packages'] as $package) {
+                if (!is_array($package)) {
+                    continue;
+                }
                 $sanitized['packages'][] = array(
-                    'weight' => floatval($package['weight']),
-                    'width' => floatval($package['width']),
-                    'height' => floatval($package['height']),
-                    'length' => floatval($package['length'])
+                    'weight' => isset($package['weight']) ? floatval($package['weight']) : 1,
+                    'width' => isset($package['width']) ? floatval($package['width']) : 10,
+                    'height' => isset($package['height']) ? floatval($package['height']) : 10,
+                    'length' => isset($package['length']) ? floatval($package['length']) : 10
                 );
             }
         }
@@ -1235,7 +1238,7 @@ class LivrariaPlugin {
         
         // Get test credentials from POST data
         $api_url = sanitize_url($_POST['api_url']);
-        $username = sanitize_email($_POST['username']);
+        $username = sanitize_text_field($_POST['username']);
         $password = sanitize_text_field($_POST['password']);
         
         // Create temporary API client and test login
