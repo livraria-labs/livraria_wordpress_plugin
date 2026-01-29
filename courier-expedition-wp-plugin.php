@@ -309,9 +309,9 @@ class LivrariaPlugin {
                             <h5>Package 1</h5>
                             <div class="package-dimensions">
                                 <label>Weight (kg): <input type="number" name="package_weight[]" step="0.1" min="0.1" value="1" style="width:60px;"></label>
-                                <label>Width (cm): <input type="number" name="package_width[]" step="0.1" min="1" value="20" style="width:60px;"></label>
+                                <label>Width (cm): <input type="number" name="package_width[]" step="0.1" min="1" value="10" style="width:60px;"></label>
                                 <label>Height (cm): <input type="number" name="package_height[]" step="0.1" min="1" value="10" style="width:60px;"></label>
-                                <label>Length (cm): <input type="number" name="package_length[]" step="0.1" min="1" value="30" style="width:60px;"></label>
+                                <label>Length (cm): <input type="number" name="package_length[]" step="0.1" min="1" value="10" style="width:60px;"></label>
                                 <button type="button" class="button remove-package" style="display:none;">Remove</button>
                             </div>
                         </div>
@@ -323,6 +323,63 @@ class LivrariaPlugin {
                 <div class="expedition-section">
                     <h4>Content Description</h4>
                     <textarea name="content_description" placeholder="Describe the package contents..." style="width:100%; height:60px;"></textarea>
+                </div>
+
+                <!-- Sender Profile Selection -->
+                <div class="expedition-section">
+                    <h4>Sender Profile</h4>
+                    <?php
+                    // Get sender profiles from API
+                    $api_client = new Livraria_API_Client();
+                    $sender_profiles = $api_client->get_sender_profile();
+                    $default_profile_id = get_option('livraria_default_sender_profile_id', '');
+                    
+                    if ($sender_profiles !== false && !is_wp_error($sender_profiles)) {
+                        $profiles = is_array($sender_profiles) ? $sender_profiles : array($sender_profiles);
+                        ?>
+                        <select id="livraria-sender-profile-select" name="livraria_sender_profile_id" style="width:100%; padding: 6px 8px; border: 1px solid #8c8f94; border-radius: 3px; font-size: 13px;">
+                            <?php foreach ($profiles as $index => $profile): 
+                                $profile_array = (array) $profile;
+                                $profile_id = isset($profile_array['id']) ? $profile_array['id'] : ('profile-' . $index);
+                                
+                                // Extract profile name
+                                $profile_name = 'Profile ' . ($index + 1);
+                                if (isset($profile_array['name']) && !empty($profile_array['name'])) {
+                                    $profile_name = $profile_array['name'];
+                                } elseif (isset($profile_array['companyName']) && !empty($profile_array['companyName'])) {
+                                    $profile_name = $profile_array['companyName'];
+                                } elseif (isset($profile_array['company']) && !empty($profile_array['company'])) {
+                                    if (is_array($profile_array['company']) || is_object($profile_array['company'])) {
+                                        $company_data = (array) $profile_array['company'];
+                                        if (isset($company_data['name'])) {
+                                            $profile_name = $company_data['name'];
+                                        } elseif (isset($company_data['companyName'])) {
+                                            $profile_name = $company_data['companyName'];
+                                        }
+                                    } else {
+                                        $profile_name = $profile_array['company'];
+                                    }
+                                }
+                                
+                                // Use default profile if no order-specific profile is set
+                                $selected_id = get_post_meta($order_id, '_livraria_sender_profile_id', true);
+                                if (empty($selected_id)) {
+                                    $selected_id = $default_profile_id;
+                                }
+                                ?>
+                                <option value="<?php echo esc_attr($profile_id); ?>" <?php selected($selected_id, $profile_id); ?>>
+                                    <?php echo esc_html($profile_name); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <p class="description" style="margin-top: 8px; font-size: 12px; color: #646970;">Select the sender profile to use for this expedition</p>
+                        <?php
+                    } else {
+                        ?>
+                        <p style="color: #d63638; font-size: 12px;">Unable to load sender profiles. Please check your API connection.</p>
+                        <?php
+                    }
+                    ?>
                 </div>
 
                 <!-- Service Options -->
@@ -450,6 +507,9 @@ class LivrariaPlugin {
                         updateProgress(40, 'Selecting quote...');
                         
                         // Step 2: Select quote
+                        // Get sender profile ID from dropdown
+                        var senderProfileId = $('#livraria-sender-profile-select').val() || '';
+                        
                         $.ajax({
                             url: ajaxurl,
                             type: 'POST',
@@ -458,6 +518,7 @@ class LivrariaPlugin {
                                 order_id: orderId,
                                 quote_request_id: quoteRequestId,
                                 courier_quote_id: selectedQuote.id,
+                                sender_profile_id: senderProfileId,
                                 nonce: $('#courier_expedition_nonce_field').val()
                             },
                             success: function(selectResponse) {
@@ -602,6 +663,9 @@ class LivrariaPlugin {
                                     updateProgress(40, 'Selecting quote...');
                                     
                                     // Step 2: Select quote
+                                    // Get sender profile ID from dropdown
+                                    var senderProfileId = $('#livraria-sender-profile-select').val() || '';
+                                    
                                     $.ajax({
                                         url: ajaxurl,
                                         type: 'POST',
@@ -610,6 +674,7 @@ class LivrariaPlugin {
                                             order_id: <?php echo absint($order_id); ?>,
                                             quote_request_id: quoteRequestId,
                                             courier_quote_id: selectedQuote.id,
+                                            sender_profile_id: senderProfileId,
                                             nonce: $('#courier_expedition_nonce_field').val()
                                         },
                                         success: function(selectResponse) {
@@ -717,9 +782,9 @@ class LivrariaPlugin {
                     '<h5>Package ' + packageCount + '</h5>' +
                     '<div class="package-dimensions">' +
                         '<label>Weight (kg): <input type="number" name="package_weight[]" step="0.1" min="0.1" value="1" style="width:60px;"></label>' +
-                        '<label>Width (cm): <input type="number" name="package_width[]" step="0.1" min="1" value="20" style="width:60px;"></label>' +
+                        '<label>Width (cm): <input type="number" name="package_width[]" step="0.1" min="1" value="10" style="width:60px;"></label>' +
                         '<label>Height (cm): <input type="number" name="package_height[]" step="0.1" min="1" value="10" style="width:60px;"></label>' +
-                        '<label>Length (cm): <input type="number" name="package_length[]" step="0.1" min="1" value="30" style="width:60px;"></label>' +
+                        '<label>Length (cm): <input type="number" name="package_length[]" step="0.1" min="1" value="10" style="width:60px;"></label>' +
                         '<button type="button" class="button remove-package">Remove</button>' +
                     '</div>' +
                 '</div>';
@@ -761,9 +826,9 @@ class LivrariaPlugin {
                     var $item = $(this);
                     packages.push({
                         weight: parseFloat($item.find('input[name="package_weight[]"]').val()) || 1,
-                        width: parseFloat($item.find('input[name="package_width[]"]').val()) || 20,
+                        width: parseFloat($item.find('input[name="package_width[]"]').val()) || 10,
                         height: parseFloat($item.find('input[name="package_height[]"]').val()) || 10,
-                        length: parseFloat($item.find('input[name="package_length[]"]').val()) || 30
+                        length: parseFloat($item.find('input[name="package_length[]"]').val()) || 10
                     });
                 });
                 
@@ -840,6 +905,9 @@ class LivrariaPlugin {
                 btn.prop('disabled', true);
                 $('#expedition-loading').show();
                 
+                // Get sender profile ID from dropdown
+                var senderProfileId = $('#livraria-sender-profile-select').val() || '';
+                
                 $.ajax({
                     url: ajaxurl,
                     type: 'POST',
@@ -848,6 +916,7 @@ class LivrariaPlugin {
                         order_id: <?php echo $order_id; ?>,
                         quote_request_id: quoteRequestId,
                         courier_quote_id: quoteId,
+                        sender_profile_id: senderProfileId,
                         nonce: $('#courier_expedition_nonce_field').val()
                     },
                     success: function(response) {
@@ -1125,13 +1194,29 @@ class LivrariaPlugin {
         $order_id = intval($_POST['order_id']);
         $quote_request_id = sanitize_text_field($_POST['quote_request_id']);
         $courier_quote_id = sanitize_text_field($_POST['courier_quote_id']);
+        $sender_profile_id = isset($_POST['sender_profile_id']) ? sanitize_text_field($_POST['sender_profile_id']) : '';
         
+        // Select the quote
         $result = $this->api_client->select_courier_quote($quote_request_id, $courier_quote_id);
         
         if ($result !== false) {
             // Store selected quote info in order meta
             update_post_meta($order_id, '_courier_quote_request_id', $quote_request_id);
             update_post_meta($order_id, '_courier_selected_quote_id', $courier_quote_id);
+            
+            // If sender profile ID is provided, attach billing info from sender profile
+            if (!empty($sender_profile_id)) {
+                // Save sender profile ID for this order
+                update_post_meta($order_id, '_livraria_sender_profile_id', $sender_profile_id);
+                
+                // Attach billing info from sender profile
+                $billing_result = $this->api_client->attach_billing_info_from_sender_profile($quote_request_id, $sender_profile_id);
+                
+                if ($billing_result === false) {
+                    // Log error but don't fail the quote selection
+                    error_log('Livraria Debug: Failed to attach billing info from sender profile, but quote selection succeeded');
+                }
+            }
             
             wp_send_json_success(array('message' => 'Quote selected successfully'));
         } else {
@@ -1292,9 +1377,19 @@ class LivrariaPlugin {
         $result = $api_client->login($username, $password);
         
         if ($result['success']) {
-            // Also save credentials for future use
-            update_option('courier_api_username', $username);
-            update_option('courier_api_password', $password);
+            // Check if "Remember me" is enabled
+            $remember_me = isset($_POST['remember_me']) && $_POST['remember_me'] === '1';
+            update_option('livraria_remember_credentials', $remember_me);
+            
+            if ($remember_me) {
+                // Save encrypted credentials for future use
+                $api_client->set_encrypted_option('courier_api_username', $username);
+                $api_client->set_encrypted_option('courier_api_password', $password);
+            } else {
+                // Clear stored credentials if "Remember me" is not checked
+                delete_option('courier_api_username');
+                delete_option('courier_api_password');
+            }
             
             wp_send_json_success(array('message' => 'Login successful'));
         } else {
@@ -1316,7 +1411,7 @@ class LivrariaPlugin {
         $option_value = sanitize_text_field($_POST['option_value']);
         
         // Validate that this is an allowed option
-        $allowed_options = array('courier_auto_create');
+        $allowed_options = array('courier_auto_create', 'livraria_default_sender_profile_id');
         if (!in_array($option_name, $allowed_options)) {
             wp_send_json_error('Option not allowed');
         }

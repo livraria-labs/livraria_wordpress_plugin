@@ -134,9 +134,9 @@ $selected_quote = array_reduce($quotes_response, function($carry, $quote) {
 ### Package Dimensions
 
 Default package dimensions can be customized in the `prepare_quote_request_data()` method. Currently uses:
-- Width: 20cm
+- Width: 10cm
 - Height: 10cm  
-- Length: 30cm
+- Length: 10cm
 - Weight: From product data or 1kg default
 
 ## Troubleshooting

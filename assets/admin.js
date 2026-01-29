@@ -307,9 +307,9 @@ jQuery(document).ready(function($) {
         var sampleData = {
             weight: $('#sample-weight').val() || 1,
             dimensions: {
-                width: $('#sample-width').val() || 20,
+                width: $('#sample-width').val() || 10,
                 height: $('#sample-height').val() || 10,
-                length: $('#sample-length').val() || 30
+                length: $('#sample-length').val() || 10
             },
             destination: {
                 city: $('#sample-city').val() || 'Bucharest',
