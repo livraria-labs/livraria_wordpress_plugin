@@ -59,11 +59,30 @@ class Livraria_Admin_Page {
                     <?php endif; ?>
                     <tr>
                         <th scope="row">Username</th>
-                        <td><input type="text" id="login-username" name="courier_api_username" value="<?php echo esc_attr(get_option('courier_api_username')); ?>" class="regular-text" /></td>
+                        <td>
+                            <?php 
+                            $remember_me = get_option('livraria_remember_credentials', false);
+                            $username = $remember_me ? $this->api_client->get_encrypted_option('courier_api_username', '') : '';
+                            ?>
+                            <input type="text" id="login-username" name="courier_api_username" value="<?php echo esc_attr($username); ?>" class="regular-text" />
+                        </td>
                     </tr>
                     <tr>
                         <th scope="row">Password</th>
-                        <td><input type="password" id="login-password" name="courier_api_password" value="" class="regular-text" /></td>
+                        <td>
+                            <?php 
+                            $password = $remember_me ? $this->api_client->get_encrypted_option('courier_api_password', '') : '';
+                            ?>
+                            <input type="password" id="login-password" name="courier_api_password" value="<?php echo esc_attr($password); ?>" class="regular-text" />
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Remember me</th>
+                        <td>
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                <input type="checkbox" id="remember-me" name="remember_me" value="1" <?php checked(true, $remember_me); ?> />
+                            </label>
+                        </td>
                     </tr>
                 </table>
                 <p class="submit">
@@ -100,18 +119,25 @@ class Livraria_Admin_Page {
                                 </tr>
                                 <tr>
                                     <td style="padding: 6px 0; font-size: 12px; color: #646970; width: 120px; vertical-align: top;">Username:</td>
-                                    <td style="padding: 6px 0; font-size: 12px; color: #1d2327; font-family: monospace;" data-api-username="<?php echo esc_attr(get_option('courier_api_username', '')); ?>"><?php echo esc_html(get_option('courier_api_username', 'Not set')); ?></td>
+                                    <?php 
+                                    $remember_me = get_option('livraria_remember_credentials', false);
+                                    $stored_username = $remember_me ? $this->api_client->get_encrypted_option('courier_api_username', '') : '';
+                                    ?>
+                                    <td style="padding: 6px 0; font-size: 12px; color: #1d2327; font-family: monospace;" data-api-username="<?php echo esc_attr($stored_username); ?>"><?php echo esc_html($stored_username ?: 'Not set'); ?></td>
                                 </tr>
                                 <tr>
                                     <td style="padding: 6px 0; font-size: 12px; color: #646970; width: 120px; vertical-align: top;">Password:</td>
                                     <td style="padding: 6px 0; font-size: 12px; color: #1d2327; font-family: monospace; display: flex; align-items: center; gap: 8px;">
-                                        <span id="livraria-password-display"><?php echo !empty(get_option('courier_api_password', '')) ? '••••••••' : 'Not set'; ?></span>
-                                        <?php if (!empty(get_option('courier_api_password', ''))): ?>
+                                        <?php 
+                                        $stored_password = $remember_me ? $this->api_client->get_encrypted_option('courier_api_password', '') : '';
+                                        ?>
+                                        <span id="livraria-password-display"><?php echo !empty($stored_password) ? '••••••••' : 'Not set'; ?></span>
+                                        <?php if (!empty($stored_password)): ?>
                                         <button type="button" id="livraria-copy-password" style="background: #2271b1; border: 1px solid #2271b1; border-radius: 3px; padding: 3px 6px; cursor: pointer; display: flex; align-items: center; gap: 3px; font-size: 10px; color: #ffffff; transition: all 0.2s; line-height: 1.3;" onmouseover="this.style.background='#135e96'; this.style.borderColor='#135e96'; this.style.color='#ffffff'" onmouseout="this.style.background='#2271b1'; this.style.borderColor='#2271b1'; this.style.color='#ffffff'" title="Copy password">
                                             <span style="font-size: 10px; color: #ffffff;">📋</span>
                                             <span style="color: #ffffff;">Copy</span>
                                         </button>
-                                        <span id="livraria-password-value" style="display: none;" data-api-password="<?php echo esc_attr(get_option('courier_api_password', '')); ?>"><?php echo esc_attr(get_option('courier_api_password', '')); ?></span>
+                                        <span id="livraria-password-value" style="display: none;" data-api-password="<?php echo esc_attr($stored_password); ?>"><?php echo esc_attr($stored_password); ?></span>
                                         <?php endif; ?>
                                     </td>
                                 </tr>
@@ -198,6 +224,7 @@ class Livraria_Admin_Page {
                 var apiUrl = $('#login-api-url').val() || $('input[name="courier_api_base_url"]').val() || 'https://api.livraria.ro/';
                 var username = $('#login-username').val() || $('input[name="courier_api_username"]').val();
                 var password = $('#login-password').val() || $('input[name="courier_api_password"]').val();
+                var rememberMe = $('#remember-me').is(':checked') ? '1' : '0';
                 
                 if (!username || !password) {
                     alert('Please fill in Username and Password before logging in.');
@@ -215,6 +242,7 @@ class Livraria_Admin_Page {
                         api_url: apiUrl,
                         username: username,
                         password: password,
+                        remember_me: rememberMe,
                         nonce: livrariaAdmin.nonce
                     },
                     success: function(response) {
@@ -514,10 +542,119 @@ class Livraria_Admin_Page {
             
             <?php if ($sender_profile): ?>
                 <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #ddd;">
+                    <?php $this->render_default_sender_profile_selector($sender_profile); ?>
                     <?php $this->render_sender_profiles($sender_profile); ?>
                 </div>
             <?php endif; ?>
         </div>
+        <?php
+    }
+    
+    /**
+     * Render default sender profile selector
+     * 
+     * @param mixed $sender_profile Sender profile(s) from API
+     */
+    private function render_default_sender_profile_selector($sender_profile) {
+        if ($sender_profile === false || is_wp_error($sender_profile)) {
+            return;
+        }
+        
+        // Handle array of sender profiles
+        $profiles = is_array($sender_profile) ? $sender_profile : array($sender_profile);
+        $default_profile_id = get_option('livraria_default_sender_profile_id', '');
+        
+        // Extract profile IDs and names
+        $profile_options = array();
+        foreach ($profiles as $index => $profile) {
+            $profile_array = (array) $profile;
+            // Use actual API ID if available, otherwise fallback to index-based ID
+            $profile_id = isset($profile_array['id']) ? $profile_array['id'] : ('profile-' . $index);
+            
+            // Extract profile name
+            $profile_name = 'Profile ' . ($index + 1);
+            if (isset($profile_array['name']) && !empty($profile_array['name'])) {
+                $profile_name = $profile_array['name'];
+            } elseif (isset($profile_array['companyName']) && !empty($profile_array['companyName'])) {
+                $profile_name = $profile_array['companyName'];
+            } elseif (isset($profile_array['company']) && !empty($profile_array['company'])) {
+                if (is_array($profile_array['company']) || is_object($profile_array['company'])) {
+                    $company_data = (array) $profile_array['company'];
+                    if (isset($company_data['name'])) {
+                        $profile_name = $company_data['name'];
+                    } elseif (isset($company_data['companyName'])) {
+                        $profile_name = $company_data['companyName'];
+                    }
+                } else {
+                    $profile_name = $profile_array['company'];
+                }
+            }
+            
+            $profile_options[] = array(
+                'id' => $profile_id,
+                'name' => $profile_name
+            );
+        }
+        
+        if (empty($profile_options)) {
+            return;
+        }
+        ?>
+        <div style="margin-bottom: 16px;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <span style="font-size: 13px; color: #646970; font-weight: 600; min-width: 150px;">Default Sender Profile:</span>
+                <select id="livraria-default-sender-profile" name="livraria_default_sender_profile_id" style="flex: 1; max-width: 300px; padding: 6px 8px; border: 1px solid #8c8f94; border-radius: 3px; font-size: 13px;">
+                    <?php foreach ($profile_options as $option): ?>
+                        <option value="<?php echo esc_attr($option['id']); ?>" <?php selected($default_profile_id, $option['id']); ?>>
+                            <?php echo esc_html($option['name']); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <span id="livraria-default-profile-save-feedback" style="margin-left: 8px; color: #00a32a; font-size: 12px; white-space: nowrap; opacity: 0; transition: opacity 0.2s; display: inline-block;">✓ Saved</span>
+            </label>
+            <p class="description" style="margin: 8px 0 0 158px; font-size: 12px; color: #646970;">Select the default sender profile to use when creating expeditions</p>
+        </div>
+        <script>
+        jQuery(document).ready(function($) {
+            $('#livraria-default-sender-profile').on('change', function() {
+                var select = $(this);
+                var profileId = select.val();
+                var originalValue = select.data('original-value') || '<?php echo esc_js($default_profile_id); ?>';
+                
+                select.prop('disabled', true);
+                
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'update_option',
+                        option_name: 'livraria_default_sender_profile_id',
+                        option_value: profileId,
+                        nonce: livrariaAdmin.nonce
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            select.data('original-value', profileId);
+                            var feedback = $('#livraria-default-profile-save-feedback');
+                            feedback.css('opacity', '1');
+                            setTimeout(function() {
+                                feedback.css('opacity', '0');
+                            }, 2000);
+                        } else {
+                            select.val(originalValue);
+                            alert('Failed to save default profile: ' + (response.data || 'Unknown error'));
+                        }
+                        select.prop('disabled', false);
+                    },
+                    error: function() {
+                        select.val(originalValue);
+                        alert('AJAX error while saving default profile');
+                        select.prop('disabled', false);
+                    }
+                });
+            });
+        });
+        </script>
         <?php
     }
     

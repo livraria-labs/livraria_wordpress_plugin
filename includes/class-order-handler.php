@@ -767,9 +767,9 @@ class Livraria_Order_Handler {
         $packages = array();
         $default_weight = floatval(get_option('courier_default_package_weight', 1));
         $default_dimensions = array(
-            'width' => floatval(get_option('courier_default_package_width', 20)),
+            'width' => floatval(get_option('courier_default_package_width', 10)),
             'height' => floatval(get_option('courier_default_package_height', 10)),
-            'length' => floatval(get_option('courier_default_package_length', 30))
+            'length' => floatval(get_option('courier_default_package_length', 10))
         );
         
         foreach ($order->get_items() as $item) {

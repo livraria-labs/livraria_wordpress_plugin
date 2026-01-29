@@ -126,9 +126,14 @@ class Livraria_API_Client {
             return true;
         }
         
-        // Try to refresh token using stored credentials
-        $username = get_option('courier_api_username', '');
-        $password = get_option('courier_api_password', '');
+        // Try to refresh token using stored credentials (only if "Remember me" is enabled)
+        if (!get_option('livraria_remember_credentials', false)) {
+            $this->log_error('Credentials not stored (Remember me not enabled)');
+            return false;
+        }
+        
+        $username = $this->get_encrypted_option('courier_api_username', '');
+        $password = $this->get_encrypted_option('courier_api_password', '');
         
         if (empty($username) || empty($password)) {
             $this->log_error('No credentials stored for token refresh');
@@ -236,13 +241,16 @@ class Livraria_API_Client {
     }
     
     /**
-     * Auto-attach billing info to a quote request
+     * Attach billing info from sender profile to a quote request
      * 
      * @param string $quote_request_id Quote request ID
+     * @param string $sender_profile_id Sender profile ID
      * @return array|false API response or false on failure
      */
-    public function auto_attach_billing_info($quote_request_id) {
-        return $this->api_request('POST', '/quote-request/' . $quote_request_id . '/auto-attach-billing-info');
+    public function attach_billing_info_from_sender_profile($quote_request_id, $sender_profile_id) {
+        return $this->api_request('POST', '/quote-request/' . $quote_request_id . '/attach-billing-info-from-sender-profile', array(
+            'senderProfileId' => $sender_profile_id
+        ));
     }
     
     /**
@@ -483,7 +491,12 @@ class Livraria_API_Client {
             if ($response_body) {
                 $error_data = json_decode($response_body, true);
                 if (isset($error_data['message'])) {
-                    $error_message .= ': ' . $error_data['message'];
+                    $message = $error_data['message'];
+                    // Handle case where message might be an array
+                    if (is_array($message)) {
+                        $message = json_encode($message, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                    }
+                    $error_message .= ': ' . $message;
                 } else {
                     $error_message .= ': ' . $response_body;
                 }
@@ -636,5 +649,85 @@ class Livraria_API_Client {
                 'headers' => wp_remote_retrieve_headers($response)
             )
         );
+    }
+    
+    /**
+     * Get encrypted option value (public method for use outside class)
+     * Uses WordPress encryption if available, falls back to plain text for backwards compatibility
+     * 
+     * @param string $option_name Option name
+     * @param mixed $default Default value
+     * @return string Decrypted value
+     */
+    public function get_encrypted_option($option_name, $default = '') {
+        $encrypted_value = get_option($option_name, $default);
+        
+        // If empty, return default
+        if (empty($encrypted_value)) {
+            return $default;
+        }
+        
+        // Check if value is encrypted (starts with encrypted prefix)
+        if (strpos($encrypted_value, 'livraria_encrypted:') === 0) {
+            // Extract encrypted data
+            $encrypted_data = substr($encrypted_value, strlen('livraria_encrypted:'));
+            
+            // Try to decrypt using WordPress functions (WordPress 5.2+)
+            if (function_exists('wp_salt') && function_exists('openssl_decrypt')) {
+                $key = wp_salt('nonce');
+                $iv_length = openssl_cipher_iv_length('AES-256-CBC');
+                
+                // Extract IV and encrypted data
+                $data = base64_decode($encrypted_data);
+                if ($data !== false && strlen($data) > $iv_length) {
+                    $iv = substr($data, 0, $iv_length);
+                    $encrypted = substr($data, $iv_length);
+                    
+                    $decrypted = openssl_decrypt($encrypted, 'AES-256-CBC', $key, 0, $iv);
+                    if ($decrypted !== false) {
+                        return $decrypted;
+                    }
+                }
+            }
+            
+            // If decryption fails, return empty (credentials need to be re-entered)
+            return '';
+        }
+        
+        // Not encrypted (backwards compatibility) - return as-is
+        return $encrypted_value;
+    }
+    
+    /**
+     * Set encrypted option value (public method for use outside class)
+     * Encrypts sensitive data before storing
+     * 
+     * @param string $option_name Option name
+     * @param string $value Value to encrypt and store
+     * @return bool Success
+     */
+    public function set_encrypted_option($option_name, $value) {
+        // If value is empty, just store it
+        if (empty($value)) {
+            return update_option($option_name, '');
+        }
+        
+        // Try to encrypt using WordPress functions (WordPress 5.2+)
+        if (function_exists('wp_salt') && function_exists('openssl_encrypt')) {
+            $key = wp_salt('nonce');
+            $iv_length = openssl_cipher_iv_length('AES-256-CBC');
+            $iv = openssl_random_pseudo_bytes($iv_length);
+            
+            $encrypted = openssl_encrypt($value, 'AES-256-CBC', $key, 0, $iv);
+            if ($encrypted !== false) {
+                // Store with prefix and IV
+                $encrypted_data = base64_encode($iv . $encrypted);
+                return update_option($option_name, 'livraria_encrypted:' . $encrypted_data);
+            }
+        }
+        
+        // If encryption fails, store plain text (with warning in logs)
+        error_log('Livraria Warning: Could not encrypt credentials, storing in plain text. Please ensure OpenSSL is enabled.');
+        return update_option($option_name, $value);
     }
 }
