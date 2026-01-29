@@ -537,7 +537,7 @@ class Livraria_Admin_Page {
                     <span style="font-size: 14px; color: #1d2327;">Auto-create expeditions</span>
                     <span id="livraria-auto-save-feedback" style="margin-left: 8px; color: #00a32a; font-size: 12px; white-space: nowrap; opacity: 0; transition: opacity 0.2s; display: inline-block;">✓ Saved</span>
                 </label>
-                <p class="description" style="margin: 8px 0 0 28px; font-size: 12px; color: #646970;">Automatically create expeditions when orders are marked as completed</p>
+                <p class="description" style="margin: 8px 0 0 28px; font-size: 12px; color: #646970;">When enabled, expeditions will be automatically created when orders are marked as completed. This feature uses your default sender profile and automatically selects the cheapest available quote. Best suited for orders where you have a good understanding of the expected shipping costs.</p>
             </div>
             
             <?php if ($sender_profile): ?>
