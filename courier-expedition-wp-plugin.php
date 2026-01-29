@@ -177,11 +177,11 @@ class LivrariaPlugin {
         
         // Check if logo exists, otherwise use a placeholder or just text
         if (file_exists($logo_path)) {
-            return '<img src="' . esc_url($logo_url) . '" alt="Livraria" style="width: 20px; height: 20px; vertical-align: middle;" /> Livraria Expedition';
+            return '<img src="' . esc_url($logo_url) . '" alt="Livraria" style="width: 20px; height: 20px; vertical-align: middle;" /> Deliver with Livraria';
         }
         
         // Fallback: return text only if logo doesn't exist
-        return 'Livraria Expedition';
+        return 'Deliver with Livraria';
     }
     
     public function add_expedition_meta_box() {
