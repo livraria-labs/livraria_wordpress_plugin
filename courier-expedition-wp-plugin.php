@@ -265,7 +265,6 @@ class LivrariaPlugin {
         
         $expedition_id = get_post_meta($order_id, '_courier_expedition_id', true);
         $awb_number = get_post_meta($order_id, '_courier_awb_number', true);
-        $tracking_url = get_post_meta($order_id, '_courier_tracking_url', true);
         
         // Get order and check if payment method is COD
         $cod_amount_default = '0';
@@ -315,9 +314,7 @@ class LivrariaPlugin {
                 <p><strong>Expedition ID:</strong> <?php echo esc_html($expedition_id); ?></p>
                 <?php if ($awb_number): ?>
                     <p><strong>AWB Number:</strong> <?php echo esc_html($awb_number); ?></p>
-                    <?php if ($tracking_url): ?>
-                        <p><a href="<?php echo esc_url($tracking_url); ?>" target="_blank">Track Package</a></p>
-                    <?php endif; ?>
+                    <p><a href="<?php echo esc_url('https://livraria.ro/dashboard/track?awbNumber=' . urlencode($awb_number)); ?>" target="_blank">Track Package</a></p>
                 <?php endif; ?>
             <?php else: ?>
                 
