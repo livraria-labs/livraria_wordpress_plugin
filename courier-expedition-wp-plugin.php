@@ -1138,11 +1138,18 @@ class LivrariaPlugin {
             return;
         }
         
-        // Step 4: Auto-attach billing info
-        $billing_response = $this->api_client->auto_attach_billing_info($quote_request_id);
+        // Step 4: Attach billing info from default sender profile
+        $default_sender_profile_id = get_option('livraria_default_sender_profile_id', '');
+        
+        if (empty($default_sender_profile_id)) {
+            error_log('Livraria Debug: No default sender profile configured for order ID: ' . $order_id);
+            return;
+        }
+        
+        $billing_response = $this->api_client->attach_billing_info_from_sender_profile($quote_request_id, $default_sender_profile_id);
         
         if ($billing_response === false || !isset($billing_response['id'])) {
-            error_log('Livraria Debug: Failed to attach billing information for order ID: ' . $order_id);
+            error_log('Livraria Debug: Failed to attach billing information from sender profile for order ID: ' . $order_id);
             return;
         }
         
@@ -1303,10 +1310,16 @@ class LivrariaPlugin {
             wp_send_json_error('Quote request ID or selected quote ID not found');
         }
         
-        // Auto-attach billing info
-        $billing_response = $this->api_client->auto_attach_billing_info($quote_request_id);
+        // Attach billing info from default sender profile
+        $default_sender_profile_id = get_option('livraria_default_sender_profile_id', '');
+        
+        if (empty($default_sender_profile_id)) {
+            wp_send_json_error('No default sender profile configured');
+        }
+        
+        $billing_response = $this->api_client->attach_billing_info_from_sender_profile($quote_request_id, $default_sender_profile_id);
         if ($billing_response === false || !isset($billing_response['id'])) {
-            wp_send_json_error('Failed to attach billing information');
+            wp_send_json_error('Failed to attach billing information from sender profile');
         }
         
         $billing_info_id = $billing_response['id'];

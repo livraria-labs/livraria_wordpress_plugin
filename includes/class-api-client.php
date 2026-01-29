@@ -241,16 +241,6 @@ class Livraria_API_Client {
     }
     
     /**
-     * Auto-attach billing info to a quote request
-     * 
-     * @param string $quote_request_id Quote request ID
-     * @return array|false API response or false on failure
-     */
-    public function auto_attach_billing_info($quote_request_id) {
-        return $this->api_request('POST', '/quote-request/' . $quote_request_id . '/auto-attach-billing-info');
-    }
-    
-    /**
      * Attach billing info from sender profile to a quote request
      * 
      * @param string $quote_request_id Quote request ID
@@ -501,7 +491,12 @@ class Livraria_API_Client {
             if ($response_body) {
                 $error_data = json_decode($response_body, true);
                 if (isset($error_data['message'])) {
-                    $error_message .= ': ' . $error_data['message'];
+                    $message = $error_data['message'];
+                    // Handle case where message might be an array
+                    if (is_array($message)) {
+                        $message = json_encode($message, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                    }
+                    $error_message .= ': ' . $message;
                 } else {
                     $error_message .= ': ' . $response_body;
                 }
