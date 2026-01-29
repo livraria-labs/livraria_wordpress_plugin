@@ -166,14 +166,34 @@ class LivrariaPlugin {
     }
     
     
+    /**
+     * Get metabox title with logo
+     * 
+     * @return string HTML for metabox title
+     */
+    private function get_metabox_title() {
+        $logo_url = plugin_dir_url(__FILE__) . 'assets/logo.png';
+        $logo_path = plugin_dir_path(__FILE__) . 'assets/logo.png';
+        
+        // Check if logo exists, otherwise use a placeholder or just text
+        if (file_exists($logo_path)) {
+            return '<img src="' . esc_url($logo_url) . '" alt="Livraria" style="width: 20px; height: 20px; vertical-align: middle;" /> Livraria Expedition';
+        }
+        
+        // Fallback: return text only if logo doesn't exist
+        return 'Livraria Expedition';
+    }
+    
     public function add_expedition_meta_box() {
         // Debug: Log when this method is called
         error_log('Livraria Debug: add_expedition_meta_box called');
         
+        $metabox_title = $this->get_metabox_title();
+        
         // For traditional WooCommerce order pages (post-based)
         add_meta_box(
             'livraria-expedition',
-            'Livraria Expedition',
+            $metabox_title,
             array($this, 'expedition_meta_box_callback'),
             'shop_order',
             'side',
@@ -185,7 +205,7 @@ class LivrariaPlugin {
         if (class_exists('Automattic\WooCommerce\Internal\DataStores\Orders\OrdersTableDataStore')) {
             add_meta_box(
                 'livraria-expedition',
-                'Livraria Expedition',
+                $metabox_title,
                 array($this, 'expedition_meta_box_callback'),
                 wc_get_page_screen_id('shop-order'),
                 'side',
@@ -198,7 +218,7 @@ class LivrariaPlugin {
         if ($screen && in_array($screen->id, array('woocommerce_page_wc-orders', 'shop_order'))) {
             add_meta_box(
                 'livraria-expedition',
-                'Livraria Expedition',
+                $metabox_title,
                 array($this, 'expedition_meta_box_callback'),
                 $screen->id,
                 'side',
@@ -303,15 +323,15 @@ class LivrariaPlugin {
                 
                 <!-- Package Configuration -->
                 <div class="expedition-section">
-                    <h4>Package Information</h4>
+                    <h4>1. Package Information</h4>
                     <div id="packages-container">
                         <div class="package-item" data-package="1">
                             <h5>Package 1</h5>
                             <div class="package-dimensions">
-                                <label>Weight (kg): <input type="number" name="package_weight[]" step="0.1" min="0.1" value="1" style="width:60px;"></label>
-                                <label>Width (cm): <input type="number" name="package_width[]" step="0.1" min="1" value="10" style="width:60px;"></label>
-                                <label>Height (cm): <input type="number" name="package_height[]" step="0.1" min="1" value="10" style="width:60px;"></label>
-                                <label>Length (cm): <input type="number" name="package_length[]" step="0.1" min="1" value="10" style="width:60px;"></label>
+                                <label>Weight (kg): <input type="number" name="package_weight[]" step="0.5" min="1" value="1" required></label>
+                                <label>Width (cm): <input type="number" name="package_width[]" step="1" min="10" value="10" required></label>
+                                <label>Height (cm): <input type="number" name="package_height[]" step="1" min="10" value="10" required></label>
+                                <label>Length (cm): <input type="number" name="package_length[]" step="1" min="10" value="10" required></label>
                                 <button type="button" class="button remove-package" style="display:none;">Remove</button>
                             </div>
                         </div>
@@ -321,13 +341,13 @@ class LivrariaPlugin {
 
                 <!-- Content Description -->
                 <div class="expedition-section">
-                    <h4>Content Description</h4>
-                    <textarea name="content_description" placeholder="Describe the package contents..." style="width:100%; height:60px;"></textarea>
+                    <h4>2. Content Description</h4>
+                    <textarea name="content_description" placeholder="Describe the package contents..." rows="3"></textarea>
                 </div>
 
                 <!-- Sender Profile Selection -->
                 <div class="expedition-section">
-                    <h4>Sender Profile</h4>
+                    <h4>3. Sender Profile</h4>
                     <?php
                     // Get sender profiles from API
                     $api_client = new Livraria_API_Client();
@@ -337,7 +357,7 @@ class LivrariaPlugin {
                     if ($sender_profiles !== false && !is_wp_error($sender_profiles)) {
                         $profiles = is_array($sender_profiles) ? $sender_profiles : array($sender_profiles);
                         ?>
-                        <select id="livraria-sender-profile-select" name="livraria_sender_profile_id" style="width:100%; padding: 6px 8px; border: 1px solid #8c8f94; border-radius: 3px; font-size: 13px;">
+                        <select id="livraria-sender-profile-select" name="livraria_sender_profile_id">
                             <?php foreach ($profiles as $index => $profile): 
                                 $profile_array = (array) $profile;
                                 $profile_id = isset($profile_array['id']) ? $profile_array['id'] : ('profile-' . $index);
@@ -372,7 +392,7 @@ class LivrariaPlugin {
                                 </option>
                             <?php endforeach; ?>
                         </select>
-                        <p class="description" style="margin-top: 8px; font-size: 12px; color: #646970;">Select the sender profile to use for this expedition</p>
+                        <p class="description">Select the sender profile to use for this expedition</p>
                         <?php
                     } else {
                         ?>
@@ -384,32 +404,26 @@ class LivrariaPlugin {
 
                 <!-- Service Options -->
                 <div class="expedition-section">
-                    <h4>Service Options</h4>
+                    <h4>4. Service Options</h4>
                     <?php if ($order && $is_cod): ?>
-                        <p style="margin-bottom: 10px;">
-                            <span style="background: #00a32a; color: white; padding: 4px 8px; border-radius: 3px; font-size: 12px; font-weight: 600;">
-                                ✓ Cash on Delivery
-                            </span>
-                        </p>
+                        <span class="service-badge cod">✓ Cash on Delivery</span>
                     <?php else: ?>
-                        <p style="margin-bottom: 10px;">
-                            <span style="background: #646970; color: white; padding: 4px 8px; border-radius: 3px; font-size: 12px; font-weight: 600;">
-                                No COD
-                            </span>
-                        </p>
+                        <span class="service-badge no-cod">No COD</span>
                     <?php endif; ?>
-                    <p>
-                        <label>COD Amount: <input type="number" name="cod_amount" step="0.01" min="0" value="<?php echo esc_attr($cod_amount_default); ?>" style="width:80px;"> RON</label>
-                    </p>
-                    <p>
-                        <label>Insurance Amount: <input type="number" name="insurance_amount" step="0.01" min="0" value="0" style="width:80px;"> RON</label>
-                    </p>
-                    <p>
-                        <label><input type="checkbox" name="open_on_delivery" value="1"> Open on Delivery</label>
-                    </p>
-                    <p>
-                        <label><input type="checkbox" name="saturday_delivery" value="1"> Saturday Delivery</label>
-                    </p>
+                    <div class="service-options-grid">
+                        <div class="service-option-item">
+                            <label>COD Amount: <span class="input-group"><input type="number" name="cod_amount" step="0.5" min="0" value="<?php echo esc_attr($cod_amount_default); ?>" required> RON</span></label>
+                        </div>
+                        <div class="service-option-item">
+                            <label>Insurance Amount: <span class="input-group"><input type="number" name="insurance_amount" step="0.5" min="0" value="0" required> RON</span></label>
+                        </div>
+                        <div class="service-option-item">
+                            <label><input type="checkbox" name="open_on_delivery" value="1"> Open on Delivery</label>
+                        </div>
+                        <div class="service-option-item">
+                            <label><input type="checkbox" name="saturday_delivery" value="1"> Saturday Delivery</label>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="expedition-section">
@@ -422,6 +436,7 @@ class LivrariaPlugin {
                 <div id="quotes-section" class="expedition-section" style="display:none;">
                     <h4>Available Shipping Options</h4>
                     <div id="quotes-container"></div>
+                    <div id="quote-selection-result"></div>
                 </div>
                 
                 <!-- Generate Label Section -->
@@ -781,10 +796,10 @@ class LivrariaPlugin {
                 var packageHtml = '<div class="package-item" data-package="' + packageCount + '">' +
                     '<h5>Package ' + packageCount + '</h5>' +
                     '<div class="package-dimensions">' +
-                        '<label>Weight (kg): <input type="number" name="package_weight[]" step="0.1" min="0.1" value="1" style="width:60px;"></label>' +
-                        '<label>Width (cm): <input type="number" name="package_width[]" step="0.1" min="1" value="10" style="width:60px;"></label>' +
-                        '<label>Height (cm): <input type="number" name="package_height[]" step="0.1" min="1" value="10" style="width:60px;"></label>' +
-                        '<label>Length (cm): <input type="number" name="package_length[]" step="0.1" min="1" value="10" style="width:60px;"></label>' +
+                        '<label>Weight (kg): <input type="number" name="package_weight[]" step="0.5" min="1" value="1" required></label>' +
+                        '<label>Width (cm): <input type="number" name="package_width[]" step="1" min="10" value="10" required></label>' +
+                        '<label>Height (cm): <input type="number" name="package_height[]" step="1" min="10" value="10" required></label>' +
+                        '<label>Length (cm): <input type="number" name="package_length[]" step="1" min="10" value="10" required></label>' +
                         '<button type="button" class="button remove-package">Remove</button>' +
                     '</div>' +
                 '</div>';
@@ -814,6 +829,55 @@ class LivrariaPlugin {
             // Get quotes when "Get Quotes" button is clicked
             $('#create-expedition-btn').click(function() {
                 var btn = $(this);
+                
+                // Validate inputs before proceeding
+                var isValid = true;
+                var errors = [];
+                
+                // Validate package dimensions
+                $('.package-item').each(function(index) {
+                    var $item = $(this);
+                    var weight = parseFloat($item.find('input[name="package_weight[]"]').val());
+                    var width = parseFloat($item.find('input[name="package_width[]"]').val());
+                    var height = parseFloat($item.find('input[name="package_height[]"]').val());
+                    var length = parseFloat($item.find('input[name="package_length[]"]').val());
+                    
+                    if (isNaN(weight) || weight < 1) {
+                        isValid = false;
+                        errors.push('Package ' + (index + 1) + ': Weight must be at least 1 kg');
+                    }
+                    if (isNaN(width) || width < 10) {
+                        isValid = false;
+                        errors.push('Package ' + (index + 1) + ': Width must be at least 10 cm');
+                    }
+                    if (isNaN(height) || height < 10) {
+                        isValid = false;
+                        errors.push('Package ' + (index + 1) + ': Height must be at least 10 cm');
+                    }
+                    if (isNaN(length) || length < 10) {
+                        isValid = false;
+                        errors.push('Package ' + (index + 1) + ': Length must be at least 10 cm');
+                    }
+                });
+                
+                // Validate COD and Insurance amounts
+                var codAmount = parseFloat($('input[name="cod_amount"]').val());
+                var insuranceAmount = parseFloat($('input[name="insurance_amount"]').val());
+                
+                if (isNaN(codAmount) || codAmount < 0) {
+                    isValid = false;
+                    errors.push('COD Amount must be at least 0');
+                }
+                if (isNaN(insuranceAmount) || insuranceAmount < 0) {
+                    isValid = false;
+                    errors.push('Insurance Amount must be at least 0');
+                }
+                
+                if (!isValid) {
+                    $('#expedition-result').html('<p style="color:red;">' + errors.join('<br>') + '</p>');
+                    return;
+                }
+                
                 btn.prop('disabled', true);
                 $('#expedition-loading').show();
                 $('#expedition-result').html('');
@@ -825,10 +889,10 @@ class LivrariaPlugin {
                 $('.package-item').each(function() {
                     var $item = $(this);
                     packages.push({
-                        weight: parseFloat($item.find('input[name="package_weight[]"]').val()) || 1,
-                        width: parseFloat($item.find('input[name="package_width[]"]').val()) || 10,
-                        height: parseFloat($item.find('input[name="package_height[]"]').val()) || 10,
-                        length: parseFloat($item.find('input[name="package_length[]"]').val()) || 10
+                        weight: parseFloat($item.find('input[name="package_weight[]"]').val()),
+                        width: parseFloat($item.find('input[name="package_width[]"]').val()),
+                        height: parseFloat($item.find('input[name="package_height[]"]').val()),
+                        length: parseFloat($item.find('input[name="package_length[]"]').val())
                     });
                 });
                 
@@ -836,8 +900,8 @@ class LivrariaPlugin {
                 var expeditionData = {
                     packages: packages,
                     content_description: $('textarea[name="content_description"]').val() || '',
-                    cod_amount: parseFloat($('input[name="cod_amount"]').val()) || 0,
-                    insurance_amount: parseFloat($('input[name="insurance_amount"]').val()) || 0,
+                    cod_amount: parseFloat($('input[name="cod_amount"]').val()),
+                    insurance_amount: parseFloat($('input[name="insurance_amount"]').val()),
                     open_on_delivery: $('input[name="open_on_delivery"]').is(':checked'),
                     saturday_delivery: $('input[name="saturday_delivery"]').is(':checked')
                 };
@@ -857,6 +921,7 @@ class LivrariaPlugin {
                             quoteRequestId = response.data.quoteRequestId;
                             displayQuotes(response.data.quotes);
                             $('#quotes-section').show();
+                            $('#quote-selection-result').html(''); // Clear any previous selection messages
                             btn.prop('disabled', false);
                         } else {
                             $('#expedition-result').html('<p style="color:red;">Error: ' + (response.data ? response.data.message : 'Failed to get quotes') + '</p>');
@@ -932,9 +997,9 @@ class LivrariaPlugin {
                             
                             // Show generate label button
                             $('#generate-label-section').show();
-                            $('#expedition-result').html('<p style="color:green;">Quote selected successfully!</p>');
+                            $('#quote-selection-result').html('<p style="color:green;">Quote selected successfully!</p>');
                         } else {
-                            $('#expedition-result').html('<p style="color:red;">Error: ' + (response.data || 'Failed to select quote') + '</p>');
+                            $('#quote-selection-result').html('<p style="color:red;">Error: ' + (response.data || 'Failed to select quote') + '</p>');
                             btn.prop('disabled', false);
                         }
                     },
