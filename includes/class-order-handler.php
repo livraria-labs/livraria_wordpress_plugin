@@ -333,6 +333,40 @@ class Livraria_Order_Handler {
     }
     
     /**
+     * Sanitize shop name for use in externalRef
+     * 
+     * @return string Sanitized shop name
+     */
+    private function sanitize_shop_name() {
+        $shop_name = get_bloginfo('name');
+        if (empty($shop_name)) {
+            return 'shop';
+        }
+        
+        // Convert to lowercase
+        $sanitized = strtolower($shop_name);
+        
+        // Remove diacritics
+        $sanitized = $this->remove_romanian_diacritics($sanitized);
+        
+        // Replace spaces and special characters with hyphens
+        $sanitized = preg_replace('/[^a-z0-9]+/', '-', $sanitized);
+        
+        // Remove leading/trailing hyphens
+        $sanitized = trim($sanitized, '-');
+        
+        // Limit length to 50 characters
+        $sanitized = substr($sanitized, 0, 50);
+        
+        // If empty after sanitization, use fallback
+        if (empty($sanitized)) {
+            return 'shop';
+        }
+        
+        return $sanitized;
+    }
+    
+    /**
      * Prepare quote request data from WooCommerce order
      * 
      * @param WC_Order $order
@@ -542,6 +576,7 @@ class Livraria_Order_Handler {
                     $custom_data['content_description'] : 
                     $this->generate_package_description($order),
                 'shipmentNote' => 'Order from ' . get_bloginfo('name') . ' - Order #' . $order->get_order_number(),
+                'externalRef' => 'WP-' . $this->sanitize_shop_name() . '-' . $order->get_id(),
                 'service' => array(
                     'saturdayDelivery' => $service_options['saturday_delivery'],
                     'openOnDelivery' => $service_options['open_on_delivery'],
