@@ -91,7 +91,8 @@ class LivrariaPlugin {
         add_action('wp_ajax_livraria_logout', array($this, 'ajax_logout'));
         add_action('wp_ajax_livraria_login', array($this, 'ajax_login'));
         add_action('wp_ajax_update_option', array($this, 'ajax_update_option'));
-        
+        add_action('wp_ajax_download_awb_pdf', array($this, 'ajax_download_awb_pdf'));
+
         $this->api_base_url = get_option('courier_api_base_url', '');
         
         // Initialize API client and order handler  
@@ -265,7 +266,13 @@ class LivrariaPlugin {
         
         $expedition_id = get_post_meta($order_id, '_courier_expedition_id', true);
         $awb_number = get_post_meta($order_id, '_courier_awb_number', true);
-        
+        $courier_name = get_post_meta($order_id, '_courier_name', true);
+
+        // Debug: Log what we're getting from meta
+        if ($expedition_id) {
+            error_log('Livraria Debug Display: Order ' . $order_id . ' - Expedition ID: ' . $expedition_id . ', AWB: ' . $awb_number . ', Courier: "' . $courier_name . '"');
+        }
+
         // Get order and check if payment method is COD
         $cod_amount_default = '0';
         $is_cod = false;
@@ -312,9 +319,49 @@ class LivrariaPlugin {
         <div id="courier-expedition-meta">
             <?php if ($expedition_id): ?>
                 <p><strong>Expedition ID:</strong> <?php echo esc_html($expedition_id); ?></p>
+                <?php if ($courier_name): ?>
+                    <p><strong>Courier:</strong> <?php echo esc_html($courier_name); ?></p>
+                <?php endif; ?>
                 <?php if ($awb_number): ?>
                     <p><strong>AWB Number:</strong> <?php echo esc_html($awb_number); ?></p>
-                    <p><a href="<?php echo esc_url('https://livraria.ro/dashboard/track?awbNumber=' . urlencode($awb_number)); ?>" target="_blank">Track Package</a></p>
+                    <div class="awb-actions">
+                        <a href="<?php echo esc_url('https://livraria.ro/dashboard/track?awbNumber=' . urlencode($awb_number)); ?>"
+                           target="_blank"
+                           class="button button-secondary">
+                            <span class="dashicons dashicons-location-alt"></span>
+                            Track Package
+                        </a>
+                        <a href="<?php
+                            echo esc_url(add_query_arg(array(
+                                'action' => 'download_awb_pdf',
+                                'order_id' => $order_id,
+                                'awb_number' => $awb_number,
+                                'paperSize' => 'A4',
+                                'nonce' => wp_create_nonce('courier_expedition_nonce')
+                            ), admin_url('admin-ajax.php')));
+                        ?>"
+                           class="button button-primary download-awb-pdf"
+                           data-awb="<?php echo esc_attr($awb_number); ?>"
+                           data-size="A4">
+                            <span class="dashicons dashicons-download"></span>
+                            Download AWB (A4)
+                        </a>
+                        <a href="<?php
+                            echo esc_url(add_query_arg(array(
+                                'action' => 'download_awb_pdf',
+                                'order_id' => $order_id,
+                                'awb_number' => $awb_number,
+                                'paperSize' => 'A6',
+                                'nonce' => wp_create_nonce('courier_expedition_nonce')
+                            ), admin_url('admin-ajax.php')));
+                        ?>"
+                           class="button button-primary download-awb-pdf"
+                           data-awb="<?php echo esc_attr($awb_number); ?>"
+                           data-size="A6">
+                            <span class="dashicons dashicons-download"></span>
+                            Download AWB (A6)
+                        </a>
+                    </div>
                 <?php endif; ?>
             <?php else: ?>
                 
@@ -450,6 +497,7 @@ class LivrariaPlugin {
             var packageCount = 1;
             var quoteRequestId = null;
             var selectedQuoteId = null;
+            var quotesData = [];
             var autoCreateInProgress = false;
             
             // Intercept order status change to "completed" for auto-create expeditions
@@ -505,8 +553,17 @@ class LivrariaPlugin {
                     },
                     success: function(response) {
                         if (!response.success || !response.data.quotes || response.data.quotes.length === 0) {
+                            // Handle error message - response.data can be a string or object
+                            var errorMsg = 'Unknown error';
+                            if (response.data) {
+                                if (typeof response.data === 'string') {
+                                    errorMsg = response.data;
+                                } else if (response.data.message) {
+                                    errorMsg = response.data.message;
+                                }
+                            }
                             $overlay.find('h3').text('Error');
-                            $overlay.find('p').html('Failed to get quotes: ' + (response.data ? response.data.message : 'Unknown error') + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                            $overlay.find('p').html('Failed to get quotes: ' + errorMsg + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
                             autoCreateInProgress = false;
                             window.livrariaPreventUnload = false;
                             return;
@@ -577,25 +634,52 @@ class LivrariaPlugin {
                                             }, 1000);
                                         }, 1000);
                                     },
-                                    error: function() {
+                                    error: function(xhr, status, error) {
+                                        var errorMsg = 'AJAX error occurred while creating expedition';
+                                        if (xhr.responseJSON && xhr.responseJSON.data) {
+                                            errorMsg = xhr.responseJSON.data;
+                                        } else if (error) {
+                                            errorMsg = error;
+                                        } else if (status) {
+                                            errorMsg = 'Request failed: ' + status;
+                                        }
                                         $overlay.find('h3').text('Error');
-                                        $overlay.find('p').html('AJAX error occurred while creating expedition.<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                        $overlay.find('p').html(errorMsg + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                        console.error('Auto-create generate label error:', xhr, status, error);
                                         autoCreateInProgress = false;
                                         window.livrariaPreventUnload = false;
                                     }
                                 });
                             },
-                            error: function() {
+                            error: function(xhr, status, error) {
+                                var errorMsg = 'AJAX error occurred while selecting quote';
+                                if (xhr.responseJSON && xhr.responseJSON.data) {
+                                    errorMsg = xhr.responseJSON.data;
+                                } else if (error) {
+                                    errorMsg = error;
+                                } else if (status) {
+                                    errorMsg = 'Request failed: ' + status;
+                                }
                                 $overlay.find('h3').text('Error');
-                                $overlay.find('p').html('AJAX error occurred while selecting quote.<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                $overlay.find('p').html(errorMsg + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                console.error('Auto-create select quote error:', xhr, status, error);
                                 autoCreateInProgress = false;
                                 window.livrariaPreventUnload = false;
                             }
                         });
                     },
-                    error: function() {
+                    error: function(xhr, status, error) {
+                        var errorMsg = 'AJAX error occurred while getting quotes';
+                        if (xhr.responseJSON && xhr.responseJSON.data) {
+                            errorMsg = xhr.responseJSON.data;
+                        } else if (error) {
+                            errorMsg = error;
+                        } else if (status) {
+                            errorMsg = 'Request failed: ' + status;
+                        }
                         $overlay.find('h3').text('Error');
-                        $overlay.find('p').html('AJAX error occurred while getting quotes.<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                        $overlay.find('p').html(errorMsg + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                        console.error('Auto-create get quotes error:', xhr, status, error);
                         autoCreateInProgress = false;
                         window.livrariaPreventUnload = false;
                     }
@@ -661,8 +745,17 @@ class LivrariaPlugin {
                                 },
                                 success: function(response) {
                                     if (!response.success || !response.data.quotes || response.data.quotes.length === 0) {
+                                        // Handle error message - response.data can be a string or object
+                                        var errorMsg = 'Unknown error';
+                                        if (response.data) {
+                                            if (typeof response.data === 'string') {
+                                                errorMsg = response.data;
+                                            } else if (response.data.message) {
+                                                errorMsg = response.data.message;
+                                            }
+                                        }
                                         $overlay.find('h3').text('Error');
-                                        $overlay.find('p').html('Failed to get quotes: ' + (response.data ? response.data.message : 'Unknown error') + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                        $overlay.find('p').html('Failed to get quotes: ' + errorMsg + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
                                         autoCreateInProgress = false;
                                         window.livrariaPreventUnload = false;
                                         return;
@@ -739,25 +832,52 @@ class LivrariaPlugin {
                                                         }, 500);
                                                     }, 1000);
                                                 },
-                                                error: function() {
+                                                error: function(xhr, status, error) {
+                                                    var errorMsg = 'AJAX error occurred while creating expedition';
+                                                    if (xhr.responseJSON && xhr.responseJSON.data) {
+                                                        errorMsg = xhr.responseJSON.data;
+                                                    } else if (error) {
+                                                        errorMsg = error;
+                                                    } else if (status) {
+                                                        errorMsg = 'Request failed: ' + status;
+                                                    }
                                                     $overlay.find('h3').text('Error');
-                                                    $overlay.find('p').html('AJAX error occurred while creating expedition.<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                                    $overlay.find('p').html(errorMsg + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                                    console.error('Auto-create generate label error:', xhr, status, error);
                                                     autoCreateInProgress = false;
                                                     window.livrariaPreventUnload = false;
                                                 }
                                             });
                                         },
-                                        error: function() {
+                                        error: function(xhr, status, error) {
+                                            var errorMsg = 'AJAX error occurred while selecting quote';
+                                            if (xhr.responseJSON && xhr.responseJSON.data) {
+                                                errorMsg = xhr.responseJSON.data;
+                                            } else if (error) {
+                                                errorMsg = error;
+                                            } else if (status) {
+                                                errorMsg = 'Request failed: ' + status;
+                                            }
                                             $overlay.find('h3').text('Error');
-                                            $overlay.find('p').html('AJAX error occurred while selecting quote.<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                            $overlay.find('p').html(errorMsg + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                            console.error('Auto-create select quote error:', xhr, status, error);
                                             autoCreateInProgress = false;
                                             window.livrariaPreventUnload = false;
                                         }
                                     });
                                 },
-                                error: function() {
+                                error: function(xhr, status, error) {
+                                    var errorMsg = 'AJAX error occurred while getting quotes';
+                                    if (xhr.responseJSON && xhr.responseJSON.data) {
+                                        errorMsg = xhr.responseJSON.data;
+                                    } else if (error) {
+                                        errorMsg = error;
+                                    } else if (status) {
+                                        errorMsg = 'Request failed: ' + status;
+                                    }
                                     $overlay.find('h3').text('Error');
-                                    $overlay.find('p').html('AJAX error occurred while getting quotes.<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                    $overlay.find('p').html(errorMsg + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                    console.error('Auto-create get quotes error:', xhr, status, error);
                                     autoCreateInProgress = false;
                                     window.livrariaPreventUnload = false;
                                 }
@@ -921,13 +1041,31 @@ class LivrariaPlugin {
                             $('#quote-selection-result').html(''); // Clear any previous selection messages
                             btn.prop('disabled', false);
                         } else {
-                            $('#expedition-result').html('<p style="color:red;">Error: ' + (response.data ? response.data.message : 'Failed to get quotes') + '</p>');
+                            // Handle error message - response.data can be a string or object
+                            var errorMsg = 'Failed to get quotes';
+                            if (response.data) {
+                                if (typeof response.data === 'string') {
+                                    errorMsg = response.data;
+                                } else if (response.data.message) {
+                                    errorMsg = response.data.message;
+                                }
+                            }
+                            $('#expedition-result').html('<p style="color:red;">Error: ' + errorMsg + '</p>');
                             btn.prop('disabled', false);
                         }
                     },
-                    error: function() {
+                    error: function(xhr, status, error) {
                         $('#expedition-loading').hide();
-                        $('#expedition-result').html('<p style="color:red;">AJAX error occurred</p>');
+                        var errorMsg = 'AJAX request failed';
+                        if (xhr.responseJSON && xhr.responseJSON.data) {
+                            errorMsg = xhr.responseJSON.data;
+                        } else if (error) {
+                            errorMsg = error;
+                        } else if (status) {
+                            errorMsg = 'Request failed: ' + status;
+                        }
+                        $('#expedition-result').html('<p style="color:red;">Error: ' + errorMsg + '</p>');
+                        console.error('Get quotes AJAX error:', xhr, status, error);
                         btn.prop('disabled', false);
                     }
                 });
@@ -935,6 +1073,7 @@ class LivrariaPlugin {
             
             // Display quotes
             function displayQuotes(quotes) {
+                quotesData = quotes; // Store quotes for later access
                 var quotesHtml = '';
                 quotes.forEach(function(quote, index) {
                     var isSelected = selectedQuoteId === quote.id;
@@ -958,18 +1097,22 @@ class LivrariaPlugin {
             $(document).on('click', '.select-quote-btn', function() {
                 var quoteId = $(this).data('quote-id');
                 var btn = $(this);
-                
+
                 if (!quoteRequestId) {
                     $('#expedition-result').html('<p style="color:red;">Quote request ID not found</p>');
                     return;
                 }
-                
+
+                // Find the selected quote to get courier name
+                var selectedQuote = quotesData.find(function(q) { return q.id === quoteId; });
+                var courierName = selectedQuote ? selectedQuote.courierName : '';
+
                 btn.prop('disabled', true);
                 $('#expedition-loading').show();
-                
+
                 // Get sender profile ID from dropdown
                 var senderProfileId = $('#livraria-sender-profile-select').val() || '';
-                
+
                 $.ajax({
                     url: ajaxurl,
                     type: 'POST',
@@ -978,6 +1121,7 @@ class LivrariaPlugin {
                         order_id: <?php echo $order_id; ?>,
                         quote_request_id: quoteRequestId,
                         courier_quote_id: quoteId,
+                        courier_name: courierName,
                         sender_profile_id: senderProfileId,
                         nonce: $('#courier_expedition_nonce_field').val()
                     },
@@ -996,13 +1140,31 @@ class LivrariaPlugin {
                             $('#generate-label-section').show();
                             $('#quote-selection-result').html('<p style="color:green;">Quote selected successfully!</p>');
                         } else {
-                            $('#quote-selection-result').html('<p style="color:red;">Error: ' + (response.data || 'Failed to select quote') + '</p>');
+                            // Handle error message - response.data can be a string or object
+                            var errorMsg = 'Failed to select quote';
+                            if (response.data) {
+                                if (typeof response.data === 'string') {
+                                    errorMsg = response.data;
+                                } else if (response.data.message) {
+                                    errorMsg = response.data.message;
+                                }
+                            }
+                            $('#quote-selection-result').html('<p style="color:red;">Error: ' + errorMsg + '</p>');
                             btn.prop('disabled', false);
                         }
                     },
-                    error: function() {
+                    error: function(xhr, status, error) {
                         $('#expedition-loading').hide();
-                        $('#expedition-result').html('<p style="color:red;">AJAX error occurred</p>');
+                        var errorMsg = 'AJAX request failed';
+                        if (xhr.responseJSON && xhr.responseJSON.data) {
+                            errorMsg = xhr.responseJSON.data;
+                        } else if (error) {
+                            errorMsg = error;
+                        } else if (status) {
+                            errorMsg = 'Request failed: ' + status;
+                        }
+                        $('#quote-selection-result').html('<p style="color:red;">Error: ' + errorMsg + '</p>');
+                        console.error('Select quote AJAX error:', xhr, status, error);
                         btn.prop('disabled', false);
                     }
                 });
@@ -1038,13 +1200,31 @@ class LivrariaPlugin {
                                 location.reload();
                             }, 2000);
                         } else {
-                            $('#label-result').html('<p style="color:red;">Error: ' + (response.data || 'Failed to generate label') + '</p>');
+                            // Handle error message - response.data can be a string or object
+                            var errorMsg = 'Failed to generate label';
+                            if (response.data) {
+                                if (typeof response.data === 'string') {
+                                    errorMsg = response.data;
+                                } else if (response.data.message) {
+                                    errorMsg = response.data.message;
+                                }
+                            }
+                            $('#label-result').html('<p style="color:red;">Error: ' + errorMsg + '</p>');
                             btn.prop('disabled', false);
                         }
                     },
-                    error: function() {
+                    error: function(xhr, status, error) {
                         $('#label-loading').hide();
-                        $('#label-result').html('<p style="color:red;">AJAX error occurred</p>');
+                        var errorMsg = 'AJAX request failed';
+                        if (xhr.responseJSON && xhr.responseJSON.data) {
+                            errorMsg = xhr.responseJSON.data;
+                        } else if (error) {
+                            errorMsg = error;
+                        } else if (status) {
+                            errorMsg = 'Request failed: ' + status;
+                        }
+                        $('#label-result').html('<p style="color:red;">Error: ' + errorMsg + '</p>');
+                        console.error('Generate label AJAX error:', xhr, status, error);
                         btn.prop('disabled', false);
                     }
                 });
@@ -1176,7 +1356,8 @@ class LivrariaPlugin {
         // Clean up temporary meta
         delete_post_meta($order_id, '_courier_quote_request_id');
         delete_post_meta($order_id, '_courier_selected_quote_id');
-        
+        delete_post_meta($order_id, '_courier_selected_quote_name');
+
         error_log('Livraria Debug: Auto-create expedition completed successfully for order ID: ' . $order_id . ', Expedition ID: ' . $expedition_response['id']);
         
         // If called via AJAX, send JSON response
@@ -1259,19 +1440,25 @@ class LivrariaPlugin {
      */
     public function ajax_select_quote() {
         check_ajax_referer('courier_expedition_nonce', 'nonce');
-        
+
         $order_id = intval($_POST['order_id']);
         $quote_request_id = sanitize_text_field($_POST['quote_request_id']);
         $courier_quote_id = sanitize_text_field($_POST['courier_quote_id']);
+        $courier_name = isset($_POST['courier_name']) ? sanitize_text_field($_POST['courier_name']) : '';
         $sender_profile_id = isset($_POST['sender_profile_id']) ? sanitize_text_field($_POST['sender_profile_id']) : '';
-        
+
         // Select the quote
         $result = $this->api_client->select_courier_quote($quote_request_id, $courier_quote_id);
-        
+
         if ($result !== false) {
             // Store selected quote info in order meta
             update_post_meta($order_id, '_courier_quote_request_id', $quote_request_id);
             update_post_meta($order_id, '_courier_selected_quote_id', $courier_quote_id);
+
+            // Store courier name for later use
+            if (!empty($courier_name)) {
+                update_post_meta($order_id, '_courier_selected_quote_name', $courier_name);
+            }
             
             // If sender profile ID is provided, attach billing info from sender profile
             if (!empty($sender_profile_id)) {
@@ -1334,13 +1521,23 @@ class LivrariaPlugin {
             // Save expedition data
             $order = wc_get_order($order_id);
             if ($order) {
-                $this->order_handler->save_expedition_data($order_id, $expedition_response, array('id' => $courier_quote_id));
+                // Retrieve stored courier name
+                $courier_name = get_post_meta($order_id, '_courier_selected_quote_name', true);
+
+                // Pass courier name along with quote ID to save_expedition_data
+                $selected_quote = array('id' => $courier_quote_id);
+                if (!empty($courier_name)) {
+                    $selected_quote['courierName'] = $courier_name;
+                }
+
+                $this->order_handler->save_expedition_data($order_id, $expedition_response, $selected_quote);
                 $this->order_handler->add_expedition_order_note($order, $expedition_response);
             }
-            
+
             // Clean up temporary meta
             delete_post_meta($order_id, '_courier_quote_request_id');
             delete_post_meta($order_id, '_courier_selected_quote_id');
+            delete_post_meta($order_id, '_courier_selected_quote_name');
             
             wp_send_json_success(array(
                 'message' => 'Expedition created successfully',
@@ -1500,7 +1697,61 @@ class LivrariaPlugin {
             wp_send_json_error('Failed to update option');
         }
     }
-    
+
+    /**
+     * AJAX handler for downloading AWB PDF
+     */
+    public function ajax_download_awb_pdf() {
+        // Verify nonce for security
+        check_ajax_referer('courier_expedition_nonce', 'nonce');
+
+        // Check user permissions
+        if (!current_user_can('edit_shop_orders')) {
+            wp_die('Insufficient permissions', 'Forbidden', array('response' => 403));
+        }
+
+        $order_id = intval($_GET['order_id'] ?? 0);
+        $awb_number = sanitize_text_field($_GET['awb_number'] ?? '');
+
+        // Validate inputs
+        if (!$order_id || !$awb_number) {
+            wp_die('Missing required parameters', 'Bad Request', array('response' => 400));
+        }
+
+        // Verify AWB belongs to this order (security check)
+        $stored_awb = get_post_meta($order_id, '_courier_awb_number', true);
+        if ($stored_awb !== $awb_number) {
+            wp_die('AWB number mismatch', 'Forbidden', array('response' => 403));
+        }
+
+        // Get PDF options from query params
+        $options = array(
+            'format' => sanitize_text_field($_GET['format'] ?? 'pdf'),
+            'paperSize' => sanitize_text_field($_GET['paperSize'] ?? 'A4'),
+            'language' => sanitize_text_field($_GET['language'] ?? 'EN')
+        );
+
+        // Download PDF from API
+        $pdf_data = $this->api_client->download_awb_pdf($awb_number, $options);
+
+        if ($pdf_data === false) {
+            wp_die('Failed to download AWB PDF from API', 'Service Unavailable', array('response' => 503));
+        }
+
+        // Set headers for PDF download
+        header('Content-Type: ' . $pdf_data['content_type']);
+        header('Content-Disposition: attachment; filename="AWB-' . $awb_number . '-' . $options['paperSize'] . '.pdf"');
+        header('Content-Length: ' . $pdf_data['content_length']);
+        header('Cache-Control: no-cache, must-revalidate');
+        header('Pragma: no-cache');
+
+        // Output PDF binary data
+        echo $pdf_data['body'];
+
+        // Important: Stop execution to prevent WordPress from adding extra output
+        exit;
+    }
+
     public function save_expedition_meta($post_id) {
         // Check if this is an order post type
         if (get_post_type($post_id) !== 'shop_order') {
@@ -1751,6 +2002,76 @@ class LivrariaPlugin {
             background-color: #46b450 !important;
             color: white !important;
             cursor: not-allowed;
+        }
+
+        /* AWB Actions */
+        .awb-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+
+        .awb-actions .button {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            text-decoration: none;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .awb-actions .button .dashicons {
+            font-size: 16px;
+            width: 16px;
+            height: 16px;
+        }
+
+        .awb-actions .button-secondary {
+            background: #f6f7f7;
+            border-color: #dcdcde;
+            color: #2c3338;
+        }
+
+        .awb-actions .button-secondary:hover {
+            background: #f0f0f1;
+            border-color: #8c8f94;
+            color: #1d2327;
+        }
+
+        .awb-actions .button-primary {
+            background: #2271b1;
+            border-color: #2271b1;
+            color: #fff;
+        }
+
+        .awb-actions .button-primary:hover {
+            background: #135e96;
+            border-color: #135e96;
+            color: #fff;
+        }
+
+        /* Loading state for download button */
+        .download-awb-pdf.loading {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
+        .download-awb-pdf.loading::before {
+            content: '';
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            margin-right: 6px;
+            border: 2px solid #fff;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
         }
         ";
         

@@ -999,11 +999,41 @@ class Livraria_Order_Handler {
      * @param array $selected_quote
      */
     public function save_expedition_data($order_id, $expedition_response, $selected_quote) {
+        // Debug: Log the full response structure
+        error_log('Livraria Debug Save: Full expedition_response: ' . print_r($expedition_response, true));
+        error_log('Livraria Debug Save: Full selected_quote: ' . print_r($selected_quote, true));
+
         update_post_meta($order_id, '_courier_expedition_id', $expedition_response['id']);
         update_post_meta($order_id, '_courier_quote_id', $selected_quote['id']);
-        update_post_meta($order_id, '_courier_name', $selected_quote['courierName'] ?? '');
+
+        // Get courier name from expedition response (multiple possible locations)
+        // Priority: expedition response > selected quote (since expedition response is authoritative)
+        $courier_name = '';
+
+        // Check expedition response first (this is what the API returns after creating expedition)
+        if (!empty($expedition_response['courierQuote']['courierName'])) {
+            $courier_name = $expedition_response['courierQuote']['courierName'];
+            error_log('Livraria Debug: Courier name from expedition_response[courierQuote][courierName]: ' . $courier_name);
+        } elseif (!empty($expedition_response['courier']['name'])) {
+            $courier_name = $expedition_response['courier']['name'];
+            error_log('Livraria Debug: Courier name from expedition_response[courier][name]: ' . $courier_name);
+        } elseif (!empty($expedition_response['courierName'])) {
+            // Public tracking endpoint format
+            $courier_name = $expedition_response['courierName'];
+            error_log('Livraria Debug: Courier name from expedition_response[courierName]: ' . $courier_name);
+        } elseif (!empty($selected_quote['courierName'])) {
+            // Fallback to selected quote (for auto-create flow)
+            $courier_name = $selected_quote['courierName'];
+            error_log('Livraria Debug: Courier name from selected_quote[courierName]: ' . $courier_name);
+        } else {
+            error_log('Livraria Debug: Courier name not found in any expected location!');
+            error_log('Livraria Debug: expedition_response keys: ' . implode(', ', array_keys($expedition_response)));
+        }
+
+        error_log('Livraria Debug: Saving courier name: "' . $courier_name . '" for order ' . $order_id);
+        update_post_meta($order_id, '_courier_name', $courier_name);
         update_post_meta($order_id, '_courier_price', $selected_quote['amount'] ?? 0);
-        
+
         if (isset($expedition_response['awbNumber'])) {
             update_post_meta($order_id, '_courier_awb_number', $expedition_response['awbNumber']);
         }

@@ -303,14 +303,109 @@ class Livraria_API_Client {
     
     /**
      * Get sender profile information
-     * 
+     *
      * @return array|false API response or false on failure
      */
     public function get_sender_profile() {
         return $this->api_request('GET', '/users/me/sender-profile');
     }
-    
-    
+
+    /**
+     * Download AWB PDF
+     *
+     * @param string $awb_number AWB number
+     * @param array $options Download options (format, paperSize, language)
+     * @return array|false Binary PDF data with headers or false on failure
+     */
+    public function download_awb_pdf($awb_number, $options = array()) {
+        // Default options
+        $defaults = array(
+            'format' => 'pdf',
+            'paperSize' => 'A4',
+            'language' => 'EN'
+        );
+        $options = array_merge($defaults, $options);
+
+        // Build query string
+        $query_params = http_build_query(array(
+            'format' => $options['format'],
+            'paperSize' => $options['paperSize'],
+            'language' => $options['language']
+        ));
+
+        $endpoint = '/public/awb/print/' . urlencode($awb_number) . '?' . $query_params;
+
+        $this->log_debug('Downloading AWB PDF: ' . $awb_number . ' with options: ' . json_encode($options));
+
+        // Use special method for binary download
+        return $this->api_request_binary('GET', $endpoint);
+    }
+
+    /**
+     * Make API request for binary data (PDFs, images, etc.)
+     * Similar to api_request() but handles binary responses
+     *
+     * @param string $method HTTP method
+     * @param string $endpoint API endpoint
+     * @return array|false Array with 'body', 'headers', 'content_type', 'content_length' or false on failure
+     */
+    private function api_request_binary($method, $endpoint) {
+        if (empty($this->api_base_url)) {
+            $this->log_error('API base URL not configured');
+            return false;
+        }
+
+        // Ensure valid token
+        if (!$this->ensure_valid_token()) {
+            $this->log_error('Unable to obtain valid API token for binary request');
+            return false;
+        }
+
+        $url = rtrim($this->api_base_url, '/') . $endpoint;
+        $url = $this->convert_localhost_for_docker($url);
+
+        $args = array(
+            'method' => $method,
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $this->api_token,
+                'Accept' => 'application/pdf'
+            ),
+            'timeout' => 60, // Longer timeout for PDF generation
+            'user-agent' => 'WordPress-Livraria-Plugin/1.0',
+            'sslverify' => false
+        );
+
+        $this->log_debug('Binary API Request: ' . $method . ' ' . $url);
+
+        $response = wp_remote_request($url, $args);
+
+        if (is_wp_error($response)) {
+            $this->log_error('Binary API Request Failed: ' . $response->get_error_message());
+            return false;
+        }
+
+        $response_code = wp_remote_retrieve_response_code($response);
+
+        if ($response_code >= 200 && $response_code < 300) {
+            $body = wp_remote_retrieve_body($response);
+            $headers = wp_remote_retrieve_headers($response);
+
+            $this->log_debug('Binary API Request Successful: ' . strlen($body) . ' bytes received');
+
+            return array(
+                'body' => $body,
+                'headers' => $headers,
+                'content_type' => $headers['content-type'] ?? 'application/pdf',
+                'content_length' => $headers['content-length'] ?? strlen($body)
+            );
+        } else {
+            $body = wp_remote_retrieve_body($response);
+            $this->log_error('Binary API Error: HTTP ' . $response_code . ' - ' . $body);
+            return false;
+        }
+    }
+
+
     /**
      * Convert localhost/127.0.0.1 to host.docker.internal for Docker
      * 
