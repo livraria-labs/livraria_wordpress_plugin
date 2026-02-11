@@ -595,9 +595,16 @@ class Livraria_Admin_Page {
                 'name' => $profile_name
             );
         }
-        
+
         if (empty($profile_options)) {
             return;
+        }
+
+        // Auto-set default profile if not configured or if current default is invalid
+        $valid_ids = array_column($profile_options, 'id');
+        if (empty($default_profile_id) || !in_array($default_profile_id, $valid_ids)) {
+            $default_profile_id = $profile_options[0]['id'];
+            update_option('livraria_default_sender_profile_id', $default_profile_id);
         }
         ?>
         <div style="margin-bottom: 16px;">
