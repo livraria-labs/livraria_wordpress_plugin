@@ -727,9 +727,10 @@ class Livraria_Order_Handler {
         }
         
         if (!empty($missing_fields)) {
-            $error_msg = "Sender address missing required fields: " . implode(', ', $missing_fields) . ". ";
+            $error_msg = "Sender address missing required fields: " . implode(', ', array_map('esc_html', $missing_fields)) . ". ";
             $error_msg .= "Please ensure your sender profile in the API has a complete address with fields: country, county, city, postcode, and street. ";
             $error_msg .= "Check the 'Sender Profile' section in settings to see what address data is available from the API.";
+            // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Exception message is sanitized above
             throw new Exception($error_msg);
         }
         

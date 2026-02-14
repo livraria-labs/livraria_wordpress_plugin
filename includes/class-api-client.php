@@ -188,7 +188,7 @@ class Livraria_API_Client {
                 return array(
                     'success' => true,
                     'message' => 'Authentication successful! Login works and API access confirmed.',
-                    'token_expires_at' => date('Y-m-d H:i:s', $this->token_expires_at)
+                    'token_expires_at' => gmdate('Y-m-d H:i:s', $this->token_expires_at)
                 );
             } else {
                 return array(

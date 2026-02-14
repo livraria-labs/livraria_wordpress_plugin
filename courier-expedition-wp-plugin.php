@@ -4,6 +4,8 @@
  * Description: WordPress plugin for generating shipping expeditions via courier API
  * Version: 1.0.0
  * Author: Livraria S.R.L.
+ * License: GPL v2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * 
  * DEVELOPMENT MODE: This plugin is mounted from source for real-time development
  */
@@ -137,25 +139,25 @@ class LivrariaPlugin {
     }
     
     public function admin_init() {
-        register_setting('courier_api_settings', 'courier_api_base_url');
-        register_setting('courier_api_settings', 'courier_api_username');
-        register_setting('courier_api_settings', 'courier_api_password');
-        register_setting('courier_api_settings', 'courier_auto_create');
-        register_setting('courier_api_settings', 'courier_default_sender_name');
-        register_setting('courier_api_settings', 'courier_default_sender_email');
-        register_setting('courier_api_settings', 'courier_default_sender_phone');
+        register_setting('courier_api_settings', 'courier_api_base_url', array('sanitize_callback' => 'esc_url_raw'));
+        register_setting('courier_api_settings', 'courier_api_username', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_api_password', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_auto_create', array('sanitize_callback' => array($this, 'sanitize_boolean')));
+        register_setting('courier_api_settings', 'courier_default_sender_name', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_default_sender_email', array('sanitize_callback' => 'sanitize_email'));
+        register_setting('courier_api_settings', 'courier_default_sender_phone', array('sanitize_callback' => 'sanitize_text_field'));
         
         // Individual address fields
-        register_setting('courier_api_settings', 'courier_sender_country');
-        register_setting('courier_api_settings', 'courier_sender_county');
-        register_setting('courier_api_settings', 'courier_sender_city');
-        register_setting('courier_api_settings', 'courier_sender_postcode');
-        register_setting('courier_api_settings', 'courier_sender_street');
-        register_setting('courier_api_settings', 'courier_sender_street_number');
-        register_setting('courier_api_settings', 'courier_sender_block');
-        register_setting('courier_api_settings', 'courier_sender_staircase');
-        register_setting('courier_api_settings', 'courier_sender_floor');
-        register_setting('courier_api_settings', 'courier_sender_apartment');
+        register_setting('courier_api_settings', 'courier_sender_country', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_county', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_city', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_postcode', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_street', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_street_number', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_block', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_staircase', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_floor', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_apartment', array('sanitize_callback' => 'sanitize_text_field'));
         
         // In production, automatically set API Base URL to production endpoint
         if (!self::is_development_mode()) {
@@ -166,6 +168,15 @@ class LivrariaPlugin {
         }
     }
     
+    /**
+     * Sanitize boolean setting value
+     * 
+     * @param mixed $value The value to sanitize
+     * @return int 1 for true, 0 for false
+     */
+    public function sanitize_boolean($value) {
+        return absint($value) ? 1 : 0;
+    }
     
     /**
      * Get metabox title with logo
@@ -1028,7 +1039,7 @@ class LivrariaPlugin {
                     type: 'POST',
                     data: {
                         action: 'get_quotes_for_order',
-                        order_id: <?php echo $order_id; ?>,
+                        order_id: <?php echo esc_js($order_id); ?>,
                         nonce: $('#courier_expedition_nonce_field').val(),
                         expedition_data: expeditionData
                     },
@@ -1118,7 +1129,7 @@ class LivrariaPlugin {
                     type: 'POST',
                     data: {
                         action: 'select_quote',
-                        order_id: <?php echo $order_id; ?>,
+                        order_id: <?php echo esc_js($order_id); ?>,
                         quote_request_id: quoteRequestId,
                         courier_quote_id: quoteId,
                         courier_name: courierName,
@@ -1189,7 +1200,7 @@ class LivrariaPlugin {
                     type: 'POST',
                     data: {
                         action: 'generate_label',
-                        order_id: <?php echo $order_id; ?>,
+                        order_id: <?php echo esc_js($order_id); ?>,
                         nonce: $('#courier_expedition_nonce_field').val()
                     },
                     success: function(response) {
@@ -1746,6 +1757,7 @@ class LivrariaPlugin {
         header('Pragma: no-cache');
 
         // Output PDF binary data
+        // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Binary PDF data cannot be escaped
         echo $pdf_data['body'];
 
         // Important: Stop execution to prevent WordPress from adding extra output
