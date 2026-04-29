@@ -29,7 +29,7 @@ jQuery(document).ready(function($) {
             url: ajaxurl,
             type: 'POST',
             data: {
-                action: 'test_connectivity',
+                action: 'livraria_test_connectivity',
                 api_url: apiUrl,
                 nonce: livrariaAdmin.nonce
             },
@@ -100,7 +100,7 @@ jQuery(document).ready(function($) {
             url: ajaxurl,
             type: 'POST',
             data: {
-                action: 'test_courier_api_connection',
+                action: 'livraria_test_courier_api_connection',
                 api_url: apiUrl,
                 username: username,
                 password: password,
@@ -172,7 +172,7 @@ jQuery(document).ready(function($) {
             url: ajaxurl,
             type: 'POST',
             data: {
-                action: 'create_expedition',
+                action: 'livraria_create_expedition',
                 order_id: orderId,
                 nonce: nonce
             },
@@ -421,3 +421,216 @@ jQuery(document).ready(function($) {
         }, 2000);
     });
 });
+
+// Login/logout, debug modal, copy password, auto-create checkbox handlers
+// (moved from class-admin-page.php inline script — data provided via wp_localize_script)
+jQuery(document).ready(function($) {
+    $('#livraria-logout-btn').on('click', function() {
+        if (!confirm('Are you sure you want to logout?')) {
+            return;
+        }
+        var btn = $(this);
+        btn.prop('disabled', true).text('Logging out...');
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: { action: 'livraria_logout', nonce: livrariaAdmin.nonce },
+            success: function(response) {
+                if (response.success) {
+                    location.reload();
+                } else {
+                    alert('Logout failed: ' + (response.data || 'Unknown error'));
+                    btn.prop('disabled', false).text('Logout');
+                }
+            },
+            error: function() {
+                alert('AJAX error during logout');
+                btn.prop('disabled', false).text('Logout');
+            }
+        });
+    });
+
+    $('#livraria-login-btn').on('click', function() {
+        var apiUrl = $('#login-api-url').val() || $('input[name="courier_api_base_url"]').val() || 'https://api.livraria.ro/';
+        var username = $('#login-username').val() || $('input[name="courier_api_username"]').val();
+        var password = $('#login-password').val() || $('input[name="courier_api_password"]').val();
+        var rememberMe = $('#remember-me').is(':checked') ? '1' : '0';
+        if (!username || !password) {
+            alert('Please fill in Username and Password before logging in.');
+            return;
+        }
+        var btn = $(this);
+        btn.prop('disabled', true).text('Logging in...');
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: {
+                action: 'livraria_login',
+                api_url: apiUrl,
+                username: username,
+                password: password,
+                remember_me: rememberMe,
+                nonce: livrariaAdmin.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    location.reload();
+                } else {
+                    alert('Login failed: ' + (response.data || 'Unknown error'));
+                    btn.prop('disabled', false).text('Login');
+                }
+            },
+            error: function() {
+                alert('AJAX error during login');
+                btn.prop('disabled', false).text('Login');
+            }
+        });
+    });
+
+    $('#livraria-debug-btn').on('click', function() {
+        $('#livraria-debug-modal').css('display', 'block');
+        $('body').css('overflow', 'hidden');
+    });
+    $('#livraria-debug-close').on('click', function() {
+        $('#livraria-debug-modal').css('display', 'none');
+        $('body').css('overflow', 'auto');
+    });
+    $('#livraria-debug-modal').on('click', function(e) {
+        if ($(e.target).attr('id') === 'livraria-debug-modal') {
+            $(this).css('display', 'none');
+            $('body').css('overflow', 'auto');
+        }
+    });
+
+    $('#livraria-copy-password').on('click', function() {
+        var passwordValue = $('#livraria-password-value').text();
+        if (!passwordValue) { return; }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(passwordValue).then(function() {
+                var btn = $('#livraria-copy-password');
+                var originalHtml = btn.html();
+                btn.html('<span style="font-size: 12px;">✓</span><span>Copied!</span>').css({ background: '#d4edda', 'border-color': '#c3e6cb', color: '#155724' });
+                setTimeout(function() { btn.html(originalHtml).css({ background: '', 'border-color': '', color: '' }); }, 2000);
+            }).catch(function(err) { alert('Failed to copy password: ' + err); });
+        } else {
+            var textArea = document.createElement('textarea');
+            textArea.value = passwordValue;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try {
+                if (document.execCommand('copy')) {
+                    var btn = $('#livraria-copy-password');
+                    var originalHtml = btn.html();
+                    btn.html('<span style="font-size: 12px;">✓</span><span>Copied!</span>').css({ background: '#d4edda', 'border-color': '#c3e6cb', color: '#155724' });
+                    setTimeout(function() { btn.html(originalHtml).css({ background: '', 'border-color': '', color: '' }); }, 2000);
+                } else {
+                    alert('Failed to copy password. Please select and copy manually.');
+                }
+            } catch (err) { alert('Failed to copy password: ' + err); }
+            document.body.removeChild(textArea);
+        }
+    });
+
+    $('#courier_auto_create_account').on('change', function() {
+        var checkbox = $(this);
+        var isChecked = checkbox.is(':checked');
+        var originalValue = !isChecked;
+        checkbox.prop('disabled', true);
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: {
+                action: 'livraria_update_option',
+                option_name: 'courier_auto_create',
+                option_value: isChecked ? '1' : '0',
+                nonce: livrariaAdmin.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    var feedback = $('#livraria-auto-save-feedback');
+                    feedback.css('opacity', '1');
+                    setTimeout(function() { feedback.css('opacity', '0'); }, 2000);
+                } else {
+                    checkbox.prop('checked', originalValue);
+                    alert('Failed to save setting: ' + (response.data || 'Unknown error'));
+                }
+                checkbox.prop('disabled', false);
+            },
+            error: function() {
+                checkbox.prop('checked', originalValue);
+                alert('AJAX error while saving setting');
+                checkbox.prop('disabled', false);
+            }
+        });
+    });
+});
+
+// Default sender profile dropdown auto-save
+// (moved from class-admin-page.php inline script — defaultSenderProfileId provided via wp_localize_script)
+jQuery(document).ready(function($) {
+    $('#livraria-default-sender-profile').on('change', function() {
+        var select = $(this);
+        var profileId = select.val();
+        var originalValue = select.data('original-value') || livrariaAdmin.defaultSenderProfileId;
+        select.prop('disabled', true);
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: {
+                action: 'livraria_update_option',
+                option_name: 'livraria_default_sender_profile_id',
+                option_value: profileId,
+                nonce: livrariaAdmin.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    select.data('original-value', profileId);
+                    var feedback = $('#livraria-default-profile-save-feedback');
+                    feedback.css('opacity', '1');
+                    setTimeout(function() { feedback.css('opacity', '0'); }, 2000);
+                } else {
+                    select.val(originalValue);
+                    alert('Failed to save default profile: ' + (response.data || 'Unknown error'));
+                }
+                select.prop('disabled', false);
+            },
+            error: function() {
+                select.val(originalValue);
+                alert('AJAX error while saving default profile');
+                select.prop('disabled', false);
+            }
+        });
+    });
+});
+
+// Sender profile modal handlers
+// (moved from class-admin-page.php inline script)
+function openLivrariaProfileModal(profileId) {
+    var modal = document.getElementById(profileId + '-modal');
+    if (modal) {
+        modal.style.display = 'block';
+        document.body.style.overflow = 'hidden';
+    }
+}
+
+function closeLivrariaProfileModal(profileId) {
+    var modal = document.getElementById(profileId + '-modal');
+    if (modal) {
+        modal.style.display = 'none';
+        document.body.style.overflow = 'auto';
+    }
+}
+
+window.onclick = function(event) {
+    if (event.target.classList.contains('livraria-profile-modal-overlay') || (event.target.id && event.target.id.endsWith('-modal'))) {
+        document.querySelectorAll('[id$="-modal"]').forEach(function(modal) {
+            if (modal.style.display === 'block') {
+                modal.style.display = 'none';
+                document.body.style.overflow = 'auto';
+            }
+        });
+    }
+};
