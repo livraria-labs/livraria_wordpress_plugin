@@ -549,13 +549,15 @@ class Livraria_API_Client {
             // Log request for debugging
             $this->log_debug('API Request: ' . $method . ' ' . $url, $data);
             
-            // Log the actual JSON body being sent
+            // Log the actual JSON body being sent (only in development mode)
             if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
                 error_log('Livraria API Debug: JSON body being sent: ' . $json_body);
-                if (isset($data['createQuoteRequestDto'])) {
-                    error_log('Livraria API Debug: Has createQuoteRequestDto: yes');
-                    error_log('Livraria API Debug: Has sender: ' . (isset($data['createQuoteRequestDto']['sender']) ? 'yes' : 'no'));
-                    error_log('Livraria API Debug: Has recipient: ' . (isset($data['createQuoteRequestDto']['recipient']) ? 'yes' : 'no'));
+                if (isset($data['sender'])) {
+                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+                    error_log('Livraria API Debug: Has sender: yes');
+                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+                    error_log('Livraria API Debug: Has recipient: ' . (isset($data['recipient']) ? 'yes' : 'no'));
                 }
             }
         }
@@ -608,6 +610,7 @@ class Livraria_API_Client {
      */
     private function log_error($message) {
         if (defined('WP_DEBUG') && WP_DEBUG) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
             error_log('Livraria API Error: ' . $message);
         }
     }
@@ -622,8 +625,10 @@ class Livraria_API_Client {
         if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
             $log_message = 'Livraria API Debug: ' . $message;
             if ($data !== null) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only when WP_DEBUG is enabled
                 $log_message .= ' - ' . print_r($data, true);
             }
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
             error_log($log_message);
         }
     }
@@ -822,7 +827,10 @@ class Livraria_API_Client {
         }
         
         // If encryption fails, store plain text (with warning in logs)
-        error_log('Livraria Warning: Could not encrypt credentials, storing in plain text. Please ensure OpenSSL is enabled.');
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Warning logging only when WP_DEBUG is enabled
+            error_log('Livraria Warning: Could not encrypt credentials, storing in plain text. Please ensure OpenSSL is enabled.');
+        }
         return update_option($option_name, $value);
     }
 }
