@@ -4,6 +4,8 @@
  * Description: Automatically create and manage shipping expeditions for WooCommerce orders via the Livraria courier API.
  * Version: 1.0.0
  * Author: Livraria S.R.L.
+ * License: GPL v2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: livraria-shipping-for-woocommerce
  *
  * DEVELOPMENT MODE: This plugin is mounted from source for real-time development
@@ -110,7 +112,10 @@ class LivrariaPlugin {
     
     public function debug_current_screen($screen) {
         if ($screen && (strpos($screen->id, 'order') !== false || strpos($screen->id, 'shop') !== false)) {
-            error_log('Livraria Debug: Current screen ID: ' . $screen->id . ', Base: ' . $screen->base . ', Post Type: ' . ($screen->post_type ?? 'none'));
+            if (self::is_development_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+                error_log('Livraria Debug: Current screen ID: ' . $screen->id . ', Base: ' . $screen->base . ', Post Type: ' . ($screen->post_type ?? 'none'));
+            }
         }
     }
     
@@ -131,25 +136,25 @@ class LivrariaPlugin {
     }
     
     public function admin_init() {
-        register_setting('courier_api_settings', 'courier_api_base_url');
-        register_setting('courier_api_settings', 'courier_api_username');
-        register_setting('courier_api_settings', 'courier_api_password');
-        register_setting('courier_api_settings', 'courier_auto_create');
-        register_setting('courier_api_settings', 'courier_default_sender_name');
-        register_setting('courier_api_settings', 'courier_default_sender_email');
-        register_setting('courier_api_settings', 'courier_default_sender_phone');
+        register_setting('courier_api_settings', 'courier_api_base_url', array('sanitize_callback' => 'esc_url_raw'));
+        register_setting('courier_api_settings', 'courier_api_username', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_api_password', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_auto_create', array('sanitize_callback' => array($this, 'sanitize_boolean')));
+        register_setting('courier_api_settings', 'courier_default_sender_name', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_default_sender_email', array('sanitize_callback' => 'sanitize_email'));
+        register_setting('courier_api_settings', 'courier_default_sender_phone', array('sanitize_callback' => 'sanitize_text_field'));
         
         // Individual address fields
-        register_setting('courier_api_settings', 'courier_sender_country');
-        register_setting('courier_api_settings', 'courier_sender_county');
-        register_setting('courier_api_settings', 'courier_sender_city');
-        register_setting('courier_api_settings', 'courier_sender_postcode');
-        register_setting('courier_api_settings', 'courier_sender_street');
-        register_setting('courier_api_settings', 'courier_sender_street_number');
-        register_setting('courier_api_settings', 'courier_sender_block');
-        register_setting('courier_api_settings', 'courier_sender_staircase');
-        register_setting('courier_api_settings', 'courier_sender_floor');
-        register_setting('courier_api_settings', 'courier_sender_apartment');
+        register_setting('courier_api_settings', 'courier_sender_country', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_county', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_city', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_postcode', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_street', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_street_number', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_block', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_staircase', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_floor', array('sanitize_callback' => 'sanitize_text_field'));
+        register_setting('courier_api_settings', 'courier_sender_apartment', array('sanitize_callback' => 'sanitize_text_field'));
         
         // In production, automatically set API Base URL to production endpoint
         if (!self::is_development_mode()) {
@@ -160,6 +165,15 @@ class LivrariaPlugin {
         }
     }
     
+    /**
+     * Sanitize boolean setting value
+     * 
+     * @param mixed $value The value to sanitize
+     * @return int 1 for true, 0 for false
+     */
+    public function sanitize_boolean($value) {
+        return absint($value) ? 1 : 0;
+    }
     
     /**
      * Get metabox title with logo
@@ -180,8 +194,11 @@ class LivrariaPlugin {
     }
     
     public function add_expedition_meta_box() {
-        // Debug: Log when this method is called
-        error_log('Livraria Debug: add_expedition_meta_box called');
+        // Debug: Log when this method is called (only in development mode)
+        if (self::is_development_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+            error_log('Livraria Debug: add_expedition_meta_box called');
+        }
         
         $metabox_title = $this->get_metabox_title();
         
@@ -194,7 +211,10 @@ class LivrariaPlugin {
             'side',
             'high'
         );
-        error_log('Livraria Debug: Added metabox for shop_order');
+        if (self::is_development_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+            error_log('Livraria Debug: Added metabox for shop_order');
+        }
         
         // For WooCommerce High-Performance Order Storage (HPOS)
         if (class_exists('Automattic\WooCommerce\Internal\DataStores\Orders\OrdersTableDataStore')) {
@@ -239,17 +259,20 @@ class LivrariaPlugin {
         }
         // Fallback: try to get order ID from GET parameter (HPOS)
         elseif (isset($_GET['id'])) {
-            $order_id = intval($_GET['id']);
+            $order_id = intval(wp_unslash($_GET['id'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- GET parameters are read-only for display, not form processing
             $order = wc_get_order($order_id);
         }
         // Another fallback: try post parameter
         elseif (isset($_GET['post'])) {
-            $order_id = intval($_GET['post']);
+            $order_id = intval(wp_unslash($_GET['post'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- GET parameters are read-only for display, not form processing
             $order = wc_get_order($order_id);
         }
         
-        // Debug log
-        error_log('Livraria Debug: Metabox callback - Order ID: ' . ($order_id ?? 'unknown') . ', Order object: ' . ($order ? 'yes' : 'no'));
+        // Debug log (only in development mode)
+        if (self::is_development_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+            error_log('Livraria Debug: Metabox callback - Order ID: ' . ($order_id ?? 'unknown') . ', Order object: ' . ($order ? 'yes' : 'no'));
+        }
         
         if (!$order_id || !$order) {
             echo '<p>Error: Could not load order information.</p>';
@@ -262,8 +285,9 @@ class LivrariaPlugin {
         $awb_number = get_post_meta($order_id, '_courier_awb_number', true);
         $courier_name = get_post_meta($order_id, '_courier_name', true);
 
-        // Debug: Log what we're getting from meta
-        if ($expedition_id) {
+        // Debug: Log what we're getting from meta (only in development mode)
+        if ($expedition_id && self::is_development_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
             error_log('Livraria Debug Display: Order ' . $order_id . ' - Expedition ID: ' . $expedition_id . ', AWB: ' . $awb_number . ', Courier: "' . $courier_name . '"');
         }
 
@@ -280,8 +304,11 @@ class LivrariaPlugin {
                 // Also check order meta directly as fallback
                 $payment_method_meta = get_post_meta($order_id, '_payment_method', true);
                 
-                // Debug: Log payment method info
-                error_log('Livraria Debug: Payment method ID: ' . $payment_method . ', Title: ' . $payment_method_title . ', Meta: ' . $payment_method_meta);
+                // Debug: Log payment method info (only in development mode)
+                if (self::is_development_mode()) {
+                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+                    error_log('Livraria Debug: Payment method ID: ' . $payment_method . ', Title: ' . $payment_method_title . ', Meta: ' . $payment_method_meta);
+                }
                 
                 // Primary check: payment method ID (WooCommerce COD gateway ID is 'cod')
                 if ($payment_method === 'cod' || $payment_method_meta === 'cod') {
@@ -302,9 +329,15 @@ class LivrariaPlugin {
                 // Set COD amount to order total if payment method is COD
                 if ($is_cod) {
                     $cod_amount_default = $order->get_total();
-                    error_log('Livraria Debug: COD detected, setting amount to: ' . $cod_amount_default);
+                    if (self::is_development_mode()) {
+                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+                        error_log('Livraria Debug: COD detected, setting amount to: ' . $cod_amount_default);
+                    }
                 } else {
-                    error_log('Livraria Debug: Not COD payment method');
+                    if (self::is_development_mode()) {
+                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+                        error_log('Livraria Debug: Not COD payment method');
+                    }
                 }
             }
         }
@@ -506,7 +539,14 @@ class LivrariaPlugin {
      * AJAX handler to clear auto-create flag
      */
     public function ajax_clear_auto_create_flag() {
-        $order_id = intval($_POST['order_id']);
+        check_ajax_referer('courier_expedition_nonce', 'nonce');
+        
+        if (!isset($_POST['order_id'])) {
+            wp_send_json_error('Missing order_id');
+            return;
+        }
+        
+        $order_id = intval(wp_unslash($_POST['order_id']));
         if ($order_id) {
             delete_transient('livraria_auto_create_order_' . $order_id);
         }
@@ -520,7 +560,12 @@ class LivrariaPlugin {
     public function ajax_auto_create_expedition() {
         check_ajax_referer('courier_expedition_nonce', 'nonce');
         
-        $order_id = intval($_POST['order_id']);
+        if (!isset($_POST['order_id'])) {
+            wp_send_json_error('Missing order_id');
+            return;
+        }
+        
+        $order_id = intval(wp_unslash($_POST['order_id']));
         
         if (!$order_id) {
             wp_send_json_error('Order ID is required');
@@ -535,31 +580,49 @@ class LivrariaPlugin {
      * This is the actual implementation that can be called from hook or AJAX
      */
     private function run_auto_create_expedition($order_id) {
-        error_log('Livraria Debug: auto_create_expedition called for order ID: ' . $order_id);
+        if (self::is_development_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+            error_log('Livraria Debug: auto_create_expedition called for order ID: ' . $order_id);
+        }
         
         if (!get_option('courier_auto_create')) {
-            error_log('Livraria Debug: Auto-create expeditions is disabled');
+            if (self::is_development_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+                error_log('Livraria Debug: Auto-create expeditions is disabled');
+            }
             return;
         }
         
         // Check if expedition already exists
         if (get_post_meta($order_id, '_courier_expedition_id', true)) {
-            error_log('Livraria Debug: Expedition already exists for order ID: ' . $order_id);
+            if (self::is_development_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+                error_log('Livraria Debug: Expedition already exists for order ID: ' . $order_id);
+            }
             return;
         }
         
-        error_log('Livraria Debug: Starting auto-create expedition process for order ID: ' . $order_id);
+        if (self::is_development_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+            error_log('Livraria Debug: Starting auto-create expedition process for order ID: ' . $order_id);
+        }
         
         // Step 1: Get quotes (creates quote request)
         $quotes_result = $this->order_handler->get_quotes_for_order($order_id);
         
         if (!$quotes_result['success']) {
-            error_log('Livraria Debug: Failed to get quotes: ' . $quotes_result['message']);
+            if (self::is_development_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+                error_log('Livraria Debug: Failed to get quotes: ' . $quotes_result['message']);
+            }
             return;
         }
         
         if (empty($quotes_result['quotes'])) {
-            error_log('Livraria Debug: No quotes available for order ID: ' . $order_id);
+            if (self::is_development_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+                error_log('Livraria Debug: No quotes available for order ID: ' . $order_id);
+            }
             return;
         }
         
@@ -570,7 +633,10 @@ class LivrariaPlugin {
         $selected_quote = $quotes[0]; // Select first quote
         $selected_quote_id = $selected_quote['id'];
         
-        error_log('Livraria Debug: Selected quote ID: ' . $selected_quote_id . ' for order ID: ' . $order_id);
+        if (self::is_development_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+            error_log('Livraria Debug: Selected quote ID: ' . $selected_quote_id . ' for order ID: ' . $order_id);
+        }
         
         // Store selected quote in order meta
         update_post_meta($order_id, '_courier_selected_quote_id', $selected_quote_id);
@@ -579,7 +645,10 @@ class LivrariaPlugin {
         $select_result = $this->api_client->select_courier_quote($quote_request_id, $selected_quote_id);
         
         if ($select_result === false) {
-            error_log('Livraria Debug: Failed to select quote via API for order ID: ' . $order_id);
+            if (self::is_development_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+                error_log('Livraria Debug: Failed to select quote via API for order ID: ' . $order_id);
+            }
             return;
         }
         
@@ -587,14 +656,20 @@ class LivrariaPlugin {
         $default_sender_profile_id = get_option('livraria_default_sender_profile_id', '');
         
         if (empty($default_sender_profile_id)) {
-            error_log('Livraria Debug: No default sender profile configured for order ID: ' . $order_id);
+            if (self::is_development_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+                error_log('Livraria Debug: No default sender profile configured for order ID: ' . $order_id);
+            }
             return;
         }
         
         $billing_response = $this->api_client->attach_billing_info_from_sender_profile($quote_request_id, $default_sender_profile_id);
         
         if ($billing_response === false || !isset($billing_response['id'])) {
-            error_log('Livraria Debug: Failed to attach billing information from sender profile for order ID: ' . $order_id);
+            if (self::is_development_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+                error_log('Livraria Debug: Failed to attach billing information from sender profile for order ID: ' . $order_id);
+            }
             return;
         }
         
@@ -610,7 +685,10 @@ class LivrariaPlugin {
         $expedition_response = $this->api_client->create_expedition($expedition_data);
         
         if ($expedition_response === false || !isset($expedition_response['id'])) {
-            error_log('Livraria Debug: Failed to create expedition for order ID: ' . $order_id);
+            if (self::is_development_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+                error_log('Livraria Debug: Failed to create expedition for order ID: ' . $order_id);
+            }
             return;
         }
         
@@ -626,7 +704,10 @@ class LivrariaPlugin {
         delete_post_meta($order_id, '_courier_selected_quote_id');
         delete_post_meta($order_id, '_courier_selected_quote_name');
 
-        error_log('Livraria Debug: Auto-create expedition completed successfully for order ID: ' . $order_id . ', Expedition ID: ' . $expedition_response['id']);
+        if (self::is_development_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+            error_log('Livraria Debug: Auto-create expedition completed successfully for order ID: ' . $order_id . ', Expedition ID: ' . $expedition_response['id']);
+        }
         
         // If called via AJAX, send JSON response
         if (defined('DOING_AJAX') && DOING_AJAX) {
@@ -647,7 +728,10 @@ class LivrariaPlugin {
             // Set a transient flag that JavaScript can check
             // This allows JS to run auto-create without page refresh interrupting
             set_transient('livraria_auto_create_order_' . $order_id, true, 60); // Expires in 60 seconds
-            error_log('Livraria Debug: Order ' . $order_id . ' status changed to completed, flag set for JS');
+            if (self::is_development_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+                error_log('Livraria Debug: Order ' . $order_id . ' status changed to completed, flag set for JS');
+            }
         }
     }
     
@@ -663,8 +747,14 @@ class LivrariaPlugin {
     public function ajax_create_expedition() {
         check_ajax_referer('courier_expedition_nonce', 'nonce');
         
-        $order_id = intval($_POST['order_id']);
-        $custom_data = isset($_POST['expedition_data']) ? $_POST['expedition_data'] : array();
+        if (!isset($_POST['order_id'])) {
+            wp_send_json_error('Missing order_id');
+            return;
+        }
+        
+        $order_id = intval(wp_unslash($_POST['order_id']));
+        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Will be sanitized by sanitize_expedition_data() method below
+        $custom_data = isset($_POST['expedition_data']) ? wp_unslash($_POST['expedition_data']) : array();
         
         // Sanitize custom data
         if (!empty($custom_data)) {
@@ -686,8 +776,14 @@ class LivrariaPlugin {
     public function ajax_get_quotes_for_order() {
         check_ajax_referer('courier_expedition_nonce', 'nonce');
         
-        $order_id = intval($_POST['order_id']);
-        $custom_data = isset($_POST['expedition_data']) ? $_POST['expedition_data'] : array();
+        if (!isset($_POST['order_id'])) {
+            wp_send_json_error('Missing order_id');
+            return;
+        }
+        
+        $order_id = intval(wp_unslash($_POST['order_id']));
+        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Will be sanitized by sanitize_expedition_data() method below
+        $custom_data = isset($_POST['expedition_data']) ? wp_unslash($_POST['expedition_data']) : array();
         
         // Sanitize custom data
         if (!empty($custom_data)) {
@@ -709,11 +805,16 @@ class LivrariaPlugin {
     public function ajax_select_quote() {
         check_ajax_referer('courier_expedition_nonce', 'nonce');
 
-        $order_id = intval($_POST['order_id']);
-        $quote_request_id = sanitize_text_field($_POST['quote_request_id']);
-        $courier_quote_id = sanitize_text_field($_POST['courier_quote_id']);
-        $courier_name = isset($_POST['courier_name']) ? sanitize_text_field($_POST['courier_name']) : '';
-        $sender_profile_id = isset($_POST['sender_profile_id']) ? sanitize_text_field($_POST['sender_profile_id']) : '';
+        if (!isset($_POST['order_id']) || !isset($_POST['quote_request_id']) || !isset($_POST['courier_quote_id'])) {
+            wp_send_json_error('Missing required parameters');
+            return;
+        }
+
+        $order_id = intval(wp_unslash($_POST['order_id']));
+        $quote_request_id = sanitize_text_field(wp_unslash($_POST['quote_request_id']));
+        $courier_quote_id = sanitize_text_field(wp_unslash($_POST['courier_quote_id']));
+        $courier_name = isset($_POST['courier_name']) ? sanitize_text_field(wp_unslash($_POST['courier_name'])) : '';
+        $sender_profile_id = isset($_POST['sender_profile_id']) ? sanitize_text_field(wp_unslash($_POST['sender_profile_id'])) : '';
 
         // Select the quote
         $result = $this->api_client->select_courier_quote($quote_request_id, $courier_quote_id);
@@ -737,8 +838,11 @@ class LivrariaPlugin {
                 $billing_result = $this->api_client->attach_billing_info_from_sender_profile($quote_request_id, $sender_profile_id);
                 
                 if ($billing_result === false) {
-                    // Log error but don't fail the quote selection
-                    error_log('Livraria Debug: Failed to attach billing info from sender profile, but quote selection succeeded');
+                    // Log error but don't fail the quote selection (only in development mode)
+                    if (self::is_development_mode()) {
+                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+                        error_log('Livraria Debug: Failed to attach billing info from sender profile, but quote selection succeeded');
+                    }
                 }
             }
             
@@ -754,7 +858,12 @@ class LivrariaPlugin {
     public function ajax_generate_label() {
         check_ajax_referer('courier_expedition_nonce', 'nonce');
         
-        $order_id = intval($_POST['order_id']);
+        if (!isset($_POST['order_id'])) {
+            wp_send_json_error('Missing order_id');
+            return;
+        }
+        
+        $order_id = intval(wp_unslash($_POST['order_id']));
         $quote_request_id = get_post_meta($order_id, '_courier_quote_request_id', true);
         $courier_quote_id = get_post_meta($order_id, '_courier_selected_quote_id', true);
         
@@ -849,10 +958,15 @@ class LivrariaPlugin {
     public function ajax_test_api_connection() {
         check_ajax_referer('livraria_admin_nonce', 'nonce');
         
+        if (!isset($_POST['api_url']) || !isset($_POST['username']) || !isset($_POST['password'])) {
+            wp_send_json_error('Missing required parameters');
+            return;
+        }
+        
         // Get test credentials from POST data
-        $api_url = sanitize_url($_POST['api_url']);
-        $username = sanitize_text_field($_POST['username']);
-        $password = sanitize_text_field($_POST['password']);
+        $api_url = esc_url_raw(wp_unslash($_POST['api_url']));
+        $username = sanitize_text_field(wp_unslash($_POST['username']));
+        $password = sanitize_text_field(wp_unslash($_POST['password']));
         
         // Create temporary API client and test login
         $test_client = new Livraria_API_Client($api_url);
@@ -868,8 +982,13 @@ class LivrariaPlugin {
     public function ajax_test_connectivity() {
         check_ajax_referer('livraria_admin_nonce', 'nonce');
         
+        if (!isset($_POST['api_url'])) {
+            wp_send_json_error('Missing api_url parameter');
+            return;
+        }
+        
         // Get API URL from POST data
-        $api_url = sanitize_url($_POST['api_url']);
+        $api_url = esc_url_raw(wp_unslash($_POST['api_url']));
         
         // Create temporary API client and test connectivity
         $test_client = new Livraria_API_Client($api_url);
@@ -901,12 +1020,18 @@ class LivrariaPlugin {
     public function ajax_login() {
         check_ajax_referer('livraria_admin_nonce', 'nonce');
         
-        $api_url = sanitize_url($_POST['api_url']);
-        $username = sanitize_text_field($_POST['username']);
-        $password = sanitize_text_field($_POST['password']);
+        if (!isset($_POST['api_url']) || !isset($_POST['username']) || !isset($_POST['password'])) {
+            wp_send_json_error('API URL, username, and password are required');
+            return;
+        }
+        
+        $api_url = esc_url_raw(wp_unslash($_POST['api_url']));
+        $username = sanitize_text_field(wp_unslash($_POST['username']));
+        $password = sanitize_text_field(wp_unslash($_POST['password']));
         
         if (empty($api_url) || empty($username) || empty($password)) {
             wp_send_json_error('API URL, username, and password are required');
+            return;
         }
         
         // Update API URL first
@@ -945,10 +1070,16 @@ class LivrariaPlugin {
         
         if (!current_user_can('manage_options')) {
             wp_send_json_error('Insufficient permissions');
+            return;
         }
         
-        $option_name = sanitize_text_field($_POST['option_name']);
-        $option_value = sanitize_text_field($_POST['option_value']);
+        if (!isset($_POST['option_name']) || !isset($_POST['option_value'])) {
+            wp_send_json_error('Missing required parameters');
+            return;
+        }
+        
+        $option_name = sanitize_text_field(wp_unslash($_POST['option_name']));
+        $option_value = sanitize_text_field(wp_unslash($_POST['option_value']));
         
         // Validate that this is an allowed option
         $allowed_options = array('courier_auto_create', 'livraria_default_sender_profile_id');
@@ -1013,8 +1144,12 @@ class LivrariaPlugin {
             wp_die('Insufficient permissions', 'Forbidden', array('response' => 403));
         }
 
-        $order_id = intval($_GET['order_id'] ?? 0);
-        $awb_number = sanitize_text_field($_GET['awb_number'] ?? '');
+        if (!isset($_GET['order_id']) || !isset($_GET['awb_number'])) {
+            wp_die('Missing required parameters', 'Bad Request', array('response' => 400));
+        }
+        
+        $order_id = intval(wp_unslash($_GET['order_id']));
+        $awb_number = sanitize_text_field(wp_unslash($_GET['awb_number']));
 
         // Validate inputs
         if (!$order_id || !$awb_number) {
@@ -1029,9 +1164,9 @@ class LivrariaPlugin {
 
         // Get PDF options from query params
         $options = array(
-            'format' => sanitize_text_field($_GET['format'] ?? 'pdf'),
-            'paperSize' => sanitize_text_field($_GET['paperSize'] ?? 'A4'),
-            'language' => sanitize_text_field($_GET['language'] ?? 'EN')
+            'format' => isset($_GET['format']) ? sanitize_text_field(wp_unslash($_GET['format'])) : 'pdf',
+            'paperSize' => isset($_GET['paperSize']) ? sanitize_text_field(wp_unslash($_GET['paperSize'])) : 'A4',
+            'language' => isset($_GET['language']) ? sanitize_text_field(wp_unslash($_GET['language'])) : 'EN'
         );
 
         // Download PDF from API
@@ -1049,6 +1184,7 @@ class LivrariaPlugin {
         header('Pragma: no-cache');
 
         // Output PDF binary data
+        // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Binary PDF data cannot be escaped
         echo $pdf_data['body'];
 
         // Important: Stop execution to prevent WordPress from adding extra output
