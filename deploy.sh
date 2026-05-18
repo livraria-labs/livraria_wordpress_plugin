@@ -92,10 +92,18 @@ else
         --exclude='coverage' \
         --exclude='.phpunit.result.cache' \
         --exclude='.phpunit.cache' \
-        *.php \
-        includes/ \
-        assets/ \
-        README.md \
+        --exclude='tests' \
+        --exclude='dev-scripts' \
+        --exclude='composer.json' \
+        --exclude='phpunit.xml' \
+        --exclude='testing-checklist.md' \
+        --exclude='CHANGELOG.md' \
+        --exclude='DEVELOPMENT.md' \
+        --exclude='QUICKSTART.md' \
+        --exclude='TESTING.md' \
+        --exclude='deploy.sh' \
+        --exclude='.claude' \
+        ./ \
         $BUILD_DIR/$PLUGIN_NAME/
 fi
 

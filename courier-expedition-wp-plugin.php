@@ -678,8 +678,6 @@ class LivrariaPlugin {
         // Step 5: Create expedition
         $expedition_data = array(
             'quoteRequestId' => $quote_request_id,
-            'courierQuoteId' => $selected_quote_id,
-            'billingInfoId' => $billing_info_id
         );
         
         $expedition_response = $this->api_client->create_expedition($expedition_data);
@@ -888,8 +886,6 @@ class LivrariaPlugin {
         // Create expedition
         $expedition_data = array(
             'quoteRequestId' => $quote_request_id,
-            'courierQuoteId' => $courier_quote_id,
-            'billingInfoId' => $billing_info_id
         );
         
         $expedition_response = $this->api_client->create_expedition($expedition_data);
