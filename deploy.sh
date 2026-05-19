@@ -103,6 +103,7 @@ else
         --exclude='TESTING.md' \
         --exclude='deploy.sh' \
         --exclude='.claude' \
+        --exclude='.editorconfig' \
         ./ \
         $BUILD_DIR/$PLUGIN_NAME/
 fi

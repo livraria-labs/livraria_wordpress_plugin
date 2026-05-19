@@ -257,13 +257,15 @@ class LivrariaPlugin {
             $order = wc_get_order($order_id);
         }
         // Fallback: try to get order ID from GET parameter (HPOS)
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only GET params used only to identify the current order for display, no state change
         elseif (isset($_GET['id'])) {
-            $order_id = intval(wp_unslash($_GET['id'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- GET parameters are read-only for display, not form processing
+            $order_id = absint(wp_unslash($_GET['id']));
             $order = wc_get_order($order_id);
         }
         // Another fallback: try post parameter
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only GET params used only to identify the current order for display, no state change
         elseif (isset($_GET['post'])) {
-            $order_id = intval(wp_unslash($_GET['post'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- GET parameters are read-only for display, not form processing
+            $order_id = absint(wp_unslash($_GET['post']));
             $order = wc_get_order($order_id);
         }
         
@@ -1103,7 +1105,7 @@ class LivrariaPlugin {
             wp_send_json_error('Insufficient permissions');
         }
 
-        $order_id = absint($_POST['order_id']);
+        $order_id = isset($_POST['order_id']) ? absint($_POST['order_id']) : 0;
         if (!$order_id) {
             wp_send_json_error('Invalid order ID');
         }
@@ -1227,6 +1229,7 @@ class LivrariaPlugin {
         }
 
         // Enqueue order meta box script with dynamic data
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only GET params used only to determine order ID for script localization, no state change
         $order_id = isset($_GET['id']) ? absint($_GET['id']) : (isset($_GET['post']) ? absint($_GET['post']) : 0);
         wp_enqueue_script('livraria-order-js', plugin_dir_url(__FILE__) . 'assets/order.js', array('jquery'), '1.0.0', true);
         wp_localize_script('livraria-order-js', 'livrariaOrder', array(
