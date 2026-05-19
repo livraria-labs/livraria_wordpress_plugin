@@ -110,12 +110,13 @@ fi
 # Create WordPress-style readme.txt
 echo "📝 Creating readme.txt..."
 cat > $BUILD_DIR/$PLUGIN_NAME/readme.txt << EOF
-=== Livraria ===
-Contributors: Livraria Hub S.R.L.
+=== Livraria Shipping for WooCommerce ===
+Contributors: livrarialabs
 Tags: woocommerce, shipping, courier, expedition, logistics
 Requires at least: 5.0
 Tested up to: 6.9
 Requires PHP: 7.4
+Requires Plugins: woocommerce
 Stable tag: $VERSION
 License: GPL v2 or later
 
@@ -127,9 +128,19 @@ This plugin integrates with your Livraria expedition API to automatically create
 
 == Installation ==
 
-1. Upload the plugin files to `/wp-content/plugins/courier-expedition/`
+1. Upload the plugin files to \`/wp-content/plugins/livraria-shipping-for-woocommerce/\`
 2. Activate the plugin through the 'Plugins' screen in WordPress
 3. Configure API settings under Settings > Livraria
+
+== External Services ==
+
+This plugin connects to the Livraria API to create and manage shipping expeditions for WooCommerce orders.
+
+When an admin creates or manages a shipment from the WooCommerce order screen, the following data is sent to the Livraria API (https://api.livraria.ro/): recipient name, shipping address, package dimensions, weight, and order number.
+
+Service provider: Livraria Hub S.R.L.
+- Terms of Service: https://www.livraria.ro/en/terms-and-conditions
+- Privacy Policy: https://www.livraria.ro/en/privacy-policy
 
 == Changelog ==
 

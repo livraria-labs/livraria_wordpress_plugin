@@ -7,8 +7,7 @@
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: livraria-shipping-for-woocommerce
- *
- * DEVELOPMENT MODE: This plugin is mounted from source for real-time development
+ * Requires Plugins: woocommerce
  */
 
 // Prevent direct access
@@ -88,13 +87,13 @@ class LivrariaPlugin {
         add_action('wp_ajax_livraria_get_quotes_for_order', array($this, 'ajax_get_quotes_for_order'));
         add_action('wp_ajax_livraria_select_quote', array($this, 'ajax_select_quote'));
         add_action('wp_ajax_livraria_generate_label', array($this, 'ajax_generate_label'));
-        add_action('wp_ajax_auto_create_expedition_ajax', array($this, 'ajax_auto_create_expedition'));
+        add_action('wp_ajax_livraria_auto_create_expedition', array($this, 'ajax_auto_create_expedition'));
         add_action('wp_ajax_livraria_test_courier_api_connection', array($this, 'ajax_test_api_connection'));
         add_action('wp_ajax_livraria_test_connectivity', array($this, 'ajax_test_connectivity'));
         add_action('wp_ajax_livraria_logout', array($this, 'ajax_logout'));
         add_action('wp_ajax_livraria_login', array($this, 'ajax_login'));
         add_action('wp_ajax_livraria_update_option', array($this, 'ajax_update_option'));
-        add_action('wp_ajax_download_awb_pdf', array($this, 'ajax_download_awb_pdf'));
+        add_action('wp_ajax_livraria_download_awb_pdf', array($this, 'ajax_download_awb_pdf'));
         add_action('wp_ajax_livraria_delete_expedition', array($this, 'ajax_delete_expedition'));
 
         $this->api_base_url = get_option('courier_api_base_url', '');
@@ -360,7 +359,7 @@ class LivrariaPlugin {
                         </a>
                         <a href="<?php
                             echo esc_url(add_query_arg(array(
-                                'action' => 'download_awb_pdf',
+                                'action' => 'livraria_download_awb_pdf',
                                 'order_id' => $order_id,
                                 'awb_number' => $awb_number,
                                 'paperSize' => 'A4',
@@ -375,7 +374,7 @@ class LivrariaPlugin {
                         </a>
                         <a href="<?php
                             echo esc_url(add_query_arg(array(
-                                'action' => 'download_awb_pdf',
+                                'action' => 'livraria_download_awb_pdf',
                                 'order_id' => $order_id,
                                 'awb_number' => $awb_number,
                                 'paperSize' => 'A6',
@@ -1081,6 +1080,7 @@ class LivrariaPlugin {
         $allowed_options = array('courier_auto_create', 'livraria_default_sender_profile_id');
         if (!in_array($option_name, $allowed_options)) {
             wp_send_json_error('Option not allowed');
+            return;
         }
         
         // Update the option (same as what happens when clicking "Save changes")
