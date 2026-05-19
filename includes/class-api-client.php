@@ -545,21 +545,9 @@ class Livraria_API_Client {
         if ($data && in_array($method, array('POST', 'PUT', 'PATCH'))) {
             $json_body = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
             $args['body'] = $json_body;
-            
-            // Log request for debugging
-            $this->log_debug('API Request: ' . $method . ' ' . $url, $data);
-            
-            // Log the actual JSON body being sent (only in development mode)
-            if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
-                error_log('Livraria API Debug: JSON body being sent: ' . $json_body);
-                if (isset($data['sender'])) {
-                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
-                    error_log('Livraria API Debug: Has sender: yes');
-                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
-                    error_log('Livraria API Debug: Has recipient: ' . (isset($data['recipient']) ? 'yes' : 'no'));
-                }
-            }
+
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+            error_log('Livraria API Request: ' . $method . ' ' . $url . ' | Body: ' . $json_body);
         }
         
         $response = wp_remote_request($url, $args);
