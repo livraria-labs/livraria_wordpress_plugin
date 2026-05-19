@@ -257,15 +257,13 @@ class LivrariaPlugin {
             $order = wc_get_order($order_id);
         }
         // Fallback: try to get order ID from GET parameter (HPOS)
-        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only GET params used only to identify the current order for display, no state change
-        elseif (isset($_GET['id'])) {
-            $order_id = absint(wp_unslash($_GET['id']));
+        elseif (isset($_GET['id'])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only GET param used only to identify the current order for display, no state change
+            $order_id = absint(wp_unslash($_GET['id'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             $order = wc_get_order($order_id);
         }
         // Another fallback: try post parameter
-        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only GET params used only to identify the current order for display, no state change
-        elseif (isset($_GET['post'])) {
-            $order_id = absint(wp_unslash($_GET['post']));
+        elseif (isset($_GET['post'])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only GET param used only to identify the current order for display, no state change
+            $order_id = absint(wp_unslash($_GET['post'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             $order = wc_get_order($order_id);
         }
         
