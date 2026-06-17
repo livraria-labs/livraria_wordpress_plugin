@@ -1078,7 +1078,7 @@ class LivrariaPlugin {
         
         // Validate that this is an allowed option
         $allowed_options = array('courier_auto_create', 'livraria_default_sender_profile_id');
-        if (!in_array($option_name, $allowed_options)) {
+        if (!in_array($option_name, $allowed_options, true)) {
             wp_send_json_error('Option not allowed');
             return;
         }
