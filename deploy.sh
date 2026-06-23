@@ -115,7 +115,7 @@ cat > $BUILD_DIR/$PLUGIN_NAME/readme.txt << EOF
 Contributors: livrarialabs
 Tags: woocommerce, shipping, courier, expedition, logistics
 Requires at least: 5.0
-Tested up to: 6.9
+Tested up to: 7.0
 Requires PHP: 7.4
 Requires Plugins: woocommerce
 Stable tag: $VERSION
