@@ -442,8 +442,8 @@ jQuery(document).ready(function($) {
             content_description: $('textarea[name="content_description"]').val() || '',
             cod_amount:          parseFloat($('input[name="cod_amount"]').val()),
             insurance_amount:    parseFloat($('input[name="insurance_amount"]').val()),
-            open_on_delivery:    $('input[name="open_on_delivery"]').is(':checked'),
-            saturday_delivery:   $('input[name="saturday_delivery"]').is(':checked')
+            open_on_delivery:    $('input[name="open_on_delivery"]').is(':checked') ? 1 : 0,
+            saturday_delivery:   $('input[name="saturday_delivery"]').is(':checked') ? 1 : 0
         };
 
         $.ajax({
