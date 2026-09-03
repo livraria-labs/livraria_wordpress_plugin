@@ -1,0 +1,10 @@
+# gitleaks configuration
+#
+# Extends the default ruleset. This repository's full history scanned clean at
+# the time this was added, so the allowlist is empty.
+#
+# Keep any future allowlist tight: only add entries for matches verified to be
+# non-secret, so genuinely leaked credentials still fail the scan.
+
+[extend]
+useDefault = true
