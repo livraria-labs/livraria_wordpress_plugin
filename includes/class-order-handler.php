@@ -977,12 +977,6 @@ class Livraria_Order_Handler {
     }
     
     /**
-     * Select the best quote from available quotes
-     * 
-     * @param array $quotes
-     * @return array
-     */
-    /**
      * Drop quotes the shop cannot use.
      *
      * The API returns two kinds of quote we must not show or select:
@@ -1021,6 +1015,12 @@ class Livraria_Order_Handler {
         return array_values($usable);
     }
 
+    /**
+     * Select the best quote from available quotes
+     * 
+     * @param array $quotes
+     * @return array
+     */
     private function select_best_quote($quotes) {
         $selection_method = get_option('courier_quote_selection', 'first');
         
