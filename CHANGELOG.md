@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Quotes the API marks as unusable (`isDisabled: true`, `amount: 0`, e.g. FAN
+  Courier when the account has no pickup point configured) were shown on the
+  order screen as a "0 lei" option and could be picked by auto-create, which the
+  API then rejects. These quotes, along with any non-positive-amount quote, are
+  now dropped before display and selection.
+
 ## [1.0.0] - 2024-XX-XX
 
 ### Added

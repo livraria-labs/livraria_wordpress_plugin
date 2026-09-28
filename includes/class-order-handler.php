@@ -86,10 +86,8 @@ class Livraria_Order_Handler {
                 $courier_quotes = is_array($quotes_response['quotes']) ? $quotes_response['quotes'] : array($quotes_response['quotes']);
             }
             
-            // Filter out locker quotes
-            $filtered_quotes = array_filter($courier_quotes, function($quote) {
-                return !isset($quote['isLockerQuote']) || !$quote['isLockerQuote'];
-            });
+            // Filter out locker quotes and quotes the API marked unusable
+            $filtered_quotes = $this->filter_usable_quotes($courier_quotes);
             
             if (empty($filtered_quotes)) {
                 return array('success' => false, 'message' => 'No courier quotes available');
@@ -172,7 +170,7 @@ class Livraria_Order_Handler {
             // The new API returns courierQuotes directly, we'll need to create a quote request separately
             // For now, we'll use a placeholder ID
             $quote_request_id = 'placeholder-' . time();
-            $courier_quotes = $quotes_response['courierQuotes'];
+            $courier_quotes = $this->filter_usable_quotes($quotes_response['courierQuotes']);
             
             if (empty($courier_quotes)) {
                 return array('success' => false, 'message' => 'No courier quotes available');
@@ -984,6 +982,45 @@ class Livraria_Order_Handler {
      * @param array $quotes
      * @return array
      */
+    /**
+     * Drop quotes the shop cannot use.
+     *
+     * The API returns two kinds of quote we must not show or select:
+     * - locker (easybox/FANbox) quotes: the plugin only does door-to-door;
+     * - disabled quotes: the API persists a courier's capability failure
+     *   (e.g. FAN Courier with no pickup point configured) as a quote with
+     *   `isDisabled: true`, `amount: 0` and an `error.message`, so it has a
+     *   stable id. Selecting one is refused by the API with a 400.
+     * A quote with a non-positive amount is treated the same way, so a
+     * "0 lei" line never reaches the order screen or auto-create.
+     *
+     * @param array $quotes Raw courierQuotes from the API
+     * @return array Re-indexed list of usable quotes
+     */
+    public function filter_usable_quotes($quotes) {
+        if (!is_array($quotes)) {
+            return array();
+        }
+
+        $usable = array_filter($quotes, function($quote) {
+            if (!is_array($quote)) {
+                return false;
+            }
+            if (!empty($quote['isLockerQuote'])) {
+                return false;
+            }
+            if (!empty($quote['isDisabled'])) {
+                return false;
+            }
+            if (!isset($quote['amount']) || !is_numeric($quote['amount']) || (float) $quote['amount'] <= 0) {
+                return false;
+            }
+            return true;
+        });
+
+        return array_values($usable);
+    }
+
     private function select_best_quote($quotes) {
         $selection_method = get_option('courier_quote_selection', 'first');
         

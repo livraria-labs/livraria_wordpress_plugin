@@ -270,4 +270,37 @@ class Order_Handler_Test extends Livraria_TestCase {
         $this->assertEquals('CLIENT', $result['collector']);
         $this->assertArrayNotHasKey('bankAccount', $result);
     }
+
+    /**
+     * Disabled / zero-amount / locker quotes are dropped before display or selection.
+     *
+     * The API persists a courier capability failure (e.g. FAN Courier with no
+     * pickup point) as a quote with isDisabled=true and amount=0. It used to
+     * reach the order screen as a "0 lei" line and could be auto-selected,
+     * which the API then refuses.
+     */
+    public function test_filter_usable_quotes_drops_disabled_zero_and_locker_quotes() {
+        $quotes = array(
+            array('id' => 'q-dpd',    'courierName' => 'DPD',         'amount' => 21.5, 'currency' => 'RON'),
+            array('id' => 'q-fan',    'courierName' => 'FAN Courier', 'amount' => 0,    'currency' => 'RON', 'isDisabled' => true,
+                  'error' => array('message' => 'No pickup point configured')),
+            array('id' => 'q-zero',   'courierName' => 'Cargus',      'amount' => 0,    'currency' => 'RON'),
+            array('id' => 'q-neg',    'courierName' => 'GLS',         'amount' => -3,   'currency' => 'RON'),
+            array('id' => 'q-noamt',  'courierName' => 'Curiera',     'currency' => 'RON'),
+            array('id' => 'q-locker', 'courierName' => 'Sameday',     'amount' => 15,   'currency' => 'RON', 'isLockerQuote' => true),
+            array('id' => 'q-str',    'courierName' => 'Sameday',     'amount' => '18.20', 'currency' => 'RON', 'isDisabled' => false),
+        );
+
+        $result = $this->order_handler->filter_usable_quotes($quotes);
+
+        $this->assertSame(array('q-dpd', 'q-str'), array_column($result, 'id'));
+        // Re-indexed so quotes[0] is the first usable one for auto-create
+        $this->assertSame(array(0, 1), array_keys($result));
+    }
+
+    public function test_filter_usable_quotes_handles_non_array_input() {
+        $this->assertSame(array(), $this->order_handler->filter_usable_quotes(null));
+        $this->assertSame(array(), $this->order_handler->filter_usable_quotes('oops'));
+        $this->assertSame(array(), $this->order_handler->filter_usable_quotes(array('not-a-quote')));
+    }
 }
