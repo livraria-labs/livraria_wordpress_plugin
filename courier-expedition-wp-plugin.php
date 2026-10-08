@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Livraria Shipping for WooCommerce
  * Description: Automatically create and manage shipping expeditions for WooCommerce orders via the Livraria courier API.
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: Livraria S.R.L.
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -410,10 +410,10 @@ class LivrariaPlugin {
                         <div class="package-item" data-package="1">
                             <h5>Package 1</h5>
                             <div class="package-dimensions">
-                                <label>Weight (kg): <input type="number" name="package_weight[]" step="0.5" min="1" value="1" required></label>
-                                <label>Width (cm): <input type="number" name="package_width[]" step="1" min="10" value="10" required></label>
-                                <label>Height (cm): <input type="number" name="package_height[]" step="1" min="10" value="10" required></label>
-                                <label>Length (cm): <input type="number" name="package_length[]" step="1" min="10" value="10" required></label>
+                                <label>Weight (kg): <input type="number" name="package_weight[]" step="0.01" min="1" value="1"></label>
+                                <label>Width (cm): <input type="number" name="package_width[]" step="1" min="10" value="10"></label>
+                                <label>Height (cm): <input type="number" name="package_height[]" step="1" min="10" value="10"></label>
+                                <label>Length (cm): <input type="number" name="package_length[]" step="1" min="10" value="10"></label>
                                 <button type="button" class="button remove-package" style="display:none;">Remove</button>
                             </div>
                         </div>
@@ -494,10 +494,10 @@ class LivrariaPlugin {
                     <?php endif; ?>
                     <div class="service-options-grid">
                         <div class="service-option-item">
-                            <label>COD Amount: <span class="input-group"><input type="number" name="cod_amount" step="0.5" min="0" value="<?php echo esc_attr($cod_amount_default); ?>" required> RON</span></label>
+                            <label>COD Amount: <span class="input-group"><input type="number" name="cod_amount" step="0.01" min="0" value="<?php echo esc_attr($cod_amount_default); ?>"> RON</span></label>
                         </div>
                         <div class="service-option-item">
-                            <label>Insurance Amount: <span class="input-group"><input type="number" name="insurance_amount" step="0.5" min="0" value="0" required> RON</span></label>
+                            <label>Insurance Amount: <span class="input-group"><input type="number" name="insurance_amount" step="0.01" min="0" value="0"> RON</span></label>
                         </div>
                         <div class="service-option-item">
                             <label><input type="checkbox" name="open_on_delivery" value="1"> Open on Delivery</label>
@@ -1211,8 +1211,8 @@ class LivrariaPlugin {
     
     public function enqueue_admin_styles() {
         // Enqueue admin assets on all admin pages
-        wp_enqueue_style('livraria-admin-css', plugin_dir_url(__FILE__) . 'assets/admin.css', array(), '1.0.1');
-        wp_enqueue_script('livraria-admin-js', plugin_dir_url(__FILE__) . 'assets/admin.js', array('jquery'), '1.0.1', true);
+        wp_enqueue_style('livraria-admin-css', plugin_dir_url(__FILE__) . 'assets/admin.css', array(), '1.0.2');
+        wp_enqueue_script('livraria-admin-js', plugin_dir_url(__FILE__) . 'assets/admin.js', array('jquery'), '1.0.2', true);
         wp_localize_script('livraria-admin-js', 'livrariaAdmin', array(
             'nonce'                  => wp_create_nonce('livraria_admin_nonce'),
             'ajaxurl'                => admin_url('admin-ajax.php'),
@@ -1229,7 +1229,7 @@ class LivrariaPlugin {
         // Enqueue order meta box script with dynamic data
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only GET params used only to determine order ID for script localization, no state change
         $order_id = isset($_GET['id']) ? absint($_GET['id']) : (isset($_GET['post']) ? absint($_GET['post']) : 0);
-        wp_enqueue_script('livraria-order-js', plugin_dir_url(__FILE__) . 'assets/order.js', array('jquery'), '1.0.1', true);
+        wp_enqueue_script('livraria-order-js', plugin_dir_url(__FILE__) . 'assets/order.js', array('jquery'), '1.0.2', true);
         wp_localize_script('livraria-order-js', 'livrariaOrder', array(
             'autoCreateEnabled' => (bool) get_option('courier_auto_create'),
             'expeditionExists'  => (bool) get_post_meta($order_id, '_courier_expedition_id', true),

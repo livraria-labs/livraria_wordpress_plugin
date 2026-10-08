@@ -145,6 +145,13 @@ Service provider: Livraria Hub S.R.L.
 
 == Changelog ==
 
+= 1.0.2 =
+* Fixed: COD and insurance amounts accept bani (e.g. 393.40); a prefilled COD no longer blocks saving the order
+* Fixed: package weight accepts two decimals
+
+= 1.0.1 =
+* Fixed: Saturday delivery and open on delivery no longer forced on every shipment
+
 = 1.0.0 =
 * Initial release
 * WooCommerce integration

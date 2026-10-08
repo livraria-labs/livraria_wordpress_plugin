@@ -363,10 +363,10 @@ jQuery(document).ready(function($) {
         var packageHtml = '<div class="package-item" data-package="' + packageCount + '">' +
             '<h5>Package ' + packageCount + '</h5>' +
             '<div class="package-dimensions">' +
-                '<label>Weight (kg): <input type="number" name="package_weight[]" step="0.5" min="1" value="1" required></label>' +
-                '<label>Width (cm): <input type="number" name="package_width[]" step="1" min="10" value="10" required></label>' +
-                '<label>Height (cm): <input type="number" name="package_height[]" step="1" min="10" value="10" required></label>' +
-                '<label>Length (cm): <input type="number" name="package_length[]" step="1" min="10" value="10" required></label>' +
+                '<label>Weight (kg): <input type="number" name="package_weight[]" step="0.01" min="1" value="1"></label>' +
+                '<label>Width (cm): <input type="number" name="package_width[]" step="1" min="10" value="10"></label>' +
+                '<label>Height (cm): <input type="number" name="package_height[]" step="1" min="10" value="10"></label>' +
+                '<label>Length (cm): <input type="number" name="package_length[]" step="1" min="10" value="10"></label>' +
                 '<button type="button" class="button remove-package">Remove</button>' +
             '</div>' +
         '</div>';
