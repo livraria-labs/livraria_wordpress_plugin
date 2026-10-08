@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Livraria Shipping for WooCommerce
  * Description: Automatically create and manage shipping expeditions for WooCommerce orders via the Livraria courier API.
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: Livraria S.R.L.
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -944,8 +944,8 @@ class LivrariaPlugin {
         $sanitized['content_description'] = sanitize_textarea_field($data['content_description'] ?? '');
         $sanitized['cod_amount'] = floatval($data['cod_amount'] ?? 0);
         $sanitized['insurance_amount'] = floatval($data['insurance_amount'] ?? 0);
-        $sanitized['open_on_delivery'] = (bool)($data['open_on_delivery'] ?? false);
-        $sanitized['saturday_delivery'] = (bool)($data['saturday_delivery'] ?? false);
+        $sanitized['open_on_delivery'] = filter_var($data['open_on_delivery'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        $sanitized['saturday_delivery'] = filter_var($data['saturday_delivery'] ?? false, FILTER_VALIDATE_BOOLEAN);
         
         return $sanitized;
     }
@@ -1211,8 +1211,8 @@ class LivrariaPlugin {
     
     public function enqueue_admin_styles() {
         // Enqueue admin assets on all admin pages
-        wp_enqueue_style('livraria-admin-css', plugin_dir_url(__FILE__) . 'assets/admin.css', array(), '1.0.0');
-        wp_enqueue_script('livraria-admin-js', plugin_dir_url(__FILE__) . 'assets/admin.js', array('jquery'), '1.0.0', true);
+        wp_enqueue_style('livraria-admin-css', plugin_dir_url(__FILE__) . 'assets/admin.css', array(), '1.0.1');
+        wp_enqueue_script('livraria-admin-js', plugin_dir_url(__FILE__) . 'assets/admin.js', array('jquery'), '1.0.1', true);
         wp_localize_script('livraria-admin-js', 'livrariaAdmin', array(
             'nonce'                  => wp_create_nonce('livraria_admin_nonce'),
             'ajaxurl'                => admin_url('admin-ajax.php'),
@@ -1229,7 +1229,7 @@ class LivrariaPlugin {
         // Enqueue order meta box script with dynamic data
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only GET params used only to determine order ID for script localization, no state change
         $order_id = isset($_GET['id']) ? absint($_GET['id']) : (isset($_GET['post']) ? absint($_GET['post']) : 0);
-        wp_enqueue_script('livraria-order-js', plugin_dir_url(__FILE__) . 'assets/order.js', array('jquery'), '1.0.0', true);
+        wp_enqueue_script('livraria-order-js', plugin_dir_url(__FILE__) . 'assets/order.js', array('jquery'), '1.0.1', true);
         wp_localize_script('livraria-order-js', 'livrariaOrder', array(
             'autoCreateEnabled' => (bool) get_option('courier_auto_create'),
             'expeditionExists'  => (bool) get_post_meta($order_id, '_courier_expedition_id', true),
