@@ -15,6 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   these surcharge services. `order.js` now sends `1`/`0` and the server sanitizer
   uses `filter_var(..., FILTER_VALIDATE_BOOLEAN)`.
 
+## [1.0.2] - 2026-10-08
+
+### Fixed
+- COD and insurance amounts accept bani (step 0.01 instead of 0.5); a COD prefilled from an order total such as 393.40 no longer blocks saving the WooCommerce order
+- Package weight accepts step 0.01
+- Plugin fields are no longer `required`, so they cannot block the WooCommerce order form; Get Quotes keeps its own validation
+
+## [1.0.1] - 2026-08-19
+
+### Fixed
+- Saturday delivery and open on delivery are no longer forced on every shipment
+
 ## [1.0.0] - 2024-XX-XX
 
 ### Added
