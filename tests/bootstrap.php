@@ -183,16 +183,126 @@ if (!function_exists('get_bloginfo')) {
     }
 }
 
-// The main plugin file is not loaded in unit tests (it needs WordPress), so
-// take LIVRARIA_WC_PLUGIN_VERSION from its define() line.
-if (!defined('LIVRARIA_WC_PLUGIN_VERSION')) {
-    $livraria_main_file = file_get_contents(dirname(dirname(__FILE__)) . '/courier-expedition-wp-plugin.php');
-    if (preg_match("/define\\('LIVRARIA_WC_PLUGIN_VERSION',\\s*'([^']*)'\\)/", $livraria_main_file, $livraria_match)) {
-        define('LIVRARIA_WC_PLUGIN_VERSION', $livraria_match[1]);
+// Stubs the main plugin file and the settings page need. AJAX responses
+// throw Livraria_Test_Json_Response, which stops the handler the way
+// wp_send_json_*() stops the request in WordPress.
+class Livraria_Test_Json_Response extends Exception {
+    public $success;
+    public $data;
+    public $status;
+
+    public function __construct($success, $data, $status) {
+        parent::__construct($success ? 'json success' : 'json error');
+        $this->success = $success;
+        $this->data = $data;
+        $this->status = $status;
     }
-    unset($livraria_main_file, $livraria_match);
 }
 
-// Load the plugin classes directly
+if (!function_exists('wp_send_json_success')) {
+    function wp_send_json_success($data = null, $status_code = null) {
+        throw new Livraria_Test_Json_Response(true, $data, $status_code);
+    }
+}
+
+if (!function_exists('wp_send_json_error')) {
+    function wp_send_json_error($data = null, $status_code = null) {
+        throw new Livraria_Test_Json_Response(false, $data, $status_code);
+    }
+}
+
+if (!function_exists('check_ajax_referer')) {
+    function check_ajax_referer($action = -1, $query_arg = false, $stop = true) {
+        return 1; // nonce checks are WordPress's; tests cover what follows them
+    }
+}
+
+if (!function_exists('current_user_can')) {
+    function current_user_can($capability, ...$args) {
+        global $wp_test_user_caps;
+        return is_array($wp_test_user_caps) && in_array($capability, $wp_test_user_caps, true);
+    }
+}
+
+if (!function_exists('add_action')) {
+    function add_action($tag, $callback, $priority = 10, $accepted_args = 1) {
+        return true;
+    }
+}
+
+if (!function_exists('plugin_dir_path')) {
+    function plugin_dir_path($file) {
+        return rtrim(dirname($file), '/') . '/';
+    }
+}
+
+if (!function_exists('plugin_dir_url')) {
+    function plugin_dir_url($file) {
+        return 'https://shop.example.com/wp-content/plugins/livraria/';
+    }
+}
+
+if (!function_exists('plugin_basename')) {
+    function plugin_basename($file) {
+        return 'livraria/' . basename($file);
+    }
+}
+
+if (!function_exists('wp_unslash')) {
+    function wp_unslash($value) {
+        return is_string($value) ? stripslashes($value) : $value;
+    }
+}
+
+if (!function_exists('sanitize_text_field')) {
+    function sanitize_text_field($str) {
+        return trim(preg_replace('/[\r\n\t ]+/', ' ', strip_tags((string) $str)));
+    }
+}
+
+if (!function_exists('esc_url_raw')) {
+    function esc_url_raw($url) {
+        return preg_match('#^https?://#i', (string) $url) ? (string) $url : '';
+    }
+}
+
+if (!function_exists('wp_parse_url')) {
+    function wp_parse_url($url, $component = -1) {
+        return parse_url($url, $component);
+    }
+}
+
+if (!function_exists('esc_attr')) {
+    function esc_attr($text) {
+        return htmlspecialchars((string) $text, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+if (!function_exists('esc_html')) {
+    function esc_html($text) {
+        return htmlspecialchars((string) $text, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+if (!function_exists('checked')) {
+    function checked($checked, $current = true, $echo = true) {
+        $result = ((string) $checked === (string) $current) ? " checked='checked'" : '';
+        if ($echo) {
+            echo $result;
+        }
+        return $result;
+    }
+}
+
+if (!function_exists('wp_salt')) {
+    function wp_salt($scheme = 'auth') {
+        return 'unit-test-salt-' . $scheme . '-not-a-real-key';
+    }
+}
+
+// Load the main plugin file (it defines LIVRARIA_WC_PLUGIN_VERSION and
+// requires the classes under includes/), then the classes directly.
+require_once dirname(dirname(__FILE__)) . '/courier-expedition-wp-plugin.php';
 require_once dirname(dirname(__FILE__)) . '/includes/class-api-client.php';
 require_once dirname(dirname(__FILE__)) . '/includes/class-order-handler.php';
+require_once dirname(dirname(__FILE__)) . '/includes/class-admin-page.php';

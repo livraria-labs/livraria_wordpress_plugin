@@ -539,10 +539,26 @@ class LivrariaPlugin {
     }
 
     /**
+     * Stop an AJAX request (HTTP 403) unless the current user has $capability.
+     * Every handler calls it right after its nonce check: the nonce proves the
+     * request came from wp-admin, not that this user may do what it asks.
+     * Settings, login, logout and the connection tests need manage_options;
+     * order actions need edit_shop_orders.
+     *
+     * @param string $capability WordPress capability
+     */
+    private function require_capability($capability) {
+        if (!current_user_can($capability)) {
+            wp_send_json_error('Insufficient permissions', 403);
+        }
+    }
+
+    /**
      * AJAX handler to clear auto-create flag
      */
     public function ajax_clear_auto_create_flag() {
         check_ajax_referer('courier_expedition_nonce', 'nonce');
+        $this->require_capability('edit_shop_orders');
         
         if (!isset($_POST['order_id'])) {
             wp_send_json_error('Missing order_id');
@@ -562,6 +578,7 @@ class LivrariaPlugin {
      */
     public function ajax_auto_create_expedition() {
         check_ajax_referer('courier_expedition_nonce', 'nonce');
+        $this->require_capability('edit_shop_orders');
         
         if (!isset($_POST['order_id'])) {
             wp_send_json_error('Missing order_id');
@@ -747,6 +764,7 @@ class LivrariaPlugin {
     
     public function ajax_create_expedition() {
         check_ajax_referer('courier_expedition_nonce', 'nonce');
+        $this->require_capability('edit_shop_orders');
         
         if (!isset($_POST['order_id'])) {
             wp_send_json_error('Missing order_id');
@@ -776,6 +794,7 @@ class LivrariaPlugin {
      */
     public function ajax_get_quotes_for_order() {
         check_ajax_referer('courier_expedition_nonce', 'nonce');
+        $this->require_capability('edit_shop_orders');
         
         if (!isset($_POST['order_id'])) {
             wp_send_json_error('Missing order_id');
@@ -805,6 +824,7 @@ class LivrariaPlugin {
      */
     public function ajax_select_quote() {
         check_ajax_referer('courier_expedition_nonce', 'nonce');
+        $this->require_capability('edit_shop_orders');
 
         if (!isset($_POST['order_id']) || !isset($_POST['quote_request_id']) || !isset($_POST['courier_quote_id'])) {
             wp_send_json_error('Missing required parameters');
@@ -858,6 +878,7 @@ class LivrariaPlugin {
      */
     public function ajax_generate_label() {
         check_ajax_referer('courier_expedition_nonce', 'nonce');
+        $this->require_capability('edit_shop_orders');
         
         if (!isset($_POST['order_id'])) {
             wp_send_json_error('Missing order_id');
@@ -956,6 +977,7 @@ class LivrariaPlugin {
     
     public function ajax_test_api_connection() {
         check_ajax_referer('livraria_admin_nonce', 'nonce');
+        $this->require_capability('manage_options');
         
         if (!isset($_POST['api_url']) || !isset($_POST['username']) || !isset($_POST['password'])) {
             wp_send_json_error('Missing required parameters');
@@ -980,6 +1002,7 @@ class LivrariaPlugin {
     
     public function ajax_test_connectivity() {
         check_ajax_referer('livraria_admin_nonce', 'nonce');
+        $this->require_capability('manage_options');
         
         if (!isset($_POST['api_url'])) {
             wp_send_json_error('Missing api_url parameter');
@@ -1005,6 +1028,7 @@ class LivrariaPlugin {
      */
     public function ajax_logout() {
         check_ajax_referer('livraria_admin_nonce', 'nonce');
+        $this->require_capability('manage_options');
         
         // Clear tokens (simplest logout logic)
         delete_option('livraria_api_token');
@@ -1018,6 +1042,7 @@ class LivrariaPlugin {
      */
     public function ajax_login() {
         check_ajax_referer('livraria_admin_nonce', 'nonce');
+        $this->require_capability('manage_options');
         
         if (!isset($_POST['api_url']) || !isset($_POST['username']) || !isset($_POST['password'])) {
             wp_send_json_error('API URL, username, and password are required');
@@ -1066,11 +1091,7 @@ class LivrariaPlugin {
      */
     public function ajax_update_option() {
         check_ajax_referer('livraria_admin_nonce', 'nonce');
-        
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error('Insufficient permissions');
-            return;
-        }
+        $this->require_capability('manage_options');
         
         if (!isset($_POST['option_name']) || !isset($_POST['option_value'])) {
             wp_send_json_error('Missing required parameters');
