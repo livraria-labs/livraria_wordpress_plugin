@@ -73,7 +73,7 @@ class Livraria_TestCase extends PHPUnit\Framework\TestCase {
      * Set default plugin options for testing
      */
     protected function set_default_options() {
-        update_option('courier_api_base_url', 'http://test-api.example.com');
+        update_option('courier_api_base_url', 'https://www.api.livraria.ro');
         update_option('courier_api_username', 'test_user');
         update_option('courier_api_password', 'test_pass');
     }

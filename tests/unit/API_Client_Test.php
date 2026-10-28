@@ -14,7 +14,7 @@ class API_Client_Test extends Livraria_TestCase {
     
     public function setUp(): void {
         parent::setUp();
-        $this->api_client = new Livraria_API_Client('http://test-api.example.com');
+        $this->api_client = new Livraria_API_Client('https://www.api.livraria.ro');
     }
     
     /**
@@ -77,7 +77,7 @@ class API_Client_Test extends Livraria_TestCase {
         update_option('livraria_remember_credentials', true);
         $this->api_client->set_encrypted_option('courier_api_username', 'merchant@example.com');
         $this->api_client->set_encrypted_option('courier_api_password', 'invented-password-6');
-        $this->api_client = new Livraria_API_Client('http://test-api.example.com');
+        $this->api_client = new Livraria_API_Client('https://www.api.livraria.ro');
         
         // Mock login response
         $mock_login = $this->create_mock_response(200, array(
@@ -114,7 +114,7 @@ class API_Client_Test extends Livraria_TestCase {
         update_option('livraria_token_expires_at', time() + 3600);
         
         // Recreate client to pick up the token
-        $this->api_client = new Livraria_API_Client('http://test-api.example.com');
+        $this->api_client = new Livraria_API_Client('https://www.api.livraria.ro');
         
         $mock_response = $this->create_mock_response(200, array(
             'id' => 1,
@@ -145,7 +145,7 @@ class API_Client_Test extends Livraria_TestCase {
         update_option('livraria_token_expires_at', time() + 3600);
         
         // Recreate client to pick up the token
-        $this->api_client = new Livraria_API_Client('http://test-api.example.com');
+        $this->api_client = new Livraria_API_Client('https://www.api.livraria.ro');
         
         $mock_response = $this->create_mock_response(200, array(
             array(
@@ -271,7 +271,7 @@ class API_Client_Test extends Livraria_TestCase {
     public function test_every_request_sends_client_header_and_keeps_user_agent() {
         update_option('livraria_api_token', 'valid-token');
         update_option('livraria_token_expires_at', time() + 3600);
-        $this->api_client = new Livraria_API_Client('http://test-api.example.com');
+        $this->api_client = new Livraria_API_Client('https://www.api.livraria.ro');
 
         $captured = array();
         $this->capture_requests($captured);
@@ -297,7 +297,7 @@ class API_Client_Test extends Livraria_TestCase {
 
         update_option('livraria_api_token', 'valid-token');
         update_option('livraria_token_expires_at', time() + 3600);
-        $this->api_client = new Livraria_API_Client('http://test-api.example.com');
+        $this->api_client = new Livraria_API_Client('https://www.api.livraria.ro');
 
         $captured = array();
         $this->capture_requests($captured);

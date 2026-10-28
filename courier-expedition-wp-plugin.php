@@ -50,6 +50,7 @@ class LivrariaPlugin {
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_init', array($this, 'admin_init'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_styles'));
+        add_action('admin_notices', array($this, 'render_blocked_api_url_notice'));
         
         // Add settings link to plugin page
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), array($this, 'add_plugin_action_links'));
@@ -78,8 +79,8 @@ class LivrariaPlugin {
         add_action('wp_ajax_livraria_download_awb_pdf', array($this, 'ajax_download_awb_pdf'));
         add_action('wp_ajax_livraria_delete_expedition', array($this, 'ajax_delete_expedition'));
 
-        // Outside development mode the API base URL is the production host
-        Livraria_API_Client::enforce_production_api_url();
+        // A stored API URL off the Livraria allow-list stops all API calls
+        Livraria_API_Client::check_stored_api_url();
         $this->api_base_url = Livraria_API_Client::resolve_base_url();
         
         // Initialize API client and order handler  
@@ -252,6 +253,11 @@ class LivrariaPlugin {
         
         if (!$order_id || !$order) {
             echo '<p>Error: Could not load order information.</p>';
+            return;
+        }
+
+        if (Livraria_API_Client::blocked_api_url() !== '') {
+            echo '<p style="color: #d63638;">' . esc_html('The configured Livraria API address is not a Livraria API host, so shipments cannot be created or downloaded. An administrator must log in again from Settings > Livraria.') . '</p>';
             return;
         }
         
@@ -970,9 +976,9 @@ class LivrariaPlugin {
             $password = sanitize_text_field(wp_unslash($_POST['password']));
         }
         
-        // Create temporary API client and test login (production host
-        // unless in development mode)
-        $test_client = new Livraria_API_Client($this->posted_api_url());
+        // Create temporary API client and test login (allowed hosts only
+        // outside development mode)
+        $test_client = new Livraria_API_Client($this->request_api_url());
         $result = $test_client->test_login($username, $password);
         
         if ($result['success']) {
@@ -986,9 +992,9 @@ class LivrariaPlugin {
         check_ajax_referer('livraria_admin_nonce', 'nonce');
         $this->require_capability('manage_options');
         
-        // Create temporary API client and test connectivity (production host
-        // unless in development mode)
-        $test_client = new Livraria_API_Client($this->posted_api_url());
+        // Create temporary API client and test connectivity (allowed hosts
+        // only outside development mode)
+        $test_client = new Livraria_API_Client($this->request_api_url());
         $result = $test_client->test_connectivity();
         
         if ($result['success']) {
@@ -999,16 +1005,45 @@ class LivrariaPlugin {
     }
     
     /**
-     * The api_url posted by the settings page, honoured only in development
-     * mode; '' otherwise (Livraria_API_Client then uses the production host).
+     * The API URL a login or connection test uses: the posted api_url if
+     * any, else the stored URL if it is allowed, else PRODUCTION_API_URL.
+     * Outside development mode a posted URL off the allow-list stops the
+     * request with an error and nothing is saved.
      *
      * @return string
      */
-    private function posted_api_url() {
-        if (!self::is_development_mode() || !isset($_POST['api_url'])) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Callers check the nonce first
-            return '';
+    private function request_api_url() {
+        $posted = isset($_POST['api_url']) ? esc_url_raw(wp_unslash($_POST['api_url'])) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Callers check the nonce first
+        if ($posted !== '') {
+            if (!Livraria_API_Client::is_allowed_api_url($posted)) {
+                $host = Livraria_API_Client::url_host($posted);
+                wp_send_json_error('Refused: ' . ($host !== '' ? $host : 'this address') . ' is not a Livraria API host. Nothing was saved.', 400);
+            }
+            return $posted;
         }
-        return esc_url_raw(wp_unslash($_POST['api_url'])); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Callers check the nonce first
+        $stored = (string) get_option('courier_api_base_url', '');
+        if ($stored !== '' && Livraria_API_Client::is_allowed_api_url($stored)) {
+            return $stored;
+        }
+        return Livraria_API_Client::PRODUCTION_API_URL;
+    }
+
+    /**
+     * wp-admin notice, for users who can manage options, while the stored API
+     * URL is not a Livraria API host (see Livraria_API_Client::check_stored_api_url())
+     */
+    public function render_blocked_api_url_notice() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+        $blocked = Livraria_API_Client::blocked_api_url();
+        if ($blocked === '') {
+            return;
+        }
+        $host = Livraria_API_Client::url_host($blocked);
+        echo '<div class="notice notice-error"><p><strong>Livraria:</strong> '
+            . esc_html('The configured API address (' . ($host !== '' ? $host : 'unparseable URL') . ') is not a Livraria API host. The plugin has stopped all API calls and logged the shop out of the API. An administrator must log in again from the settings page.')
+            . ' <a href="' . esc_url(admin_url('options-general.php?page=courier-api-settings')) . '">Settings &gt; Livraria</a></p></div>';
     }
 
     /**
@@ -1071,14 +1106,15 @@ class LivrariaPlugin {
             return;
         }
         
-        // Production host unless in development mode. Nothing is saved before
-        // the login succeeds.
-        $api_url = Livraria_API_Client::resolve_base_url($this->posted_api_url());
+        // Allowed hosts only outside development mode. Nothing is saved
+        // before the login succeeds.
+        $api_url = $this->request_api_url();
         $api_client = new Livraria_API_Client($api_url);
         $result = $api_client->login($username, $password);
         
         if ($result['success']) {
             update_option('courier_api_base_url', $api_url);
+            delete_option('livraria_api_url_blocked');
             
             // Check if "Remember me" is enabled
             $remember_me = isset($_POST['remember_me']) && $_POST['remember_me'] === '1';

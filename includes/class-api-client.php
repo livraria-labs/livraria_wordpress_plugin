@@ -10,18 +10,16 @@ if (!defined('ABSPATH')) {
 class Livraria_API_Client {
 
     /**
-     * The Livraria API every shop talks to. Outside development mode the
-     * plugin uses this host and nothing else. (https://api.livraria.ro/
-     * answers 301 to it.)
+     * Default API base URL for a fresh install (the production API).
      */
     const PRODUCTION_API_URL = 'https://www.api.livraria.ro/';
 
     /**
-     * Other spellings of the production API: https://api.livraria.ro/ was
-     * the default up to 1.0.3, so every existing shop stores it. Stored, it
-     * is rewritten to PRODUCTION_API_URL silently, keeping the API session.
+     * The Livraria API hosts (production and uat). Outside development mode
+     * the plugin talks to an https:// URL on one of these hosts and nothing
+     * else. The apex hosts answer 301 to their www form.
      */
-    const PRODUCTION_API_ALIASES = array('https://api.livraria.ro/');
+    const ALLOWED_API_HOSTS = array('www.api.livraria.ro', 'api.livraria.ro', 'www.api-uat.livraria.ro', 'api-uat.livraria.ro');
 
     private $api_base_url;
     private $api_token;
@@ -49,17 +47,14 @@ class Livraria_API_Client {
     }
 
     /**
-     * The API base URL to use. Outside development mode always
-     * PRODUCTION_API_URL, whatever is passed or stored; in development mode
-     * $candidate, else the stored courier_api_base_url, else production.
+     * The API base URL to use: $candidate, else the stored
+     * courier_api_base_url, else PRODUCTION_API_URL. It is not checked here;
+     * every request checks is_allowed_api_url() first.
      *
      * @param string|null $candidate URL asked for by the caller
      * @return string
      */
     public static function resolve_base_url($candidate = null) {
-        if (!self::is_dev_mode()) {
-            return self::PRODUCTION_API_URL;
-        }
         $candidate = (string) $candidate;
         if ($candidate === '') {
             $candidate = (string) get_option('courier_api_base_url', '');
@@ -68,40 +63,107 @@ class Livraria_API_Client {
     }
 
     /**
-     * Outside development mode, put courier_api_base_url back to the
-     * production host if anything else is stored there. A production alias
-     * (PRODUCTION_API_ALIASES) is rewritten silently. Any other stored URL that
-     * points elsewhere is where the next login would send the merchant's
-     * password, so the reset is logged (host only) and the API session,
-     * which belongs to that other host, is dropped.
+     * Whether the plugin may talk to $url. In development mode any http(s)
+     * URL; otherwise https:// on an ALLOWED_API_HOSTS host, default port, no
+     * credentials in the URL.
+     *
+     * @param string $url
+     * @return bool
      */
-    public static function enforce_production_api_url() {
+    public static function is_allowed_api_url($url) {
+        $parts = wp_parse_url((string) $url);
+        if (!is_array($parts) || empty($parts['host']) || empty($parts['scheme'])) {
+            return false;
+        }
+        $scheme = strtolower($parts['scheme']);
         if (self::is_dev_mode()) {
-            return;
+            return $scheme === 'https' || $scheme === 'http';
+        }
+        if ($scheme !== 'https' || isset($parts['user']) || isset($parts['pass'])) {
+            return false;
+        }
+        if (isset($parts['port']) && (int) $parts['port'] !== 443) {
+            return false;
+        }
+        return in_array(strtolower($parts['host']), self::ALLOWED_API_HOSTS, true);
+    }
+
+    /**
+     * Host of $url for messages and logs, reduced to host characters
+     *
+     * @param string $url
+     * @return string
+     */
+    public static function url_host($url) {
+        $host = wp_parse_url((string) $url, PHP_URL_HOST);
+        return is_string($host) ? preg_replace('/[^A-Za-z0-9.:\-]/', '', $host) : '';
+    }
+
+    /**
+     * The stored courier_api_base_url when it is not a Livraria API address
+     * (outside development mode); '' when it is fine.
+     *
+     * @return string
+     */
+    public static function blocked_api_url() {
+        if (self::is_dev_mode()) {
+            return '';
         }
         $stored = (string) get_option('courier_api_base_url', '');
-        $normalised = rtrim($stored, '/');
-        if ($normalised === rtrim(self::PRODUCTION_API_URL, '/')) {
+        return ($stored !== '' && !self::is_allowed_api_url($stored)) ? $stored : '';
+    }
+
+    /**
+     * Check the stored API base URL on load. A stored URL is never changed:
+     * - none stored (fresh install): store PRODUCTION_API_URL;
+     * - on an allowed host: nothing to do;
+     * - anything else (outside development mode): the plugin stops. Every
+     *   request refuses to run, the API session is dropped, wp-admin shows a
+     *   notice, and one line is logged per offending URL. A successful login
+     *   from the settings page clears it.
+     */
+    public static function check_stored_api_url() {
+        $stored = (string) get_option('courier_api_base_url', '');
+        if ($stored === '') {
+            update_option('courier_api_base_url', self::PRODUCTION_API_URL);
             return;
         }
 
-        update_option('courier_api_base_url', self::PRODUCTION_API_URL);
-        if ($stored === '') {
-            return; // fresh install, nothing was redirected
-        }
-        foreach (self::PRODUCTION_API_ALIASES as $alias) {
-            if ($normalised === rtrim($alias, '/')) {
-                return; // the same API under its old address: keep the session
+        $blocked = self::blocked_api_url();
+        if ($blocked === '') {
+            if ((string) get_option('livraria_api_url_blocked', '') !== '') {
+                delete_option('livraria_api_url_blocked');
             }
+            return;
+        }
+        if ((string) get_option('livraria_api_url_blocked', '') === $blocked) {
+            return; // already handled and logged
         }
 
+        update_option('livraria_api_url_blocked', $blocked);
         delete_option('livraria_api_token');
         delete_option('livraria_token_expires_at');
 
-        $host = wp_parse_url($stored, PHP_URL_HOST);
-        $host = is_string($host) ? preg_replace('/[^A-Za-z0-9.:\-]/', '', $host) : '';
-        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- One security line: the stored API URL was not the production host
-        error_log('Livraria: the stored API base URL pointed at "' . ($host !== '' ? $host : 'an unparseable URL') . '", not ' . self::PRODUCTION_API_URL . '; reset to ' . self::PRODUCTION_API_URL . ' and logged the shop out of the API. Check who changed the plugin settings.');
+        $host = self::url_host($blocked);
+        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- One security line: the stored API URL is not a Livraria host
+        error_log('Livraria: the stored API base URL points at "' . ($host !== '' ? $host : 'an unparseable URL') . '", which is not a Livraria API host; API calls are stopped and the shop is logged out of the API until an administrator logs in again from Settings > Livraria. Check who changed the plugin settings.');
+    }
+
+    /**
+     * Guard at the start of every request
+     *
+     * @return bool True when this client's base URL may be used
+     */
+    private function base_url_allowed() {
+        if (empty($this->api_base_url)) {
+            $this->log_error('API base URL not configured');
+            return false;
+        }
+        if (!self::is_allowed_api_url($this->api_base_url)) {
+            $this->log_error('API base URL is not a Livraria API host (' . self::url_host($this->api_base_url) . '); request refused');
+            return false;
+        }
+        return true;
     }
     
     /**
@@ -430,8 +492,7 @@ class Livraria_API_Client {
      * @return array|false Array with 'body', 'headers', 'content_type', 'content_length' or false on failure
      */
     private function api_request_binary($method, $endpoint) {
-        if (empty($this->api_base_url)) {
-            $this->log_error('API base URL not configured');
+        if (!$this->base_url_allowed()) {
             return false;
         }
 
@@ -575,8 +636,7 @@ class Livraria_API_Client {
      * @return array|false API response or false on failure
      */
     private function raw_api_request($method, $endpoint, $data = null) {
-        if (empty($this->api_base_url)) {
-            $this->log_error('API base URL not configured');
+        if (!$this->base_url_allowed()) {
             return false;
         }
         
@@ -651,8 +711,7 @@ class Livraria_API_Client {
      * @return array|false API response or false on failure
      */
     private function api_request($method, $endpoint, $data = null) {
-        if (empty($this->api_base_url)) {
-            $this->log_error('API base URL not configured');
+        if (!$this->base_url_allowed()) {
             return false;
         }
         
@@ -846,10 +905,10 @@ class Livraria_API_Client {
      * @return array Result with connectivity info
      */
     public function test_connectivity() {
-        if (empty($this->api_base_url)) {
+        if (!$this->base_url_allowed()) {
             return array(
                 'success' => false,
-                'message' => 'API base URL not configured'
+                'message' => 'The configured API address is not a Livraria API host'
             );
         }
         

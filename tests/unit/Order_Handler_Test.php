@@ -18,7 +18,7 @@ class Order_Handler_Test extends Livraria_TestCase {
         
         // Create a real API client instance for testing
         // We'll mock the HTTP requests instead of the client itself
-        $this->mock_api_client = new Livraria_API_Client('http://test-api.example.com');
+        $this->mock_api_client = new Livraria_API_Client('https://www.api.livraria.ro');
         
         $this->order_handler = new Livraria_Order_Handler($this->mock_api_client);
     }
@@ -41,7 +41,7 @@ class Order_Handler_Test extends Livraria_TestCase {
         update_option('livraria_token_expires_at', time() + 3600);
         
         // Recreate API client to pick up the token
-        $this->mock_api_client = new Livraria_API_Client('http://test-api.example.com');
+        $this->mock_api_client = new Livraria_API_Client('https://www.api.livraria.ro');
         $this->order_handler = new Livraria_Order_Handler($this->mock_api_client);
         
         // Mock HTTP request to return sender profile
@@ -86,7 +86,7 @@ class Order_Handler_Test extends Livraria_TestCase {
         update_option('livraria_token_expires_at', time() + 3600);
         
         // Recreate API client to pick up the token
-        $this->mock_api_client = new Livraria_API_Client('http://test-api.example.com');
+        $this->mock_api_client = new Livraria_API_Client('https://www.api.livraria.ro');
         $this->order_handler = new Livraria_Order_Handler($this->mock_api_client);
         
         $mock_response = $this->create_mock_response(200, $sender_profile);
@@ -126,7 +126,7 @@ class Order_Handler_Test extends Livraria_TestCase {
         update_option('livraria_token_expires_at', time() + 3600);
         
         // Recreate API client to pick up the token
-        $this->mock_api_client = new Livraria_API_Client('http://test-api.example.com');
+        $this->mock_api_client = new Livraria_API_Client('https://www.api.livraria.ro');
         $this->order_handler = new Livraria_Order_Handler($this->mock_api_client);
         
         $mock_response = $this->create_mock_response(200, $sender_profile);
@@ -161,7 +161,7 @@ class Order_Handler_Test extends Livraria_TestCase {
         update_option('livraria_token_expires_at', time() + 3600);
         
         // Recreate API client to pick up the token
-        $this->mock_api_client = new Livraria_API_Client('http://test-api.example.com');
+        $this->mock_api_client = new Livraria_API_Client('https://www.api.livraria.ro');
         $this->order_handler = new Livraria_Order_Handler($this->mock_api_client);
         
         $mock_response = $this->create_mock_response(200, $sender_profile);

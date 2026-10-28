@@ -285,6 +285,18 @@ if (!function_exists('wp_parse_url')) {
     }
 }
 
+if (!function_exists('esc_url')) {
+    function esc_url($url) {
+        return htmlspecialchars((string) $url, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+if (!function_exists('admin_url')) {
+    function admin_url($path = '') {
+        return 'https://shop.example.com/wp-admin/' . ltrim($path, '/');
+    }
+}
+
 if (!function_exists('esc_attr')) {
     function esc_attr($text) {
         return htmlspecialchars((string) $text, ENT_QUOTES, 'UTF-8');

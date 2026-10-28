@@ -56,8 +56,22 @@ class Livraria_Admin_Page {
                             <p class="description">Development mode (WP_DEBUG and LIVRARIA_DEV_MODE in wp-config.php): saved only after a successful login.</p>
                         </td>
                     </tr>
+                    <?php else: ?>
+                    <?php
+                    // Outside development mode the address is shown, not editable
+                    $configured_api_url = Livraria_API_Client::resolve_base_url();
+                    $api_url_allowed = Livraria_API_Client::is_allowed_api_url($configured_api_url);
+                    ?>
+                    <tr>
+                        <th scope="row">API address</th>
+                        <td>
+                            <code id="livraria-api-url-display"><?php echo esc_html($configured_api_url); ?></code>
+                            <?php if (!$api_url_allowed): ?>
+                            <p class="description" style="color: #d63638;">Not a Livraria API host: all API calls are stopped. Logging in connects to <?php echo esc_html(Livraria_API_Client::PRODUCTION_API_URL); ?>.</p>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
                     <?php endif; ?>
-                    <?php // Outside development mode there is no URL field: the plugin always uses Livraria_API_Client::PRODUCTION_API_URL. ?>
                     <tr>
                         <th scope="row">Username</th>
                         <td>
@@ -204,6 +218,7 @@ class Livraria_Admin_Page {
         $sender_profile = $this->api_client->get_sender_profile();
         ?>
         <div id="user-info-section" style="margin-top: 30px;">
+            <p class="description" style="margin: 0 0 8px 0;">API address: <code id="livraria-api-url-display"><?php echo esc_html(Livraria_API_Client::resolve_base_url()); ?></code></p>
             <?php $this->render_user_profile($user_info, $sender_profile); ?>
         </div>
         <?php
