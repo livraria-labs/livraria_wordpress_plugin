@@ -20,6 +20,14 @@ if [ -z "$VERSION" ] || [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     exit 1
 fi
 
+# The LIVRARIA_WC_PLUGIN_VERSION constant (sent to the API in X-Livraria-Client)
+# must equal the Version: header line
+CONSTANT_VERSION=$(grep -E "define\('LIVRARIA_WC_PLUGIN_VERSION'" courier-expedition-wp-plugin.php | sed -E "s/.*'LIVRARIA_WC_PLUGIN_VERSION',[[:space:]]*'([^']*)'.*/\1/" | head -1)
+if [ "$CONSTANT_VERSION" != "$VERSION" ]; then
+    echo "❌ Error: LIVRARIA_WC_PLUGIN_VERSION ('$CONSTANT_VERSION') differs from the Version: header ('$VERSION') in courier-expedition-wp-plugin.php"
+    exit 1
+fi
+
 # Safety: Ensure BUILD_DIR is a relative path (never absolute root paths)
 # This prevents accidental deletion of important system directories
 if [[ "$BUILD_DIR" =~ ^/ ]]; then
@@ -139,11 +147,16 @@ This plugin connects to the Livraria API to create and manage shipping expeditio
 
 When an admin creates or manages a shipment from the WooCommerce order screen, the following data is sent to the Livraria API (https://api.livraria.ro/): recipient name, shipping address, package dimensions, weight, and order number.
 
+Every request to the Livraria API also carries the plugin version and the WordPress, WooCommerce and PHP versions of this site, so that Livraria support can tell which plugin version a shop runs. No other site data is sent.
+
 Service provider: Livraria Hub S.R.L.
 - Terms of Service: https://www.livraria.ro/en/terms-and-conditions
 - Privacy Policy: https://www.livraria.ro/en/privacy-policy
 
 == Changelog ==
+
+= 1.0.3 =
+* Each request to the Livraria API carries an X-Livraria-Client header with the plugin, WordPress, WooCommerce and PHP versions
 
 = 1.0.2 =
 * Fixed: COD and insurance amounts accept bani (e.g. 393.40); a prefilled COD no longer blocks saving the order

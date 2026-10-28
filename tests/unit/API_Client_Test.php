@@ -190,4 +190,103 @@ class API_Client_Test extends Livraria_TestCase {
         $result = $method->invoke($this->api_client, 'http://example.com/api');
         $this->assertEquals('http://example.com/api', $result);
     }
+
+    /**
+     * Backend TOKEN rule for one X-Livraria-Client token
+     * (apps/web/src/modules/client-integrations/plugin-client.ts)
+     */
+    const CLIENT_TOKEN = '/^([A-Za-z0-9._-]{1,40})\\/([A-Za-z0-9.+_-]{1,40})$/';
+
+    private function invoke_client_header() {
+        $method = (new ReflectionClass($this->api_client))->getMethod('client_header');
+        $method->setAccessible(true);
+        return $method->invoke($this->api_client);
+    }
+
+    private function plugin_header_version() {
+        $main = file_get_contents(dirname(__DIR__, 2) . '/courier-expedition-wp-plugin.php');
+        $this->assertSame(1, preg_match('/^\\s*\\*\\s*Version:\\s*([0-9]+\\.[0-9]+\\.[0-9]+)\\s*$/m', $main, $match));
+        return $match[1];
+    }
+
+    /**
+     * Capture the request args of every outgoing call and stop it there
+     */
+    private function capture_requests(array &$captured) {
+        add_filter('pre_http_request', function($preempt, $args, $url) use (&$captured) {
+            $captured[] = array('url' => $url, 'args' => $args);
+            return new WP_Error('mocked', 'Stopped by test');
+        }, 10, 3);
+    }
+
+    public function test_plugin_version_constant_matches_header() {
+        $this->assertTrue(defined('LIVRARIA_WC_PLUGIN_VERSION'));
+        $this->assertSame($this->plugin_header_version(), LIVRARIA_WC_PLUGIN_VERSION);
+    }
+
+    public function test_client_header_shape() {
+        global $wp_test_bloginfo_version;
+        $wp_test_bloginfo_version = '6.7.1-alpha-12345';
+
+        $header = $this->invoke_client_header();
+        $tokens = explode('; ', $header);
+
+        $this->assertCount(4, $tokens, $header);
+        foreach ($tokens as $token) {
+            $this->assertMatchesRegularExpression(self::CLIENT_TOKEN, $token);
+        }
+        $this->assertSame('Livraria-WordPress-Plugin/' . $this->plugin_header_version(), $tokens[0]);
+        $this->assertSame('WordPress/6.7.1-alpha-12345', $tokens[1]);
+        // WC_VERSION is not defined in the unit-test bootstrap
+        $this->assertSame('WooCommerce/unknown', $tokens[2]);
+        $this->assertSame('PHP/' . preg_replace('/[^A-Za-z0-9.+_-]/', '', PHP_VERSION), $tokens[3]);
+    }
+
+    public function test_client_header_strips_characters_outside_the_token_rule() {
+        global $wp_test_bloginfo_version;
+        $wp_test_bloginfo_version = '6.8 RC1 <b>;x' . str_repeat('9', 60);
+
+        $tokens = explode('; ', $this->invoke_client_header());
+
+        $this->assertCount(4, $tokens);
+        $this->assertSame('WordPress/' . substr('6.8RC1bx' . str_repeat('9', 60), 0, 40), $tokens[1]);
+        $this->assertMatchesRegularExpression(self::CLIENT_TOKEN, $tokens[1]);
+    }
+
+    public function test_client_header_unknown_when_version_is_empty() {
+        global $wp_test_bloginfo_version;
+        $wp_test_bloginfo_version = '';
+
+        $tokens = explode('; ', $this->invoke_client_header());
+
+        $this->assertSame('WordPress/unknown', $tokens[1]);
+    }
+
+    public function test_every_request_sends_client_header_and_keeps_user_agent() {
+        update_option('livraria_api_token', 'valid-token');
+        update_option('livraria_token_expires_at', time() + 3600);
+        $this->api_client = new Livraria_API_Client('http://test-api.example.com');
+
+        $captured = array();
+        $this->capture_requests($captured);
+
+        $this->api_client->get_user_info();                          // api_request
+        $this->api_client->download_awb_pdf('AWB0000000001');        // api_request_binary
+        $this->api_client->test_connectivity();                      // connectivity check
+        // Last: a failed login clears the token the calls above need
+        $this->api_client->login('test_user', 'test_pass');          // raw_api_request
+
+        $this->assertCount(4, $captured);
+        $expected = $this->invoke_client_header();
+        foreach ($captured as $request) {
+            $this->assertSame($expected, $request['args']['headers']['X-Livraria-Client'] ?? null, $request['url']);
+            $this->assertSame('WordPress-Livraria-Plugin/1.0', $request['args']['user-agent'], $request['url']);
+        }
+    }
+
+    public function tearDown(): void {
+        global $wp_test_bloginfo_version;
+        $wp_test_bloginfo_version = null;
+        parent::tearDown();
+    }
 }
