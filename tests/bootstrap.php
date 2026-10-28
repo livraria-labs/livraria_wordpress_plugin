@@ -173,6 +173,26 @@ if (!class_exists('WP_Error')) {
     }
 }
 
+if (!function_exists('get_bloginfo')) {
+    function get_bloginfo($show = '') {
+        global $wp_test_bloginfo_version;
+        if ($show === 'version') {
+            return isset($wp_test_bloginfo_version) ? $wp_test_bloginfo_version : '6.7.1';
+        }
+        return '';
+    }
+}
+
+// The main plugin file is not loaded in unit tests (it needs WordPress), so
+// take LIVRARIA_WC_PLUGIN_VERSION from its define() line.
+if (!defined('LIVRARIA_WC_PLUGIN_VERSION')) {
+    $livraria_main_file = file_get_contents(dirname(dirname(__FILE__)) . '/courier-expedition-wp-plugin.php');
+    if (preg_match("/define\\('LIVRARIA_WC_PLUGIN_VERSION',\\s*'([^']*)'\\)/", $livraria_main_file, $livraria_match)) {
+        define('LIVRARIA_WC_PLUGIN_VERSION', $livraria_match[1]);
+    }
+    unset($livraria_main_file, $livraria_match);
+}
+
 // Load the plugin classes directly
 require_once dirname(dirname(__FILE__)) . '/includes/class-api-client.php';
 require_once dirname(dirname(__FILE__)) . '/includes/class-order-handler.php';

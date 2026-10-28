@@ -368,7 +368,8 @@ class Livraria_API_Client {
             'method' => $method,
             'headers' => array(
                 'Authorization' => 'Bearer ' . $this->api_token,
-                'Accept' => 'application/pdf'
+                'Accept' => 'application/pdf',
+                'X-Livraria-Client' => $this->client_header()
             ),
             'timeout' => 60, // Longer timeout for PDF generation
             'user-agent' => 'WordPress-Livraria-Plugin/1.0',
@@ -405,6 +406,36 @@ class Livraria_API_Client {
         }
     }
 
+
+    /**
+     * Value of the X-Livraria-Client header sent on every request to the
+     * Livraria API: this plugin's version, then the WordPress, WooCommerce and
+     * PHP versions, e.g.
+     * "Livraria-WordPress-Plugin/1.0.3; WordPress/6.7.1; WooCommerce/9.4.0; PHP/8.2.10".
+     *
+     * Each token is "name/version"; the version keeps only A-Z a-z 0-9 . + _ -
+     * and at most 40 characters (the backend ignores a token outside that
+     * rule), "unknown" when nothing is left. The User-Agent stays
+     * "WordPress-Livraria-Plugin/1.0": the backend reads the platform from it.
+     *
+     * @return string Header value
+     */
+    private function client_header() {
+        $versions = array(
+            'Livraria-WordPress-Plugin' => defined('LIVRARIA_WC_PLUGIN_VERSION') ? LIVRARIA_WC_PLUGIN_VERSION : '',
+            'WordPress' => function_exists('get_bloginfo') ? get_bloginfo('version') : '',
+            'WooCommerce' => defined('WC_VERSION') ? WC_VERSION : '',
+            'PHP' => PHP_VERSION,
+        );
+
+        $tokens = array();
+        foreach ($versions as $name => $version) {
+            $clean = substr(preg_replace('/[^A-Za-z0-9.+_-]/', '', (string) $version), 0, 40);
+            $tokens[] = $name . '/' . ($clean !== '' ? $clean : 'unknown');
+        }
+
+        return implode('; ', $tokens);
+    }
 
     /**
      * Convert localhost/127.0.0.1 to host.docker.internal for Docker
@@ -457,7 +488,8 @@ class Livraria_API_Client {
             'method' => $method,
             'headers' => array(
                 'Content-Type' => 'application/json',
-                'Accept' => 'application/json'
+                'Accept' => 'application/json',
+                'X-Livraria-Client' => $this->client_header()
             ),
             'timeout' => 30,
             'user-agent' => 'WordPress-Livraria-Plugin/1.0',
@@ -535,7 +567,8 @@ class Livraria_API_Client {
             'headers' => array(
                 'Authorization' => 'Bearer ' . $this->api_token,
                 'Content-Type' => 'application/json',
-                'Accept' => 'application/json'
+                'Accept' => 'application/json',
+                'X-Livraria-Client' => $this->client_header()
             ),
             'timeout' => 30,
             'user-agent' => 'WordPress-Livraria-Plugin/1.0',
@@ -692,6 +725,9 @@ class Livraria_API_Client {
         
         $args = array(
             'method' => 'GET',
+            'headers' => array(
+                'X-Livraria-Client' => $this->client_header()
+            ),
             'timeout' => 10,
             'user-agent' => 'WordPress-Livraria-Plugin/1.0',
             'sslverify' => false

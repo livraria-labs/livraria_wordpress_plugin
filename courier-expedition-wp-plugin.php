@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Livraria Shipping for WooCommerce
  * Description: Automatically create and manage shipping expeditions for WooCommerce orders via the Livraria courier API.
- * Version: 1.0.2
+ * Version: 1.0.3
  * Author: Livraria S.R.L.
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -14,6 +14,10 @@
 if (!defined('ABSPATH')) {
     exit;
 }
+
+// Must equal the plugin header Version line above; deploy.sh refuses to
+// build when the two differ. Sent to the Livraria API in X-Livraria-Client.
+define('LIVRARIA_WC_PLUGIN_VERSION', '1.0.3');
 
 // Include required classes
 require_once plugin_dir_path(__FILE__) . 'includes/class-api-client.php';
@@ -1211,8 +1215,8 @@ class LivrariaPlugin {
     
     public function enqueue_admin_styles() {
         // Enqueue admin assets on all admin pages
-        wp_enqueue_style('livraria-admin-css', plugin_dir_url(__FILE__) . 'assets/admin.css', array(), '1.0.2');
-        wp_enqueue_script('livraria-admin-js', plugin_dir_url(__FILE__) . 'assets/admin.js', array('jquery'), '1.0.2', true);
+        wp_enqueue_style('livraria-admin-css', plugin_dir_url(__FILE__) . 'assets/admin.css', array(), LIVRARIA_WC_PLUGIN_VERSION);
+        wp_enqueue_script('livraria-admin-js', plugin_dir_url(__FILE__) . 'assets/admin.js', array('jquery'), LIVRARIA_WC_PLUGIN_VERSION, true);
         wp_localize_script('livraria-admin-js', 'livrariaAdmin', array(
             'nonce'                  => wp_create_nonce('livraria_admin_nonce'),
             'ajaxurl'                => admin_url('admin-ajax.php'),
@@ -1229,7 +1233,7 @@ class LivrariaPlugin {
         // Enqueue order meta box script with dynamic data
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only GET params used only to determine order ID for script localization, no state change
         $order_id = isset($_GET['id']) ? absint($_GET['id']) : (isset($_GET['post']) ? absint($_GET['post']) : 0);
-        wp_enqueue_script('livraria-order-js', plugin_dir_url(__FILE__) . 'assets/order.js', array('jquery'), '1.0.2', true);
+        wp_enqueue_script('livraria-order-js', plugin_dir_url(__FILE__) . 'assets/order.js', array('jquery'), LIVRARIA_WC_PLUGIN_VERSION, true);
         wp_localize_script('livraria-order-js', 'livrariaOrder', array(
             'autoCreateEnabled' => (bool) get_option('courier_auto_create'),
             'expeditionExists'  => (bool) get_post_meta($order_id, '_courier_expedition_id', true),

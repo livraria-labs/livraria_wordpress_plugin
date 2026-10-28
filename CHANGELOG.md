@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-10-28
+
+### Added
+- Every request to the Livraria API sends an `X-Livraria-Client` header:
+  `Livraria-WordPress-Plugin/<plugin version>; WordPress/<version>; WooCommerce/<version or unknown>; PHP/<version>`.
+  The User-Agent is unchanged (`WordPress-Livraria-Plugin/1.0`).
+- `LIVRARIA_WC_PLUGIN_VERSION` constant, equal to the `Version:` header; `deploy.sh`
+  stops when the two differ. Asset cache-busting versions use it.
+
 ## [1.0.1] - 2026-08-19
 
 ### Fixed
