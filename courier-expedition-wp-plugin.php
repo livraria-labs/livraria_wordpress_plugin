@@ -1081,19 +1081,33 @@ class LivrariaPlugin {
             
             // Check if "Remember me" is enabled
             $remember_me = isset($_POST['remember_me']) && $_POST['remember_me'] === '1';
+            $message = 'Login successful';
+            
+            if ($remember_me && !Livraria_API_Client::can_encrypt()) {
+                // No OpenSSL: never store the password in clear text. The
+                // settings page says why "Remember me" is unavailable.
+                $remember_me = false;
+                $message = 'Login successful. Your credentials were not stored: this server\'s PHP has no OpenSSL, so they cannot be encrypted.';
+            }
             update_option('livraria_remember_credentials', $remember_me);
             
             if ($remember_me) {
                 // Save encrypted credentials for future use
-                $api_client->set_encrypted_option('courier_api_username', $username);
-                $api_client->set_encrypted_option('courier_api_password', $password);
+                $stored = $api_client->set_encrypted_option('courier_api_username', $username)
+                    && $api_client->set_encrypted_option('courier_api_password', $password);
+                if (!$stored) {
+                    update_option('livraria_remember_credentials', false);
+                    delete_option('courier_api_username');
+                    delete_option('courier_api_password');
+                    $message = 'Login successful. Your credentials could not be encrypted, so they were not stored.';
+                }
             } else {
                 // Clear stored credentials if "Remember me" is not checked
                 delete_option('courier_api_username');
                 delete_option('courier_api_password');
             }
             
-            wp_send_json_success(array('message' => 'Login successful'));
+            wp_send_json_success(array('message' => $message));
         } else {
             wp_send_json_error($result['message']);
         }

@@ -949,12 +949,22 @@ class Livraria_API_Client {
     }
     
     /**
+     * Whether this server can encrypt stored credentials (PHP OpenSSL)
+     *
+     * @return bool
+     */
+    public static function can_encrypt() {
+        return function_exists('wp_salt') && function_exists('openssl_encrypt') && function_exists('openssl_random_pseudo_bytes');
+    }
+
+    /**
      * Set encrypted option value (public method for use outside class)
-     * Encrypts sensitive data before storing
+     * Encrypts sensitive data before storing. Without encryption nothing is
+     * stored: a password in clear text is worse than no stored password.
      * 
      * @param string $option_name Option name
      * @param string $value Value to encrypt and store
-     * @return bool Success
+     * @return bool Success; false when the value could not be encrypted (nothing stored)
      */
     public function set_encrypted_option($option_name, $value) {
         // If value is empty, just store it
@@ -963,7 +973,7 @@ class Livraria_API_Client {
         }
         
         // Try to encrypt using WordPress functions (WordPress 5.2+)
-        if (function_exists('wp_salt') && function_exists('openssl_encrypt')) {
+        if (self::can_encrypt()) {
             $key = wp_salt('nonce');
             $iv_length = openssl_cipher_iv_length('AES-256-CBC');
             $iv = openssl_random_pseudo_bytes($iv_length);
@@ -976,11 +986,8 @@ class Livraria_API_Client {
             }
         }
         
-        // If encryption fails, store plain text (with warning in logs)
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Warning logging only when WP_DEBUG is enabled
-            error_log('Livraria Warning: Could not encrypt credentials, storing in plain text. Please ensure OpenSSL is enabled.');
-        }
-        return update_option($option_name, $value);
+        // Encryption unavailable or failed: refuse to store
+        $this->log_error('Could not encrypt ' . $option_name . ' (is PHP OpenSSL enabled?); not stored.');
+        return false;
     }
 }

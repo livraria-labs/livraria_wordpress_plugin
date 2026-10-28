@@ -479,6 +479,10 @@ jQuery(document).ready(function($) {
             })(),
             success: function(response) {
                 if (response.success) {
+                    // e.g. credentials not stored because they cannot be encrypted
+                    if (response.data && response.data.message && response.data.message !== 'Login successful') {
+                        alert(response.data.message);
+                    }
                     location.reload();
                 } else {
                     alert('Login failed: ' + (response.data || 'Unknown error'));

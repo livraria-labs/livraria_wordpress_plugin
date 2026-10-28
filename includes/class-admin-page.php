@@ -81,9 +81,14 @@ class Livraria_Admin_Page {
                     <tr>
                         <th scope="row">Remember me</th>
                         <td>
+                            <?php if (Livraria_API_Client::can_encrypt()): ?>
                             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                                 <input type="checkbox" id="remember-me" name="remember_me" value="1" <?php checked(true, $remember_me); ?> />
                             </label>
+                            <?php else: ?>
+                            <input type="checkbox" id="remember-me" name="remember_me" value="1" disabled="disabled" />
+                            <p class="description" style="color: #d63638;">Unavailable: this server's PHP has no OpenSSL, so the plugin cannot encrypt your password and will not store it. You will log in again when the API session ends (about an hour). Ask your host to enable the PHP OpenSSL extension.</p>
+                            <?php endif; ?>
                         </td>
                     </tr>
                 </table>

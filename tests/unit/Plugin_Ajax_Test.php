@@ -184,6 +184,27 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
         }
     }
 
+    public function test_remember_me_stores_credentials_only_encrypted() {
+        $this->as_user(array('read', 'manage_options'));
+        $GLOBALS['wp_test_filters'] = array();
+        add_filter('pre_http_request', function($preempt, $args, $url) {
+            return array(
+                'response' => array('code' => 200, 'message' => 'OK'),
+                'body' => json_encode(array('accessToken' => 'invented-token-3', 'expiresIn' => 3600)),
+                'headers' => array(),
+            );
+        }, 10, 3);
+        $_POST = array('username' => 'merchant@example.com', 'password' => 'invented-password-5', 'remember_me' => '1');
+
+        $response = $this->call_ajax('ajax_login');
+
+        $this->assertTrue($response->success);
+        $this->assertTrue(Livraria_API_Client::can_encrypt(), 'the test PHP has OpenSSL');
+        $this->assertStringStartsWith('livraria_encrypted:', get_option('courier_api_password'));
+        $this->assertStringNotContainsString('invented-password-5', get_option('courier_api_password'));
+        $this->assertSame('invented-password-5', (new Livraria_API_Client())->get_encrypted_option('courier_api_password'));
+    }
+
     public function test_load_resets_a_foreign_api_url_and_logs_one_line() {
         update_option('courier_api_base_url', 'https://collector.example.net/api/');
         update_option('livraria_api_token', 'token-from-the-other-host');
