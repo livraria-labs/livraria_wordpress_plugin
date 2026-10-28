@@ -29,7 +29,7 @@ The source code is also included directly in the deployed plugin - all PHP files
 
 Navigate to **Settings > Livraria** to configure:
 
-- **Login**: your Livraria account email and password. The plugin always connects to `https://api.livraria.ro/` (the URL can be changed only in development mode, see DEVELOPMENT.md)
+- **Login**: your Livraria account email and password. The plugin always connects to `https://www.api.livraria.ro/` (the URL can be changed only in development mode, see DEVELOPMENT.md)
 - **Auto-create expeditions**: Enable/disable automatic expedition creation on order completion
 - **Default Sender Information**: Configure your company's shipping details
 

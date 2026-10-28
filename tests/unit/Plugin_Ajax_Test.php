@@ -118,7 +118,7 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
 
         $this->assertFalse($response->success);
         $this->assertCount(1, $this->captured);
-        $this->assertSame('https://api.livraria.ro/auth/login', $this->captured[0]['url']);
+        $this->assertSame(Livraria_API_Client::PRODUCTION_API_URL . 'auth/login', $this->captured[0]['url']);
         $this->assertSame(Livraria_API_Client::PRODUCTION_API_URL, get_option('courier_api_base_url'));
         $this->assertSame('', (string) get_option('courier_api_password', ''), 'nothing stored after a failed login');
         $this->assertSame('', (string) get_option('courier_api_username', ''), 'nothing stored after a failed login');
@@ -146,7 +146,7 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
         $response = $this->call_ajax('ajax_login');
 
         $this->assertTrue($response->success);
-        $this->assertSame(array('https://api.livraria.ro/auth/login'), $urls);
+        $this->assertSame(array(Livraria_API_Client::PRODUCTION_API_URL . 'auth/login'), $urls);
         $this->assertSame(Livraria_API_Client::PRODUCTION_API_URL, get_option('courier_api_base_url'));
     }
 
@@ -163,7 +163,7 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
 
         $this->assertCount(2, $this->captured);
         foreach ($this->captured as $request) {
-            $this->assertStringStartsWith('https://api.livraria.ro/', $request['url']);
+            $this->assertStringStartsWith(Livraria_API_Client::PRODUCTION_API_URL, $request['url']);
         }
     }
 
@@ -182,7 +182,7 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
 
         $this->assertCount(2, $this->captured);
         foreach ($this->captured as $request) {
-            $this->assertSame('https://api.livraria.ro/auth/login', $request['url']);
+            $this->assertSame(Livraria_API_Client::PRODUCTION_API_URL . 'auth/login', $request['url']);
             $body = json_decode($request['args']['body'], true);
             $this->assertSame('invented-password-2', $body['password']);
         }
@@ -223,6 +223,37 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
         $this->assertCount(1, $lines);
         $this->assertStringContainsString('collector.example.net', $lines[0]);
         $this->assertStringNotContainsString('/api/', $lines[0]);
+    }
+
+    public function test_load_canonicalises_the_old_production_address_silently() {
+        $this->assertSame('https://www.api.livraria.ro/', Livraria_API_Client::PRODUCTION_API_URL);
+        foreach (array('https://api.livraria.ro/', 'https://api.livraria.ro') as $old_default) {
+            update_option('courier_api_base_url', $old_default);
+            update_option('livraria_api_token', 'existing-token');
+            update_option('livraria_token_expires_at', time() + 3600);
+            $this->start_log_capture();
+
+            new LivrariaPlugin();
+
+            $this->assertSame('https://www.api.livraria.ro/', get_option('courier_api_base_url'), $old_default);
+            $this->assertSame('existing-token', get_option('livraria_api_token'), 'session kept for ' . $old_default);
+            $this->assertSame('', $this->captured_log(), $old_default);
+        }
+    }
+
+    public function test_load_resets_a_foreign_host_drops_the_session_and_logs_once() {
+        update_option('courier_api_base_url', 'https://evil.example.com/');
+        update_option('livraria_api_token', 'existing-token');
+        update_option('livraria_token_expires_at', time() + 3600);
+        $this->start_log_capture();
+
+        new LivrariaPlugin();
+
+        $this->assertSame('https://www.api.livraria.ro/', get_option('courier_api_base_url'));
+        $this->assertFalse(get_option('livraria_api_token', false));
+        $lines = array_values(array_filter(explode("\n", $this->captured_log())));
+        $this->assertCount(1, $lines);
+        $this->assertStringContainsString('evil.example.com', $lines[0]);
     }
 
     public function test_load_on_a_fresh_install_sets_production_without_logging() {

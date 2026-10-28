@@ -11,9 +11,17 @@ class Livraria_API_Client {
 
     /**
      * The Livraria API every shop talks to. Outside development mode the
-     * plugin uses this host and nothing else.
+     * plugin uses this host and nothing else. (https://api.livraria.ro/
+     * answers 301 to it.)
      */
-    const PRODUCTION_API_URL = 'https://api.livraria.ro/';
+    const PRODUCTION_API_URL = 'https://www.api.livraria.ro/';
+
+    /**
+     * Other spellings of the production API: https://api.livraria.ro/ was
+     * the default up to 1.0.3, so every existing shop stores it. Stored, it
+     * is rewritten to PRODUCTION_API_URL silently, keeping the API session.
+     */
+    const PRODUCTION_API_ALIASES = array('https://api.livraria.ro/');
 
     private $api_base_url;
     private $api_token;
@@ -61,7 +69,8 @@ class Livraria_API_Client {
 
     /**
      * Outside development mode, put courier_api_base_url back to the
-     * production host if anything else is stored there. A stored URL that
+     * production host if anything else is stored there. A production alias
+     * (PRODUCTION_API_ALIASES) is rewritten silently. Any other stored URL that
      * points elsewhere is where the next login would send the merchant's
      * password, so the reset is logged (host only) and the API session,
      * which belongs to that other host, is dropped.
@@ -71,13 +80,19 @@ class Livraria_API_Client {
             return;
         }
         $stored = (string) get_option('courier_api_base_url', '');
-        if (rtrim($stored, '/') === rtrim(self::PRODUCTION_API_URL, '/')) {
+        $normalised = rtrim($stored, '/');
+        if ($normalised === rtrim(self::PRODUCTION_API_URL, '/')) {
             return;
         }
 
         update_option('courier_api_base_url', self::PRODUCTION_API_URL);
         if ($stored === '') {
             return; // fresh install, nothing was redirected
+        }
+        foreach (self::PRODUCTION_API_ALIASES as $alias) {
+            if ($normalised === rtrim($alias, '/')) {
+                return; // the same API under its old address: keep the session
+            }
         }
 
         delete_option('livraria_api_token');

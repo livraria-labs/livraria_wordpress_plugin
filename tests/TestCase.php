@@ -31,6 +31,10 @@ class Livraria_TestCase extends PHPUnit\Framework\TestCase {
      * Send error_log() to a temporary file for the rest of this test
      */
     protected function start_log_capture() {
+        if ($this->log_file !== null) {
+            file_put_contents($this->log_file, ''); // already capturing: start over
+            return;
+        }
         $this->log_file = tempnam(sys_get_temp_dir(), 'livraria-log-');
         $this->previous_error_log = ini_set('error_log', $this->log_file);
     }

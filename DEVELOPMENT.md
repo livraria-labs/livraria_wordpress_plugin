@@ -282,7 +282,7 @@ define('WP_DEBUG_DISPLAY', false);
 ### Development mode
 
 Outside development mode the plugin always talks to the production API
-(`https://api.livraria.ro/`), shows no API URL field, and puts the stored
+(`https://www.api.livraria.ro/`), shows no API URL field, and puts the stored
 `courier_api_base_url` back to that host on load (logging one line with the
 host it replaced). Development mode needs **both** of these in `wp-config.php`:
 
