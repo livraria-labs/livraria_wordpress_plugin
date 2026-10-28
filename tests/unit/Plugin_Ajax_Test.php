@@ -103,6 +103,9 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
 
     public function test_login_uses_the_production_host_and_saves_no_posted_api_url() {
         $this->as_user(array('read', 'manage_options'));
+        // Livraria_TestCase seeds courier_api_password = 'test_pass'; start empty
+        delete_option('courier_api_username');
+        delete_option('courier_api_password');
         $_POST = array(
             'api_url' => 'https://collector.example.net/',
             'username' => 'merchant@example.com',
@@ -118,6 +121,7 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
         $this->assertSame('https://api.livraria.ro/auth/login', $this->captured[0]['url']);
         $this->assertSame(Livraria_API_Client::PRODUCTION_API_URL, get_option('courier_api_base_url'));
         $this->assertSame('', (string) get_option('courier_api_password', ''), 'nothing stored after a failed login');
+        $this->assertSame('', (string) get_option('courier_api_username', ''), 'nothing stored after a failed login');
     }
 
     public function test_login_success_keeps_the_production_host() {

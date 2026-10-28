@@ -70,9 +70,14 @@ class API_Client_Test extends Livraria_TestCase {
      * Note: This test requires the api_request method to be public or we need to test through public methods
      */
     public function test_token_refresh_on_expiry() {
-        // Set expired token
+        // Set expired token. The client re-logs in only with credentials
+        // stored by "Remember me" (ensure_valid_token), so store them.
         update_option('livraria_api_token', 'old-token');
         update_option('livraria_token_expires_at', time() - 100);
+        update_option('livraria_remember_credentials', true);
+        $this->api_client->set_encrypted_option('courier_api_username', 'merchant@example.com');
+        $this->api_client->set_encrypted_option('courier_api_password', 'invented-password-6');
+        $this->api_client = new Livraria_API_Client('http://test-api.example.com');
         
         // Mock login response
         $mock_login = $this->create_mock_response(200, array(
@@ -96,6 +101,7 @@ class API_Client_Test extends Livraria_TestCase {
         $this->api_client->get_user_info();
         
         // Token should be refreshed
+        $this->assertTrue($login_called);
         $this->assertEquals('new-token-456', get_option('livraria_api_token'));
     }
     
