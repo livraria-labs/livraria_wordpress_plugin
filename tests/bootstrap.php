@@ -231,6 +231,25 @@ if (!function_exists('register_setting')) {
     }
 }
 
+if (!function_exists('wp_mail')) {
+    function wp_mail($to, $subject, $message, $headers = '', $attachments = array()) {
+        global $wp_test_mails;
+        $wp_test_mails[] = array('to' => $to, 'subject' => $subject, 'message' => $message);
+        return true;
+    }
+}
+
+// A stand-in WooCommerce order for the meta box test
+class Livraria_Test_Order {
+}
+
+if (!function_exists('wc_get_order')) {
+    function wc_get_order($order_id) {
+        global $wp_test_orders;
+        return isset($wp_test_orders[$order_id]) ? $wp_test_orders[$order_id] : false;
+    }
+}
+
 if (!function_exists('add_action')) {
     function add_action($tag, $callback, $priority = 10, $accepted_args = 1) {
         return true;

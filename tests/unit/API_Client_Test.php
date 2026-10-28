@@ -70,27 +70,24 @@ class API_Client_Test extends Livraria_TestCase {
      * Note: This test requires the api_request method to be public or we need to test through public methods
      */
     public function test_token_refresh_on_expiry() {
-        // Set expired token. The client re-logs in only with credentials
-        // stored by "Remember me" (ensure_valid_token), so store them.
+        // Set expired token; a refresh token is stored (1.1.0)
         update_option('livraria_api_token', 'old-token');
         update_option('livraria_token_expires_at', time() - 100);
-        update_option('livraria_remember_credentials', true);
-        $this->api_client->set_encrypted_option('courier_api_username', 'merchant@example.com');
-        $this->api_client->set_encrypted_option('courier_api_password', 'invented-password-6');
+        $this->api_client->set_encrypted_option('livraria_refresh_token', 'invented-refresh-6');
         $this->api_client = new Livraria_API_Client('https://www.api.livraria.ro');
         
         // Mock login response
-        $mock_login = $this->create_mock_response(200, array(
+        $mock_login = $this->create_mock_response(201, array('success' => true, 'data' => array(
             'accessToken' => 'new-token-456',
             'expiresIn' => 3600
-        ));
+        )));
         
         // Mock API request that would trigger refresh
         $mock_api = $this->create_mock_response(200, array('data' => 'test'));
         
         $login_called = false;
         add_filter('pre_http_request', function($preempt, $args, $url) use ($mock_login, $mock_api, &$login_called) {
-            if (strpos($url, '/auth/login') !== false) {
+            if (strpos($url, '/auth/refresh') !== false) {
                 $login_called = true;
                 return $mock_login;
             }

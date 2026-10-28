@@ -22,6 +22,11 @@ class Livraria_TestCase extends PHPUnit\Framework\TestCase {
         
         // Set default plugin options for testing
         $this->set_default_options();
+
+        // Each test is a fresh "request"
+        Livraria_API_Client::reset_refresh_guard();
+        global $wp_test_mails;
+        $wp_test_mails = array();
     }
     
     private $log_file = null;
@@ -75,7 +80,7 @@ class Livraria_TestCase extends PHPUnit\Framework\TestCase {
     protected function set_default_options() {
         update_option('courier_api_base_url', 'https://www.api.livraria.ro');
         update_option('courier_api_username', 'test_user');
-        update_option('courier_api_password', 'test_pass');
+        update_option('admin_email', 'admin@example.com');
     }
     
     /**

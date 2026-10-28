@@ -115,9 +115,7 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
 
     public function test_login_with_a_posted_foreign_url_is_refused_and_saves_nothing() {
         $this->as_user(array('read', 'manage_options'));
-        // Livraria_TestCase seeds courier_api_password = 'test_pass'; start empty
         delete_option('courier_api_username');
-        delete_option('courier_api_password');
         $_POST = array(
             'api_url' => 'https://collector.example.net/',
             'username' => 'merchant@example.com',
@@ -132,6 +130,7 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
         $this->assertCount(0, $this->captured, 'no request to the foreign host');
         $this->assertSame(Livraria_API_Client::PRODUCTION_API_URL, get_option('courier_api_base_url'));
         $this->assertSame('', (string) get_option('courier_api_password', ''), 'nothing stored after a refused login');
+        $this->assertSame('', (string) get_option('livraria_refresh_token', ''), 'nothing stored after a refused login');
         $this->assertSame('', (string) get_option('courier_api_username', ''), 'nothing stored after a refused login');
     }
 
@@ -177,48 +176,6 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
         $this->assertFalse($this->call_ajax('ajax_test_api_connection')->success);
 
         $this->assertCount(0, $this->captured);
-    }
-
-    public function test_stored_credentials_are_used_server_side_against_production() {
-        $this->as_user(array('read', 'manage_options'));
-        $client = new Livraria_API_Client();
-        update_option('livraria_remember_credentials', true);
-        $client->set_encrypted_option('courier_api_username', 'merchant@example.com');
-        $client->set_encrypted_option('courier_api_password', 'invented-password-2');
-        $this->plugin = new LivrariaPlugin();
-
-        $_POST = array('username' => 'merchant@example.com', 'password' => '', 'use_stored_credentials' => '1');
-        $this->call_ajax('ajax_test_api_connection');
-        $_POST = array('username' => 'merchant@example.com', 'password' => '', 'remember_me' => '1');
-        $this->call_ajax('ajax_login');
-
-        $this->assertCount(2, $this->captured);
-        foreach ($this->captured as $request) {
-            $this->assertSame(Livraria_API_Client::PRODUCTION_API_URL . 'auth/login', $request['url']);
-            $body = json_decode($request['args']['body'], true);
-            $this->assertSame('invented-password-2', $body['password']);
-        }
-    }
-
-    public function test_remember_me_stores_credentials_only_encrypted() {
-        $this->as_user(array('read', 'manage_options'));
-        $GLOBALS['wp_test_filters'] = array();
-        add_filter('pre_http_request', function($preempt, $args, $url) {
-            return array(
-                'response' => array('code' => 200, 'message' => 'OK'),
-                'body' => json_encode(array('accessToken' => 'invented-token-3', 'expiresIn' => 3600)),
-                'headers' => array(),
-            );
-        }, 10, 3);
-        $_POST = array('username' => 'merchant@example.com', 'password' => 'invented-password-5', 'remember_me' => '1');
-
-        $response = $this->call_ajax('ajax_login');
-
-        $this->assertTrue($response->success);
-        $this->assertTrue(Livraria_API_Client::can_encrypt(), 'the test PHP has OpenSSL');
-        $this->assertStringStartsWith('livraria_encrypted:', get_option('courier_api_password'));
-        $this->assertStringNotContainsString('invented-password-5', get_option('courier_api_password'));
-        $this->assertSame('invented-password-5', (new Livraria_API_Client())->get_encrypted_option('courier_api_password'));
     }
 
     public function test_load_keeps_allowed_hosts_untouched() {
