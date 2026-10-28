@@ -145,7 +145,7 @@ This plugin integrates with your Livraria expedition API to automatically create
 
 This plugin connects to the Livraria API to create and manage shipping expeditions for WooCommerce orders.
 
-When an admin creates or manages a shipment from the WooCommerce order screen, the following data is sent to the Livraria API (https://api.livraria.ro/): recipient name, shipping address, package dimensions, weight, and order number.
+When an admin creates or manages a shipment from the WooCommerce order screen, the following data is sent to the Livraria API (https://www.api.livraria.ro/): recipient name, shipping address, package dimensions, weight, and order number.
 
 Every request to the Livraria API also carries the plugin version and the WordPress, WooCommerce and PHP versions of this site, so that Livraria support can tell which plugin version a shop runs. No other site data is sent.
 
@@ -154,6 +154,15 @@ Service provider: Livraria Hub S.R.L.
 - Privacy Policy: https://www.livraria.ro/en/privacy-policy
 
 == Changelog ==
+
+= 1.0.4 =
+* Security: TLS certificates are verified on every request to the Livraria API
+* Security: only administrators (manage_options) can log in, log out or test the connection; order actions need edit_shop_orders
+* Security: the plugin talks only to Livraria API hosts; the settings page shows the API address read-only
+* Security: if the stored API address is not a Livraria host, all API calls stop and an administrator must log in again
+* Security: the stored password is no longer included in the settings page
+* Security: no request data, passwords or tokens in the debug log
+* Security: without PHP OpenSSL the password is not stored at all
 
 = 1.0.3 =
 * Each request to the Livraria API carries an X-Livraria-Client header with the plugin, WordPress, WooCommerce and PHP versions

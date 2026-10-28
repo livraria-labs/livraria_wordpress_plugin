@@ -53,12 +53,12 @@ class Livraria_Order_Handler {
             $quote_request_data = $this->prepare_quote_request_data($order, $custom_data, $courier_ids);
             
             // Debug: Log the data being sent (only in development mode)
-            if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only when WP_DEBUG is enabled
+            if (Livraria_API_Client::is_dev_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
                 error_log('Livraria Debug: Quote request data structure: ' . print_r($quote_request_data, true));
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
                 error_log('Livraria Debug: Has sender: ' . (isset($quote_request_data['sender']) ? 'yes' : 'no'));
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
                 error_log('Livraria Debug: Has recipient: ' . (isset($quote_request_data['recipient']) ? 'yes' : 'no'));
             }
             
@@ -156,10 +156,10 @@ class Livraria_Order_Handler {
             $quote_request_data = $this->prepare_quote_request_data($order, $custom_data, $courier_ids);
             
             // Debug: Log the data being sent (only in development mode)
-            if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only when WP_DEBUG is enabled
+            if (Livraria_API_Client::is_dev_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
                 error_log('Livraria Debug: Quote request data: ' . print_r($quote_request_data, true));
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only when WP_DEBUG is enabled
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
                 error_log('Livraria Debug: Available courier IDs: ' . print_r($courier_ids, true));
             }
             
@@ -571,10 +571,10 @@ class Livraria_Order_Handler {
         );
         
         // Debug: Log sender and recipient data (only in development mode)
-        if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+        if (Livraria_API_Client::is_dev_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
             error_log('Livraria Debug: Sender object: ' . PHP_EOL . json_encode($sender_obj, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
             error_log('Livraria Debug: Recipient object: ' . PHP_EOL . json_encode($recipient_obj, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         }
         
@@ -695,35 +695,35 @@ class Livraria_Order_Handler {
                 }
                 
                 if (empty($missing_fields)) {
-                    if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+                    if (Livraria_API_Client::is_dev_mode()) {
+                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
                         error_log('Livraria: Using sender profile address from API');
                     }
                     return $address;
                 } else {
                     // Log what we got for debugging (only in development mode)
-                    if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+                    if (Livraria_API_Client::is_dev_mode()) {
+                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
                         error_log('Livraria: Sender profile address incomplete. Missing: ' . implode(', ', $missing_fields));
-                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only when WP_DEBUG is enabled
+                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
                         error_log('Livraria: Full sender profile: ' . print_r($sender_profile, true));
-                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only when WP_DEBUG is enabled
+                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
                         error_log('Livraria: Address data found: ' . print_r($address_data, true));
-                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only when WP_DEBUG is enabled
+                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
                         error_log('Livraria: Extracted address: ' . print_r($address, true));
                     }
                 }
             } else {
-                if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+                if (Livraria_API_Client::is_dev_mode()) {
+                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
                     error_log('Livraria: No address data found in sender profile');
-                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only when WP_DEBUG is enabled
+                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
                     error_log('Livraria: Full sender profile structure: ' . print_r($sender_profile, true));
                 }
             }
         } else {
-            if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+            if (Livraria_API_Client::is_dev_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
                 error_log('Livraria: No sender profile available from API');
             }
         }
@@ -761,8 +761,8 @@ class Livraria_Order_Handler {
             throw new Exception($error_msg);
         }
         
-        if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+        if (Livraria_API_Client::is_dev_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
             error_log('Livraria: Using sender address from plugin settings (fallback)');
         }
         return $address;
@@ -1031,10 +1031,10 @@ class Livraria_Order_Handler {
      */
     public function save_expedition_data($order_id, $expedition_response, $selected_quote) {
         // Debug: Log the full response structure (only in development mode)
-        if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only when WP_DEBUG is enabled
+        if (Livraria_API_Client::is_dev_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
             error_log('Livraria Debug Save: Full expedition_response: ' . print_r($expedition_response, true));
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only when WP_DEBUG is enabled
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
             error_log('Livraria Debug Save: Full selected_quote: ' . print_r($selected_quote, true));
         }
 
@@ -1048,41 +1048,41 @@ class Livraria_Order_Handler {
         // Check expedition response first (this is what the API returns after creating expedition)
         if (!empty($expedition_response['courierQuote']['courierName'])) {
             $courier_name = $expedition_response['courierQuote']['courierName'];
-            if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+            if (Livraria_API_Client::is_dev_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
                 error_log('Livraria Debug: Courier name from expedition_response[courierQuote][courierName]: ' . $courier_name);
             }
         } elseif (!empty($expedition_response['courier']['name'])) {
             $courier_name = $expedition_response['courier']['name'];
-            if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+            if (Livraria_API_Client::is_dev_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
                 error_log('Livraria Debug: Courier name from expedition_response[courier][name]: ' . $courier_name);
             }
         } elseif (!empty($expedition_response['courierName'])) {
             // Public tracking endpoint format
             $courier_name = $expedition_response['courierName'];
-            if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+            if (Livraria_API_Client::is_dev_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
                 error_log('Livraria Debug: Courier name from expedition_response[courierName]: ' . $courier_name);
             }
         } elseif (!empty($selected_quote['courierName'])) {
             // Fallback to selected quote (for auto-create flow)
             $courier_name = $selected_quote['courierName'];
-            if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+            if (Livraria_API_Client::is_dev_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
                 error_log('Livraria Debug: Courier name from selected_quote[courierName]: ' . $courier_name);
             }
         } else {
-            if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+            if (Livraria_API_Client::is_dev_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
                 error_log('Livraria Debug: Courier name not found in any expected location!');
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
                 error_log('Livraria Debug: expedition_response keys: ' . implode(', ', array_keys($expedition_response)));
             }
         }
 
-        if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+        if (Livraria_API_Client::is_dev_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
             error_log('Livraria Debug: Saving courier name: "' . $courier_name . '" for order ' . $order_id);
         }
         update_post_meta($order_id, '_courier_name', $courier_name);
@@ -1216,8 +1216,8 @@ class Livraria_Order_Handler {
         // Fetch available couriers from API
         $available_couriers = $this->api_client->get_available_couriers();
         if (!$available_couriers || empty($available_couriers)) {
-            if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+            if (Livraria_API_Client::is_dev_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
                 error_log('Livraria Debug: No couriers available from API');
             }
             return array();
@@ -1231,8 +1231,8 @@ class Livraria_Order_Handler {
             }
         }
         
-        if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only when WP_DEBUG is enabled
+        if (Livraria_API_Client::is_dev_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
             error_log('Livraria Debug: Found courier IDs: ' . print_r($courier_ids, true));
         }
         

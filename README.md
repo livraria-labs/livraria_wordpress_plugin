@@ -29,8 +29,7 @@ The source code is also included directly in the deployed plugin - all PHP files
 
 Navigate to **Settings > Livraria** to configure:
 
-- **API Base URL**: Your courier API base URL (e.g., `https://api.yourservice.com`)
-- **API Token**: Your authentication token for the courier API
+- **Login**: your Livraria account email and password. The plugin connects only to Livraria API hosts (default `https://www.api.livraria.ro/`); the settings page shows the configured address read-only (it can be changed only in development mode, see DEVELOPMENT.md)
 - **Auto-create expeditions**: Enable/disable automatic expedition creation on order completion
 - **Default Sender Information**: Configure your company's shipping details
 
@@ -161,10 +160,12 @@ API errors will be logged to `/wp-content/debug.log`.
 
 ## Security
 
-- All API requests include authentication headers
-- AJAX requests are protected with WordPress nonces
+- All API requests include authentication headers and verify the API's TLS certificate
+- AJAX requests are protected with WordPress nonces and a capability check: `manage_options` for settings, login, logout and the connection tests; `edit_shop_orders` for order actions
 - Settings are properly escaped and sanitized
 - Only administrators can configure plugin settings
+- With "Remember me" the password is stored encrypted (never without PHP OpenSSL) and is never shown on the settings page
+- Debug logging (development mode only) masks passwords and tokens
 
 ## Compatibility
 

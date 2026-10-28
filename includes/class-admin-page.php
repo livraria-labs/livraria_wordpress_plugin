@@ -48,14 +48,29 @@ class Livraria_Admin_Page {
                 <h2 style="margin: 0 0 12px 0; font-size: 16px; color: #1d2327;">Login to Livraria</h2>
                 <p class="description" style="margin-bottom: 15px;">Enter your API credentials to connect to Livraria.</p>
                 <table class="form-table">
-                    <?php if (LivrariaPlugin::is_development_mode()): ?>
+                    <?php if (Livraria_API_Client::is_dev_mode()): ?>
                     <tr>
                         <th scope="row">API Base URL</th>
-                        <td><input type="url" id="login-api-url" name="courier_api_base_url" value="<?php echo esc_attr(get_option('courier_api_base_url')); ?>" class="regular-text" /></td>
+                        <td>
+                            <input type="url" id="login-api-url" name="courier_api_base_url" value="<?php echo esc_attr(get_option('courier_api_base_url')); ?>" class="regular-text" />
+                            <p class="description">Development mode (WP_DEBUG and LIVRARIA_DEV_MODE in wp-config.php): saved only after a successful login.</p>
+                        </td>
                     </tr>
                     <?php else: ?>
-                    <!-- API Base URL is hidden in production and set to https://api.livraria.ro/ -->
-                    <input type="hidden" id="login-api-url" name="courier_api_base_url" value="https://api.livraria.ro/" />
+                    <?php
+                    // Outside development mode the address is shown, not editable
+                    $configured_api_url = Livraria_API_Client::resolve_base_url();
+                    $api_url_allowed = Livraria_API_Client::is_allowed_api_url($configured_api_url);
+                    ?>
+                    <tr>
+                        <th scope="row">API address</th>
+                        <td>
+                            <code id="livraria-api-url-display"><?php echo esc_html($configured_api_url); ?></code>
+                            <?php if (!$api_url_allowed): ?>
+                            <p class="description" style="color: #d63638;">Not a Livraria API host: all API calls are stopped. Logging in connects to <?php echo esc_html(Livraria_API_Client::PRODUCTION_API_URL); ?>.</p>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
                     <?php endif; ?>
                     <tr>
                         <th scope="row">Username</th>
@@ -70,18 +85,24 @@ class Livraria_Admin_Page {
                     <tr>
                         <th scope="row">Password</th>
                         <td>
-                            <?php 
-                            $password = $remember_me ? $this->api_client->get_encrypted_option('courier_api_password', '') : '';
+                            <?php
+                            // The stored password is never written into the page: only whether one exists
+                            $has_stored_password = $remember_me && $this->api_client->get_encrypted_option('courier_api_password', '') !== '';
                             ?>
-                            <input type="password" id="login-password" name="courier_api_password" value="<?php echo esc_attr($password); ?>" class="regular-text" />
+                            <input type="password" id="login-password" name="courier_api_password" value="" autocomplete="new-password" class="regular-text"<?php if ($has_stored_password): ?> data-stored="1" placeholder="Stored (leave empty to use it)"<?php endif; ?> />
                         </td>
                     </tr>
                     <tr>
                         <th scope="row">Remember me</th>
                         <td>
+                            <?php if (Livraria_API_Client::can_encrypt()): ?>
                             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                                 <input type="checkbox" id="remember-me" name="remember_me" value="1" <?php checked(true, $remember_me); ?> />
                             </label>
+                            <?php else: ?>
+                            <input type="checkbox" id="remember-me" name="remember_me" value="1" disabled="disabled" />
+                            <p class="description" style="color: #d63638;">Unavailable: this server's PHP has no OpenSSL, so the plugin cannot encrypt your password and will not store it. You will log in again when the API session ends (about an hour). Ask your host to enable the PHP OpenSSL extension.</p>
+                            <?php endif; ?>
                         </td>
                     </tr>
                 </table>
@@ -127,18 +148,12 @@ class Livraria_Admin_Page {
                                 </tr>
                                 <tr>
                                     <td style="padding: 6px 0; font-size: 12px; color: #646970; width: 120px; vertical-align: top;">Password:</td>
-                                    <td style="padding: 6px 0; font-size: 12px; color: #1d2327; font-family: monospace; display: flex; align-items: center; gap: 8px;">
-                                        <?php 
-                                        $stored_password = $remember_me ? $this->api_client->get_encrypted_option('courier_api_password', '') : '';
-                                        ?>
-                                        <span id="livraria-password-display"><?php echo !empty($stored_password) ? '••••••••' : 'Not set'; ?></span>
-                                        <?php if (!empty($stored_password)): ?>
-                                        <button type="button" id="livraria-copy-password" style="background: #2271b1; border: 1px solid #2271b1; border-radius: 3px; padding: 3px 6px; cursor: pointer; display: flex; align-items: center; gap: 3px; font-size: 10px; color: #ffffff; transition: all 0.2s; line-height: 1.3;" onmouseover="this.style.background='#135e96'; this.style.borderColor='#135e96'; this.style.color='#ffffff'" onmouseout="this.style.background='#2271b1'; this.style.borderColor='#2271b1'; this.style.color='#ffffff'" title="Copy password">
-                                            <span style="font-size: 10px; color: #ffffff;">📋</span>
-                                            <span style="color: #ffffff;">Copy</span>
-                                        </button>
-                                        <span id="livraria-password-value" style="display: none;" data-api-password="<?php echo esc_attr($stored_password); ?>"><?php echo esc_attr($stored_password); ?></span>
-                                        <?php endif; ?>
+                                    <?php
+                                    // Only whether a password is stored; its value never reaches the page
+                                    $password_stored = $remember_me && $this->api_client->get_encrypted_option('courier_api_password', '') !== '';
+                                    ?>
+                                    <td style="padding: 6px 0; font-size: 12px; color: #1d2327; font-family: monospace;" data-password-stored="<?php echo $password_stored ? '1' : '0'; ?>">
+                                        <span id="livraria-password-display"><?php echo $password_stored ? 'Stored (encrypted)' : 'Not stored'; ?></span>
                                     </td>
                                 </tr>
                             </table>
@@ -203,6 +218,7 @@ class Livraria_Admin_Page {
         $sender_profile = $this->api_client->get_sender_profile();
         ?>
         <div id="user-info-section" style="margin-top: 30px;">
+            <p class="description" style="margin: 0 0 8px 0;">API address: <code id="livraria-api-url-display"><?php echo esc_html(Livraria_API_Client::resolve_base_url()); ?></code></p>
             <?php $this->render_user_profile($user_info, $sender_profile); ?>
         </div>
         <?php

@@ -14,7 +14,7 @@ class API_Client_Test extends Livraria_TestCase {
     
     public function setUp(): void {
         parent::setUp();
-        $this->api_client = new Livraria_API_Client('http://test-api.example.com');
+        $this->api_client = new Livraria_API_Client('https://www.api.livraria.ro');
     }
     
     /**
@@ -70,9 +70,14 @@ class API_Client_Test extends Livraria_TestCase {
      * Note: This test requires the api_request method to be public or we need to test through public methods
      */
     public function test_token_refresh_on_expiry() {
-        // Set expired token
+        // Set expired token. The client re-logs in only with credentials
+        // stored by "Remember me" (ensure_valid_token), so store them.
         update_option('livraria_api_token', 'old-token');
         update_option('livraria_token_expires_at', time() - 100);
+        update_option('livraria_remember_credentials', true);
+        $this->api_client->set_encrypted_option('courier_api_username', 'merchant@example.com');
+        $this->api_client->set_encrypted_option('courier_api_password', 'invented-password-6');
+        $this->api_client = new Livraria_API_Client('https://www.api.livraria.ro');
         
         // Mock login response
         $mock_login = $this->create_mock_response(200, array(
@@ -96,6 +101,7 @@ class API_Client_Test extends Livraria_TestCase {
         $this->api_client->get_user_info();
         
         // Token should be refreshed
+        $this->assertTrue($login_called);
         $this->assertEquals('new-token-456', get_option('livraria_api_token'));
     }
     
@@ -108,7 +114,7 @@ class API_Client_Test extends Livraria_TestCase {
         update_option('livraria_token_expires_at', time() + 3600);
         
         // Recreate client to pick up the token
-        $this->api_client = new Livraria_API_Client('http://test-api.example.com');
+        $this->api_client = new Livraria_API_Client('https://www.api.livraria.ro');
         
         $mock_response = $this->create_mock_response(200, array(
             'id' => 1,
@@ -139,7 +145,7 @@ class API_Client_Test extends Livraria_TestCase {
         update_option('livraria_token_expires_at', time() + 3600);
         
         // Recreate client to pick up the token
-        $this->api_client = new Livraria_API_Client('http://test-api.example.com');
+        $this->api_client = new Livraria_API_Client('https://www.api.livraria.ro');
         
         $mock_response = $this->create_mock_response(200, array(
             array(
@@ -265,7 +271,7 @@ class API_Client_Test extends Livraria_TestCase {
     public function test_every_request_sends_client_header_and_keeps_user_agent() {
         update_option('livraria_api_token', 'valid-token');
         update_option('livraria_token_expires_at', time() + 3600);
-        $this->api_client = new Livraria_API_Client('http://test-api.example.com');
+        $this->api_client = new Livraria_API_Client('https://www.api.livraria.ro');
 
         $captured = array();
         $this->capture_requests($captured);
@@ -282,6 +288,73 @@ class API_Client_Test extends Livraria_TestCase {
             $this->assertSame($expected, $request['args']['headers']['X-Livraria-Client'] ?? null, $request['url']);
             $this->assertSame('WordPress-Livraria-Plugin/1.0', $request['args']['user-agent'], $request['url']);
         }
+    }
+
+    public function test_every_request_verifies_tls_outside_dev_mode() {
+        // The unit-test bootstrap defines neither WP_DEBUG nor
+        // LIVRARIA_ALLOW_INSECURE_TLS: this is a production install.
+        $this->assertFalse(Livraria_API_Client::allow_insecure_tls());
+
+        update_option('livraria_api_token', 'valid-token');
+        update_option('livraria_token_expires_at', time() + 3600);
+        $this->api_client = new Livraria_API_Client('https://www.api.livraria.ro');
+
+        $captured = array();
+        $this->capture_requests($captured);
+
+        $this->api_client->get_user_info();                          // api_request
+        $this->api_client->download_awb_pdf('AWB0000000001');        // api_request_binary
+        $this->api_client->test_connectivity();                      // connectivity check
+        $this->api_client->get_available_couriers();                 // raw_api_request
+        $this->api_client->login('test_user', 'test_pass');          // raw_api_request (login)
+
+        $this->assertCount(5, $captured);
+        foreach ($captured as $request) {
+            $this->assertArrayHasKey('sslverify', $request['args'], $request['url']);
+            $this->assertTrue($request['args']['sslverify'], $request['url']);
+        }
+    }
+
+    public function test_nothing_is_logged_outside_dev_mode() {
+        $this->assertFalse(Livraria_API_Client::is_dev_mode());
+        $this->start_log_capture();
+
+        $responses = array(
+            '/auth/login' => $this->create_mock_response(200, array('accessToken' => 'invented-token-2', 'refreshToken' => 'invented-refresh-2', 'expiresIn' => 3600)),
+            '/public/awb/quotes' => $this->create_mock_response(201, array('id' => 'qr-0002')),
+            '/expedition' => array('response' => array('code' => 500, 'message' => 'Error'), 'body' => 'raw body echoing invented-password-3', 'headers' => array()),
+        );
+        add_filter('pre_http_request', function($preempt, $args, $url) use ($responses) {
+            foreach ($responses as $path => $response) {
+                if (strpos($url, $path) !== false) {
+                    return $response;
+                }
+            }
+            return new WP_Error('mocked', 'Stopped by test');
+        }, 10, 3);
+
+        $this->assertTrue($this->api_client->login('merchant@example.com', 'invented-password-3')['success']);
+        $this->api_client->create_quote_request(array('recipient' => array('name' => 'Ana Exemplu', 'phone' => '0700000456')));
+        $this->api_client->create_expedition(array('quoteRequestId' => 'qr-0002'));
+        $this->api_client->download_awb_pdf('AWB0000000002');
+
+        $this->assertSame('', $this->captured_log());
+    }
+
+    public function test_redact_masks_passwords_and_tokens_at_any_depth() {
+        $redacted = Livraria_API_Client::redact(array(
+            'email' => 'merchant@example.com',
+            'password' => 'invented-password-4',
+            'data' => array('accessToken' => 'a', 'refreshToken' => 'r', 'expiresIn' => 3600),
+        ));
+        $this->assertSame('***', $redacted['password']);
+        $this->assertSame('***', $redacted['data']['accessToken']);
+        $this->assertSame('***', $redacted['data']['refreshToken']);
+        $this->assertSame(3600, $redacted['data']['expiresIn']);
+
+        $from_json = Livraria_API_Client::redact('{"success":true,"data":{"accessToken":"a"}}');
+        $this->assertSame('***', $from_json['data']['accessToken']);
+        $this->assertSame('[9 bytes]', Livraria_API_Client::redact('not json!'));
     }
 
     public function tearDown(): void {

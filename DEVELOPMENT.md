@@ -279,6 +279,29 @@ define('WP_DEBUG_DISPLAY', false);
 
 **Logs go to**: `/wp-content/debug.log`
 
+### Development mode
+
+Outside development mode the plugin talks only to `https://` URLs on the
+Livraria API hosts in `Livraria_API_Client::ALLOWED_API_HOSTS` (production and
+uat; a fresh install gets `https://www.api.livraria.ro/`). The settings page
+shows the configured address read-only. If the stored `courier_api_base_url` is
+on any other host, the plugin does not change it: it refuses every API call,
+drops the API session, shows a wp-admin notice and logs one line, until an
+administrator logs in again. Development mode needs **both** of these in
+`wp-config.php` (any host, http included):
+
+```php
+define('WP_DEBUG', true);
+define('LIVRARIA_DEV_MODE', true);   // API URL field, debug log lines (redacted)
+```
+
+TLS certificates are verified even in development mode. For a local API with a
+self-signed certificate, add (development only, never on a shop):
+
+```php
+define('LIVRARIA_ALLOW_INSECURE_TLS', true);   // has no effect without WP_DEBUG
+```
+
 ### Your Plugin's Debug Logging
 
 The plugin already logs important events:

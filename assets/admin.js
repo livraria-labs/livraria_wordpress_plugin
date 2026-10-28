@@ -8,31 +8,26 @@ jQuery(document).ready(function($) {
         var originalText = btn.text();
         var resultDiv = $('#api-test-result-connectivity');
         
-        // Get API URL from form input or from debug modal data attribute
-        var apiUrl = $('input[name="courier_api_base_url"]').val();
-        if (!apiUrl) {
-            // Try reading from debug modal data attribute
-            apiUrl = $('#livraria-debug-modal').find('td[data-api-url]').attr('data-api-url');
-        }
-        
-        if (!apiUrl || apiUrl === 'Not set') {
-            resultDiv.html('<div class="notice notice-error"><p>Please enter API URL before testing connectivity.</p></div>');
-            return;
-        }
+        // The URL field exists only in development mode; otherwise the server
+        // uses the production API and ignores api_url.
+        var apiUrl = $('#login-api-url').val() || '';
+        var shownUrl = apiUrl || $('#livraria-debug-modal').find('td[data-api-url]').attr('data-api-url') || 'the Livraria API';
         
         btn.text('Testing...').prop('disabled', true);
-        resultDiv.html('<div class="notice notice-info"><p>Testing network connectivity to ' + apiUrl + '...</p></div>');
+        resultDiv.html('<div class="notice notice-info"><p>Testing network connectivity to ' + $('<span>').text(shownUrl).html() + '...</p></div>');
         
-        console.log('Livraria Debug: Testing connectivity to:', apiUrl);
+        var requestData = {
+            action: 'livraria_test_connectivity',
+            nonce: livrariaAdmin.nonce
+        };
+        if (apiUrl) {
+            requestData.api_url = apiUrl;
+        }
         
         $.ajax({
             url: ajaxurl,
             type: 'POST',
-            data: {
-                action: 'livraria_test_connectivity',
-                api_url: apiUrl,
-                nonce: livrariaAdmin.nonce
-            },
+            data: requestData,
             success: function(response) {
                 console.log('Livraria Debug: Connectivity test response:', response);
                 
@@ -61,29 +56,26 @@ jQuery(document).ready(function($) {
         var resultDiv = $('#api-test-result-auth');
         
         // Get values from form inputs or from debug modal data attributes
-        var apiUrl = $('input[name="courier_api_base_url"]').val();
+        // The URL field exists only in development mode; otherwise the server
+        // uses the production API and ignores api_url.
+        var apiUrl = $('#login-api-url').val() || '';
         var username = $('input[name="courier_api_username"]').val();
         var password = $('input[name="courier_api_password"]').val();
         
         // If not found in form inputs, try reading from debug modal
-        if (!apiUrl) {
-            apiUrl = $('#livraria-debug-modal').find('td[data-api-url]').attr('data-api-url');
-        }
         if (!username) {
             username = $('#livraria-debug-modal').find('td[data-api-username]').attr('data-api-username');
         }
-        if (!password) {
-            var passwordElement = $('#livraria-debug-modal').find('span[data-api-password]');
-            if (passwordElement.length) {
-                password = passwordElement.attr('data-api-password');
-            }
-        }
+        // The stored password is not in the page; the server uses it when asked
+        var useStored = !password && (
+            $('#livraria-debug-modal').find('td[data-password-stored]').attr('data-password-stored') === '1' ||
+            $('#login-password').attr('data-stored') === '1'
+        );
         
         // Validate values (check for empty strings, null, undefined, or 'Not set')
-        if (!apiUrl || apiUrl === '' || apiUrl === 'Not set' || 
-            !username || username === '' || username === 'Not set' || 
-            !password || password === '' || password === 'Not set') {
-            resultDiv.html('<div class="notice notice-error"><p>Please enter API URL, Username, and Password before testing.</p></div>');
+        if (!username || username === '' || username === 'Not set' || 
+            (!password && !useStored)) {
+            resultDiv.html('<div class="notice notice-error"><p>Please enter Username and Password before testing.</p></div>');
             return;
         }
         
@@ -93,19 +85,23 @@ jQuery(document).ready(function($) {
         $('#step-login .status').html('<span style="color: orange;">⏳ In progress</span>');
         $('#step-api .status').html('<span style="color: #ccc;">⏸ Waiting</span>');
         
-        console.log('Livraria Debug: Starting API test with URL:', apiUrl);
-        console.log('Livraria Debug: Username:', username);
+        var requestData = {
+            action: 'livraria_test_courier_api_connection',
+            username: username,
+            password: useStored ? '' : password,
+            nonce: livrariaAdmin.nonce
+        };
+        if (useStored) {
+            requestData.use_stored_credentials = '1';
+        }
+        if (apiUrl) {
+            requestData.api_url = apiUrl;
+        }
         
         $.ajax({
             url: ajaxurl,
             type: 'POST',
-            data: {
-                action: 'livraria_test_courier_api_connection',
-                api_url: apiUrl,
-                username: username,
-                password: password,
-                nonce: livrariaAdmin.nonce
-            },
+            data: requestData,
             success: function(response) {
                 console.log('Livraria Debug: AJAX response received:', response);
                 
@@ -422,7 +418,7 @@ jQuery(document).ready(function($) {
     });
 });
 
-// Login/logout, debug modal, copy password, auto-create checkbox handlers
+// Login/logout, debug modal, auto-create checkbox handlers
 // (moved from class-admin-page.php inline script — data provided via wp_localize_script)
 jQuery(document).ready(function($) {
     $('#livraria-logout-btn').on('click', function() {
@@ -451,11 +447,15 @@ jQuery(document).ready(function($) {
     });
 
     $('#livraria-login-btn').on('click', function() {
-        var apiUrl = $('#login-api-url').val() || $('input[name="courier_api_base_url"]').val() || 'https://api.livraria.ro/';
+        // Only in development mode is there a URL field; otherwise the server
+        // uses the production API.
+        var apiUrl = $('#login-api-url').val() || '';
         var username = $('#login-username').val() || $('input[name="courier_api_username"]').val();
         var password = $('#login-password').val() || $('input[name="courier_api_password"]').val();
         var rememberMe = $('#remember-me').is(':checked') ? '1' : '0';
-        if (!username || !password) {
+        // An empty password with a stored one: the server uses the stored one
+        var hasStored = $('#login-password').attr('data-stored') === '1';
+        if (!username || (!password && !hasStored)) {
             alert('Please fill in Username and Password before logging in.');
             return;
         }
@@ -464,16 +464,25 @@ jQuery(document).ready(function($) {
         $.ajax({
             url: ajaxurl,
             type: 'POST',
-            data: {
-                action: 'livraria_login',
-                api_url: apiUrl,
-                username: username,
-                password: password,
-                remember_me: rememberMe,
-                nonce: livrariaAdmin.nonce
-            },
+            data: (function() {
+                var loginData = {
+                    action: 'livraria_login',
+                    username: username,
+                    password: password,
+                    remember_me: rememberMe,
+                    nonce: livrariaAdmin.nonce
+                };
+                if (apiUrl) {
+                    loginData.api_url = apiUrl;
+                }
+                return loginData;
+            })(),
             success: function(response) {
                 if (response.success) {
+                    // e.g. credentials not stored because they cannot be encrypted
+                    if (response.data && response.data.message && response.data.message !== 'Login successful') {
+                        alert(response.data.message);
+                    }
                     location.reload();
                 } else {
                     alert('Login failed: ' + (response.data || 'Unknown error'));
@@ -499,38 +508,6 @@ jQuery(document).ready(function($) {
         if ($(e.target).attr('id') === 'livraria-debug-modal') {
             $(this).css('display', 'none');
             $('body').css('overflow', 'auto');
-        }
-    });
-
-    $('#livraria-copy-password').on('click', function() {
-        var passwordValue = $('#livraria-password-value').text();
-        if (!passwordValue) { return; }
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(passwordValue).then(function() {
-                var btn = $('#livraria-copy-password');
-                var originalHtml = btn.html();
-                btn.html('<span style="font-size: 12px;">✓</span><span>Copied!</span>').css({ background: '#d4edda', 'border-color': '#c3e6cb', color: '#155724' });
-                setTimeout(function() { btn.html(originalHtml).css({ background: '', 'border-color': '', color: '' }); }, 2000);
-            }).catch(function(err) { alert('Failed to copy password: ' + err); });
-        } else {
-            var textArea = document.createElement('textarea');
-            textArea.value = passwordValue;
-            textArea.style.position = 'fixed';
-            textArea.style.left = '-999999px';
-            document.body.appendChild(textArea);
-            textArea.focus();
-            textArea.select();
-            try {
-                if (document.execCommand('copy')) {
-                    var btn = $('#livraria-copy-password');
-                    var originalHtml = btn.html();
-                    btn.html('<span style="font-size: 12px;">✓</span><span>Copied!</span>').css({ background: '#d4edda', 'border-color': '#c3e6cb', color: '#155724' });
-                    setTimeout(function() { btn.html(originalHtml).css({ background: '', 'border-color': '', color: '' }); }, 2000);
-                } else {
-                    alert('Failed to copy password. Please select and copy manually.');
-                }
-            } catch (err) { alert('Failed to copy password: ' + err); }
-            document.body.removeChild(textArea);
         }
     });
 
