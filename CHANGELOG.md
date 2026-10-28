@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2026-10-28
+
+### Security
+- TLS certificates are verified on every request to the Livraria API, including
+  the login. Only a development install (`WP_DEBUG` plus `LIVRARIA_ALLOW_INSECURE_TLS`
+  defined `true` in `wp-config.php`) can turn verification off.
+- Login, logout, the connection tests and settings changes require the
+  `manage_options` capability; the order meta box actions require
+  `edit_shop_orders`. Before, the nonce printed on every wp-admin page was enough.
+- The API base URL is fixed to `https://api.livraria.ro/` outside development
+  mode (`WP_DEBUG` plus `LIVRARIA_DEV_MODE` defined `true`): a posted URL is
+  ignored, the settings page has no URL field, and login saves the URL only
+  after it succeeds. On load, a stored URL that points anywhere else is reset to
+  the production host, the API session is dropped and one line is logged with
+  the host it replaced.
+- The stored password is never written into the settings page; the page shows
+  only whether one is stored, and an empty password field means the stored one,
+  used server side. The "Copy password" button is removed.
+- Debug logging runs only in development mode and masks passwords and tokens.
+  Request bodies, the login request and response, and order, recipient and
+  sender profile data are no longer logged on shops; error lines carry the HTTP
+  status and the API's message, never a body.
+- Without PHP OpenSSL the password is no longer stored in clear text: nothing is
+  stored and the settings page says why "Remember me" is unavailable.
+
+### Changed
+- Development mode no longer turns on from `WP_DEBUG` alone, from the site
+  address (localhost, .local, .dev, staging) or from a `dev-scripts/` folder.
+
 ## [1.0.3] - 2026-10-28
 
 ### Added
