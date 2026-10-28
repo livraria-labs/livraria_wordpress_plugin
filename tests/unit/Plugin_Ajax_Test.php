@@ -163,6 +163,27 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
         }
     }
 
+    public function test_stored_credentials_are_used_server_side_against_production() {
+        $this->as_user(array('read', 'manage_options'));
+        $client = new Livraria_API_Client();
+        update_option('livraria_remember_credentials', true);
+        $client->set_encrypted_option('courier_api_username', 'merchant@example.com');
+        $client->set_encrypted_option('courier_api_password', 'invented-password-2');
+        $this->plugin = new LivrariaPlugin();
+
+        $_POST = array('api_url' => 'https://collector.example.net/', 'username' => 'merchant@example.com', 'password' => '', 'use_stored_credentials' => '1');
+        $this->call_ajax('ajax_test_api_connection');
+        $_POST = array('username' => 'merchant@example.com', 'password' => '', 'remember_me' => '1');
+        $this->call_ajax('ajax_login');
+
+        $this->assertCount(2, $this->captured);
+        foreach ($this->captured as $request) {
+            $this->assertSame('https://api.livraria.ro/auth/login', $request['url']);
+            $body = json_decode($request['args']['body'], true);
+            $this->assertSame('invented-password-2', $body['password']);
+        }
+    }
+
     public function test_load_resets_a_foreign_api_url_and_logs_one_line() {
         update_option('courier_api_base_url', 'https://collector.example.net/api/');
         update_option('livraria_api_token', 'token-from-the-other-host');

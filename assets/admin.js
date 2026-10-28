@@ -66,16 +66,15 @@ jQuery(document).ready(function($) {
         if (!username) {
             username = $('#livraria-debug-modal').find('td[data-api-username]').attr('data-api-username');
         }
-        if (!password) {
-            var passwordElement = $('#livraria-debug-modal').find('span[data-api-password]');
-            if (passwordElement.length) {
-                password = passwordElement.attr('data-api-password');
-            }
-        }
+        // The stored password is not in the page; the server uses it when asked
+        var useStored = !password && (
+            $('#livraria-debug-modal').find('td[data-password-stored]').attr('data-password-stored') === '1' ||
+            $('#login-password').attr('data-stored') === '1'
+        );
         
         // Validate values (check for empty strings, null, undefined, or 'Not set')
         if (!username || username === '' || username === 'Not set' || 
-            !password || password === '' || password === 'Not set') {
+            (!password && !useStored)) {
             resultDiv.html('<div class="notice notice-error"><p>Please enter Username and Password before testing.</p></div>');
             return;
         }
@@ -89,9 +88,12 @@ jQuery(document).ready(function($) {
         var requestData = {
             action: 'livraria_test_courier_api_connection',
             username: username,
-            password: password,
+            password: useStored ? '' : password,
             nonce: livrariaAdmin.nonce
         };
+        if (useStored) {
+            requestData.use_stored_credentials = '1';
+        }
         if (apiUrl) {
             requestData.api_url = apiUrl;
         }
@@ -416,7 +418,7 @@ jQuery(document).ready(function($) {
     });
 });
 
-// Login/logout, debug modal, copy password, auto-create checkbox handlers
+// Login/logout, debug modal, auto-create checkbox handlers
 // (moved from class-admin-page.php inline script — data provided via wp_localize_script)
 jQuery(document).ready(function($) {
     $('#livraria-logout-btn').on('click', function() {
@@ -451,7 +453,9 @@ jQuery(document).ready(function($) {
         var username = $('#login-username').val() || $('input[name="courier_api_username"]').val();
         var password = $('#login-password').val() || $('input[name="courier_api_password"]').val();
         var rememberMe = $('#remember-me').is(':checked') ? '1' : '0';
-        if (!username || !password) {
+        // An empty password with a stored one: the server uses the stored one
+        var hasStored = $('#login-password').attr('data-stored') === '1';
+        if (!username || (!password && !hasStored)) {
             alert('Please fill in Username and Password before logging in.');
             return;
         }
@@ -500,38 +504,6 @@ jQuery(document).ready(function($) {
         if ($(e.target).attr('id') === 'livraria-debug-modal') {
             $(this).css('display', 'none');
             $('body').css('overflow', 'auto');
-        }
-    });
-
-    $('#livraria-copy-password').on('click', function() {
-        var passwordValue = $('#livraria-password-value').text();
-        if (!passwordValue) { return; }
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(passwordValue).then(function() {
-                var btn = $('#livraria-copy-password');
-                var originalHtml = btn.html();
-                btn.html('<span style="font-size: 12px;">✓</span><span>Copied!</span>').css({ background: '#d4edda', 'border-color': '#c3e6cb', color: '#155724' });
-                setTimeout(function() { btn.html(originalHtml).css({ background: '', 'border-color': '', color: '' }); }, 2000);
-            }).catch(function(err) { alert('Failed to copy password: ' + err); });
-        } else {
-            var textArea = document.createElement('textarea');
-            textArea.value = passwordValue;
-            textArea.style.position = 'fixed';
-            textArea.style.left = '-999999px';
-            document.body.appendChild(textArea);
-            textArea.focus();
-            textArea.select();
-            try {
-                if (document.execCommand('copy')) {
-                    var btn = $('#livraria-copy-password');
-                    var originalHtml = btn.html();
-                    btn.html('<span style="font-size: 12px;">✓</span><span>Copied!</span>').css({ background: '#d4edda', 'border-color': '#c3e6cb', color: '#155724' });
-                    setTimeout(function() { btn.html(originalHtml).css({ background: '', 'border-color': '', color: '' }); }, 2000);
-                } else {
-                    alert('Failed to copy password. Please select and copy manually.');
-                }
-            } catch (err) { alert('Failed to copy password: ' + err); }
-            document.body.removeChild(textArea);
         }
     });
 

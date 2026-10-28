@@ -71,10 +71,11 @@ class Livraria_Admin_Page {
                     <tr>
                         <th scope="row">Password</th>
                         <td>
-                            <?php 
-                            $password = $remember_me ? $this->api_client->get_encrypted_option('courier_api_password', '') : '';
+                            <?php
+                            // The stored password is never written into the page: only whether one exists
+                            $has_stored_password = $remember_me && $this->api_client->get_encrypted_option('courier_api_password', '') !== '';
                             ?>
-                            <input type="password" id="login-password" name="courier_api_password" value="<?php echo esc_attr($password); ?>" class="regular-text" />
+                            <input type="password" id="login-password" name="courier_api_password" value="" autocomplete="new-password" class="regular-text"<?php if ($has_stored_password): ?> data-stored="1" placeholder="Stored (leave empty to use it)"<?php endif; ?> />
                         </td>
                     </tr>
                     <tr>
@@ -128,18 +129,12 @@ class Livraria_Admin_Page {
                                 </tr>
                                 <tr>
                                     <td style="padding: 6px 0; font-size: 12px; color: #646970; width: 120px; vertical-align: top;">Password:</td>
-                                    <td style="padding: 6px 0; font-size: 12px; color: #1d2327; font-family: monospace; display: flex; align-items: center; gap: 8px;">
-                                        <?php 
-                                        $stored_password = $remember_me ? $this->api_client->get_encrypted_option('courier_api_password', '') : '';
-                                        ?>
-                                        <span id="livraria-password-display"><?php echo !empty($stored_password) ? '••••••••' : 'Not set'; ?></span>
-                                        <?php if (!empty($stored_password)): ?>
-                                        <button type="button" id="livraria-copy-password" style="background: #2271b1; border: 1px solid #2271b1; border-radius: 3px; padding: 3px 6px; cursor: pointer; display: flex; align-items: center; gap: 3px; font-size: 10px; color: #ffffff; transition: all 0.2s; line-height: 1.3;" onmouseover="this.style.background='#135e96'; this.style.borderColor='#135e96'; this.style.color='#ffffff'" onmouseout="this.style.background='#2271b1'; this.style.borderColor='#2271b1'; this.style.color='#ffffff'" title="Copy password">
-                                            <span style="font-size: 10px; color: #ffffff;">📋</span>
-                                            <span style="color: #ffffff;">Copy</span>
-                                        </button>
-                                        <span id="livraria-password-value" style="display: none;" data-api-password="<?php echo esc_attr($stored_password); ?>"><?php echo esc_attr($stored_password); ?></span>
-                                        <?php endif; ?>
+                                    <?php
+                                    // Only whether a password is stored; its value never reaches the page
+                                    $password_stored = $remember_me && $this->api_client->get_encrypted_option('courier_api_password', '') !== '';
+                                    ?>
+                                    <td style="padding: 6px 0; font-size: 12px; color: #1d2327; font-family: monospace;" data-password-stored="<?php echo $password_stored ? '1' : '0'; ?>">
+                                        <span id="livraria-password-display"><?php echo $password_stored ? 'Stored (encrypted)' : 'Not stored'; ?></span>
                                     </td>
                                 </tr>
                             </table>

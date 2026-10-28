@@ -951,14 +951,23 @@ class LivrariaPlugin {
         check_ajax_referer('livraria_admin_nonce', 'nonce');
         $this->require_capability('manage_options');
         
-        if (!isset($_POST['username']) || !isset($_POST['password'])) {
+        if (isset($_POST['use_stored_credentials']) && $_POST['use_stored_credentials'] === '1') {
+            // The settings page no longer holds the stored password: read it here
+            $stored = $this->stored_credentials();
+            if ($stored === null) {
+                wp_send_json_error('No stored credentials. Enter Username and Password.');
+                return;
+            }
+            $username = $stored['username'];
+            $password = $stored['password'];
+        } elseif (!isset($_POST['username']) || !isset($_POST['password'])) {
             wp_send_json_error('Missing required parameters');
             return;
+        } else {
+            // Get test credentials from POST data
+            $username = sanitize_text_field(wp_unslash($_POST['username']));
+            $password = sanitize_text_field(wp_unslash($_POST['password']));
         }
-        
-        // Get test credentials from POST data
-        $username = sanitize_text_field(wp_unslash($_POST['username']));
-        $password = sanitize_text_field(wp_unslash($_POST['password']));
         
         // Create temporary API client and test login (production host
         // unless in development mode)
@@ -1002,6 +1011,23 @@ class LivrariaPlugin {
     }
 
     /**
+     * The credentials saved with "Remember me", decrypted, or null
+     *
+     * @return array|null array('username' => ..., 'password' => ...)
+     */
+    private function stored_credentials() {
+        if (!get_option('livraria_remember_credentials', false)) {
+            return null;
+        }
+        $username = $this->api_client->get_encrypted_option('courier_api_username', '');
+        $password = $this->api_client->get_encrypted_option('courier_api_password', '');
+        if ($username === '' || $password === '') {
+            return null;
+        }
+        return array('username' => $username, 'password' => $password);
+    }
+
+    /**
      * AJAX handler for logout
      */
     public function ajax_logout() {
@@ -1029,6 +1055,15 @@ class LivrariaPlugin {
         
         $username = sanitize_text_field(wp_unslash($_POST['username']));
         $password = sanitize_text_field(wp_unslash($_POST['password']));
+        
+        // The login form shows only that a password is stored. Left empty,
+        // it means the stored password, for the same username.
+        if ($password === '') {
+            $stored = $this->stored_credentials();
+            if ($stored !== null && $stored['username'] === $username) {
+                $password = $stored['password'];
+            }
+        }
         
         if (empty($username) || empty($password)) {
             wp_send_json_error('Username and password are required');
