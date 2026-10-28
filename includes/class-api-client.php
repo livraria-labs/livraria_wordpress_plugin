@@ -97,21 +97,13 @@ class Livraria_API_Client {
      * @return array Result with success status and message
      */
     public function login($username, $password) {
-        // Debug: Log the attempt
-        $this->log_debug('Login attempt for: ' . $username . ' to URL: ' . $this->api_base_url);
+        // Debug: Log the attempt (never the username, password or response)
+        $this->log_debug('Login attempt to URL: ' . $this->api_base_url);
         
         $response = $this->raw_api_request('POST', '/auth/login', array(
             'email' => $username,
             'password' => $password
         ));
-        
-        // Debug: Log response details
-        $this->log_debug('Login response received', $response);
-        
-        // Debug: Check what fields are in the response
-        if ($response) {
-            $this->log_debug('Response keys available', array_keys($response));
-        }
         
         // Handle your backend's response format
         $token = null;
@@ -166,7 +158,10 @@ class Livraria_API_Client {
                 'api_url' => $this->api_base_url
             );
             
-            $this->log_debug('Login failed with details', $error_details);
+            $this->log_debug('Login failed', array(
+                'response_received' => $error_details['response_received'],
+                'api_url' => $error_details['api_url']
+            ));
             
             $error_msg = 'Login failed: ';
             if ($response === false) {
@@ -471,7 +466,7 @@ class Livraria_API_Client {
             );
         } else {
             $body = wp_remote_retrieve_body($response);
-            $this->log_error('Binary API Error: HTTP ' . $response_code . ' - ' . $body);
+            $this->log_error('Binary API Error: HTTP ' . $response_code . ' (' . strlen($body) . ' bytes)');
             return false;
         }
     }
@@ -591,7 +586,7 @@ class Livraria_API_Client {
         if ($data && in_array($method, array('POST', 'PUT', 'PATCH'))) {
             $args['body'] = json_encode($data);
             
-            // Log request for debugging
+            // Log request for debugging (dev mode only, password redacted)
             $this->log_debug('Raw API Request: ' . $method . ' ' . $url, $data);
         }
         
@@ -623,7 +618,8 @@ class Livraria_API_Client {
                 if (isset($error_data['message'])) {
                     $error_message .= ': ' . $error_data['message'];
                 } else {
-                    $error_message .= ': ' . $response_body;
+                    // Never the body itself: it can echo what was sent
+                    $error_message .= ' (' . strlen($response_body) . ' bytes, no message field)';
                 }
             }
             $this->log_error('Raw API Error: ' . $error_message);
@@ -671,8 +667,8 @@ class Livraria_API_Client {
             $json_body = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
             $args['body'] = $json_body;
 
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-            error_log('Livraria API Request: ' . $method . ' ' . $url . ' | Body: ' . $json_body);
+            // Dev mode only, redacted (this body was logged on every shop)
+            $this->log_debug('API Request: ' . $method . ' ' . $url, $data);
         }
         
         $response = wp_remote_request($url, $args);
@@ -708,7 +704,8 @@ class Livraria_API_Client {
                     }
                     $error_message .= ': ' . $message;
                 } else {
-                    $error_message .= ': ' . $response_body;
+                    // Never the body itself: it can echo what was sent
+                    $error_message .= ' (' . strlen($response_body) . ' bytes, no message field)';
                 }
             }
             $this->log_error('API Error: ' . $error_message);
@@ -717,33 +714,70 @@ class Livraria_API_Client {
     }
     
     /**
-     * Log error message
+     * Log error message: when WP_DEBUG is on. Callers pass an HTTP status,
+     * the API's message field or a WordPress error, never a request or
+     * response body, a header, a token or a password.
      * 
      * @param string $message Error message
      */
     private function log_error($message) {
         if (defined('WP_DEBUG') && WP_DEBUG) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Error logging only when WP_DEBUG is enabled, no secrets
             error_log('Livraria API Error: ' . $message);
         }
     }
     
     /**
-     * Log debug message
+     * Log debug message: development mode only (is_dev_mode()), with
+     * passwords and tokens masked in $data. A shop's debug.log is often
+     * readable by others (backups, support, a public wp-content/debug.log).
      * 
      * @param string $message Debug message
-     * @param mixed $data Additional data to log
+     * @param mixed $data Additional data to log (array or JSON string)
      */
     private function log_debug($message, $data = null) {
-        if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-            $log_message = 'Livraria API Debug: ' . $message;
-            if ($data !== null) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only when WP_DEBUG is enabled
-                $log_message .= ' - ' . print_r($data, true);
-            }
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only when WP_DEBUG is enabled
-            error_log($log_message);
+        if (!self::is_dev_mode()) {
+            return;
         }
+        $log_message = 'Livraria API Debug: ' . $message;
+        if ($data !== null) {
+            $log_message .= ' - ' . wp_json_encode(self::redact($data), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        }
+        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode, redacted
+        error_log($log_message);
+    }
+
+    /**
+     * Keys whose values are never logged (compared case-insensitively)
+     */
+    const REDACTED_KEYS = array('password', 'accesstoken', 'access_token', 'refreshtoken', 'refresh_token', 'idtoken', 'id_token', 'token', 'authorization');
+
+    /**
+     * $data with every REDACTED_KEYS value replaced by "***", at any depth.
+     * A JSON string is decoded first; any other string is reduced to its length.
+     *
+     * @param mixed $data
+     * @return mixed
+     */
+    public static function redact($data) {
+        if (is_string($data)) {
+            $decoded = json_decode($data, true);
+            if (is_array($decoded)) {
+                return self::redact($decoded);
+            }
+            return '[' . strlen($data) . ' bytes]';
+        }
+        if (!is_array($data)) {
+            return $data;
+        }
+        foreach ($data as $key => $value) {
+            if (in_array(strtolower((string) $key), self::REDACTED_KEYS, true)) {
+                $data[$key] = '***';
+            } elseif (is_array($value)) {
+                $data[$key] = self::redact($value);
+            }
+        }
+        return $data;
     }
     
     /**

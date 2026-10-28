@@ -309,6 +309,48 @@ class API_Client_Test extends Livraria_TestCase {
         }
     }
 
+    public function test_nothing_is_logged_outside_dev_mode() {
+        $this->assertFalse(Livraria_API_Client::is_dev_mode());
+        $this->start_log_capture();
+
+        $responses = array(
+            '/auth/login' => $this->create_mock_response(200, array('accessToken' => 'invented-token-2', 'refreshToken' => 'invented-refresh-2', 'expiresIn' => 3600)),
+            '/public/awb/quotes' => $this->create_mock_response(201, array('id' => 'qr-0002')),
+            '/expedition' => array('response' => array('code' => 500, 'message' => 'Error'), 'body' => 'raw body echoing invented-password-3', 'headers' => array()),
+        );
+        add_filter('pre_http_request', function($preempt, $args, $url) use ($responses) {
+            foreach ($responses as $path => $response) {
+                if (strpos($url, $path) !== false) {
+                    return $response;
+                }
+            }
+            return new WP_Error('mocked', 'Stopped by test');
+        }, 10, 3);
+
+        $this->assertTrue($this->api_client->login('merchant@example.com', 'invented-password-3')['success']);
+        $this->api_client->create_quote_request(array('recipient' => array('name' => 'Ana Exemplu', 'phone' => '0700000456')));
+        $this->api_client->create_expedition(array('quoteRequestId' => 'qr-0002'));
+        $this->api_client->download_awb_pdf('AWB0000000002');
+
+        $this->assertSame('', $this->captured_log());
+    }
+
+    public function test_redact_masks_passwords_and_tokens_at_any_depth() {
+        $redacted = Livraria_API_Client::redact(array(
+            'email' => 'merchant@example.com',
+            'password' => 'invented-password-4',
+            'data' => array('accessToken' => 'a', 'refreshToken' => 'r', 'expiresIn' => 3600),
+        ));
+        $this->assertSame('***', $redacted['password']);
+        $this->assertSame('***', $redacted['data']['accessToken']);
+        $this->assertSame('***', $redacted['data']['refreshToken']);
+        $this->assertSame(3600, $redacted['data']['expiresIn']);
+
+        $from_json = Livraria_API_Client::redact('{"success":true,"data":{"accessToken":"a"}}');
+        $this->assertSame('***', $from_json['data']['accessToken']);
+        $this->assertSame('[9 bytes]', Livraria_API_Client::redact('not json!'));
+    }
+
     public function tearDown(): void {
         global $wp_test_bloginfo_version;
         $wp_test_bloginfo_version = null;
