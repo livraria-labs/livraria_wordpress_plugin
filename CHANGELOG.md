@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-10-28
+
+### Changed
+- The merchant's password is never stored. Login uses it once and keeps an
+  encrypted refresh token; the access token is renewed with
+  `POST /auth/refresh`. The "Remember me" checkbox is gone.
+- Shops on 1.0.x that stored their password are moved over on the first API
+  call, with no action needed: one login with the stored password, then the
+  password is deleted.
+- When the session ends (the refresh token expired, or the stored 1.0.x
+  password no longer works), administrators see a notice in wp-admin, the order
+  screen shows the message instead of its actions, the settings page shows the
+  login form, and the site administrator gets one email. Logging in again
+  restores everything. Temporary API errors (rate limit, server error, no
+  response) fail only that request and keep the session.
+- An authenticated request that answers 401 gets one session refresh and one
+  retry.
+- The settings page shows who the shop is connected as and since when.
+- A failed login, including a failed "Test Authentication", no longer ends the
+  current session; "Test Authentication" without a password tests the stored
+  session.
+- Without PHP OpenSSL the refresh token is not stored (nothing is stored in
+  clear text): the session then lasts about an hour, and the settings page says so.
+
 ## [1.0.4] - 2026-10-28
 
 ### Security

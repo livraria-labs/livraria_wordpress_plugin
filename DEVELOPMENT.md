@@ -279,6 +279,23 @@ define('WP_DEBUG_DISPLAY', false);
 
 **Logs go to**: `/wp-content/debug.log`
 
+### API session (1.1.0)
+
+- Login posts the typed password to `/auth/login` once and stores the access
+  token (`livraria_api_token`, one hour), the refresh token
+  (`livraria_refresh_token`, encrypted with `set_encrypted_option()`) and the
+  username. The password is never stored.
+- When the access token runs out, `ensure_valid_token()` calls
+  `POST /auth/refresh` (at most once per PHP request). A 401 with
+  `message.reason = REFRESH_EXPIRED` ends the session: tokens are cleared,
+  `livraria_session_state` becomes `expired`, the site administrator gets one
+  email, wp-admin shows a notice and the order meta box shows the message.
+  429, 5xx and network errors fail only that request and keep everything.
+- A 1.0.x shop that stored its password ("Remember me") is migrated on the first
+  API call: one login with it, then `courier_api_password` is deleted (also when
+  that login answers 401, which ends the session).
+- To log in again: Settings > Livraria, username and password, Login.
+
 ### Development mode
 
 Outside development mode the plugin talks only to `https://` URLs on the

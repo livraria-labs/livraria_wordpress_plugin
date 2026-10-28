@@ -29,7 +29,7 @@ The source code is also included directly in the deployed plugin - all PHP files
 
 Navigate to **Settings > Livraria** to configure:
 
-- **Login**: your Livraria account email and password. The plugin connects only to Livraria API hosts (default `https://www.api.livraria.ro/`); the settings page shows the configured address read-only (it can be changed only in development mode, see DEVELOPMENT.md)
+- **Login**: your Livraria account email and password. The password is used once to log in and is never stored; the plugin keeps a session (an encrypted refresh token). Sessions last a few days, then the plugin asks you to log in again: a notice in wp-admin, a message in the order screen and one email to the site administrator. Log in again under Settings > Livraria. The plugin connects only to Livraria API hosts (default `https://www.api.livraria.ro/`); the settings page shows the configured address read-only (it can be changed only in development mode, see DEVELOPMENT.md)
 - **Auto-create expeditions**: Enable/disable automatic expedition creation on order completion
 - **Default Sender Information**: Configure your company's shipping details
 
@@ -164,7 +164,7 @@ API errors will be logged to `/wp-content/debug.log`.
 - AJAX requests are protected with WordPress nonces and a capability check: `manage_options` for settings, login, logout and the connection tests; `edit_shop_orders` for order actions
 - Settings are properly escaped and sanitized
 - Only administrators can configure plugin settings
-- With "Remember me" the password is stored encrypted (never without PHP OpenSSL) and is never shown on the settings page
+- The password is never stored. The session's refresh token is stored encrypted (never without PHP OpenSSL: without it you log in again about every hour) and never shown on the settings page
 - Debug logging (development mode only) masks passwords and tokens
 
 ## Compatibility

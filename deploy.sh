@@ -155,6 +155,13 @@ Service provider: Livraria Hub S.R.L.
 
 == Changelog ==
 
+= 1.1.0 =
+* The password is no longer stored: the plugin keeps an encrypted session token and renews it automatically
+* Shops that stored their password with 1.0.x are moved over automatically and the password is deleted
+* When the session ends, wp-admin shows a notice, the order screen shows a message and the site administrator gets one email: log in again under Settings > Livraria
+* The settings page shows which account the shop is connected as
+* Removed the "Remember me" option
+
 = 1.0.4 =
 * Security: TLS certificates are verified on every request to the Livraria API
 * Security: only administrators (manage_options) can log in, log out or test the connection; order actions need edit_shop_orders
