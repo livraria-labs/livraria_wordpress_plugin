@@ -48,15 +48,16 @@ class Livraria_Admin_Page {
                 <h2 style="margin: 0 0 12px 0; font-size: 16px; color: #1d2327;">Login to Livraria</h2>
                 <p class="description" style="margin-bottom: 15px;">Enter your API credentials to connect to Livraria.</p>
                 <table class="form-table">
-                    <?php if (LivrariaPlugin::is_development_mode()): ?>
+                    <?php if (Livraria_API_Client::is_dev_mode()): ?>
                     <tr>
                         <th scope="row">API Base URL</th>
-                        <td><input type="url" id="login-api-url" name="courier_api_base_url" value="<?php echo esc_attr(get_option('courier_api_base_url')); ?>" class="regular-text" /></td>
+                        <td>
+                            <input type="url" id="login-api-url" name="courier_api_base_url" value="<?php echo esc_attr(get_option('courier_api_base_url')); ?>" class="regular-text" />
+                            <p class="description">Development mode (WP_DEBUG and LIVRARIA_DEV_MODE in wp-config.php): saved only after a successful login.</p>
+                        </td>
                     </tr>
-                    <?php else: ?>
-                    <!-- API Base URL is hidden in production and set to https://api.livraria.ro/ -->
-                    <input type="hidden" id="login-api-url" name="courier_api_base_url" value="https://api.livraria.ro/" />
                     <?php endif; ?>
+                    <?php // Outside development mode there is no URL field: the plugin always uses Livraria_API_Client::PRODUCTION_API_URL. ?>
                     <tr>
                         <th scope="row">Username</th>
                         <td>

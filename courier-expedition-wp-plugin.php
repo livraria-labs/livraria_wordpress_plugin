@@ -33,38 +33,16 @@ class LivrariaPlugin {
     private $admin_page;
     
     /**
-     * Check if plugin is running in development mode
+     * Check if plugin is running in development mode: WP_DEBUG on and
+     * LIVRARIA_DEV_MODE defined as boolean true in wp-config.php (see
+     * Livraria_API_Client::is_dev_mode()). The site's address, the presence
+     * of dev-scripts/ or WP_DEBUG alone no longer count: development mode
+     * unlocks the API base URL, so only the site owner may turn it on.
      * 
      * @return bool True if in development mode, false if in production
      */
     public static function is_development_mode() {
-        // Check for explicit development mode constant
-        if (defined('LIVRARIA_DEV_MODE')) {
-            return LIVRARIA_DEV_MODE === true;
-        }
-        
-        // Check if WP_DEBUG is enabled (common in development)
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            return true;
-        }
-        
-        // Check if plugin is running from source (has dev-scripts directory)
-        $plugin_dir = plugin_dir_path(__FILE__);
-        if (file_exists($plugin_dir . 'dev-scripts')) {
-            return true;
-        }
-        
-        // Check if we're in a development environment (common patterns)
-        $home_url = get_home_url();
-        if (strpos($home_url, 'localhost') !== false || 
-            strpos($home_url, '127.0.0.1') !== false ||
-            strpos($home_url, '.local') !== false ||
-            strpos($home_url, '.dev') !== false ||
-            strpos($home_url, 'staging') !== false) {
-            return true;
-        }
-        
-        return false;
+        return Livraria_API_Client::is_dev_mode();
     }
     
     public function __construct() {
@@ -100,7 +78,9 @@ class LivrariaPlugin {
         add_action('wp_ajax_livraria_download_awb_pdf', array($this, 'ajax_download_awb_pdf'));
         add_action('wp_ajax_livraria_delete_expedition', array($this, 'ajax_delete_expedition'));
 
-        $this->api_base_url = get_option('courier_api_base_url', '');
+        // Outside development mode the API base URL is the production host
+        Livraria_API_Client::enforce_production_api_url();
+        $this->api_base_url = Livraria_API_Client::resolve_base_url();
         
         // Initialize API client and order handler  
         $this->api_client = new Livraria_API_Client($this->api_base_url);
@@ -158,14 +138,6 @@ class LivrariaPlugin {
         register_setting('courier_api_settings', 'courier_sender_staircase', array('sanitize_callback' => 'sanitize_text_field'));
         register_setting('courier_api_settings', 'courier_sender_floor', array('sanitize_callback' => 'sanitize_text_field'));
         register_setting('courier_api_settings', 'courier_sender_apartment', array('sanitize_callback' => 'sanitize_text_field'));
-        
-        // In production, automatically set API Base URL to production endpoint
-        if (!self::is_development_mode()) {
-            $current_url = get_option('courier_api_base_url', '');
-            if ($current_url !== 'https://api.livraria.ro/') {
-                update_option('courier_api_base_url', 'https://api.livraria.ro/');
-            }
-        }
     }
     
     /**
@@ -979,18 +951,18 @@ class LivrariaPlugin {
         check_ajax_referer('livraria_admin_nonce', 'nonce');
         $this->require_capability('manage_options');
         
-        if (!isset($_POST['api_url']) || !isset($_POST['username']) || !isset($_POST['password'])) {
+        if (!isset($_POST['username']) || !isset($_POST['password'])) {
             wp_send_json_error('Missing required parameters');
             return;
         }
         
         // Get test credentials from POST data
-        $api_url = esc_url_raw(wp_unslash($_POST['api_url']));
         $username = sanitize_text_field(wp_unslash($_POST['username']));
         $password = sanitize_text_field(wp_unslash($_POST['password']));
         
-        // Create temporary API client and test login
-        $test_client = new Livraria_API_Client($api_url);
+        // Create temporary API client and test login (production host
+        // unless in development mode)
+        $test_client = new Livraria_API_Client($this->posted_api_url());
         $result = $test_client->test_login($username, $password);
         
         if ($result['success']) {
@@ -1004,16 +976,9 @@ class LivrariaPlugin {
         check_ajax_referer('livraria_admin_nonce', 'nonce');
         $this->require_capability('manage_options');
         
-        if (!isset($_POST['api_url'])) {
-            wp_send_json_error('Missing api_url parameter');
-            return;
-        }
-        
-        // Get API URL from POST data
-        $api_url = esc_url_raw(wp_unslash($_POST['api_url']));
-        
-        // Create temporary API client and test connectivity
-        $test_client = new Livraria_API_Client($api_url);
+        // Create temporary API client and test connectivity (production host
+        // unless in development mode)
+        $test_client = new Livraria_API_Client($this->posted_api_url());
         $result = $test_client->test_connectivity();
         
         if ($result['success']) {
@@ -1023,6 +988,19 @@ class LivrariaPlugin {
         }
     }
     
+    /**
+     * The api_url posted by the settings page, honoured only in development
+     * mode; '' otherwise (Livraria_API_Client then uses the production host).
+     *
+     * @return string
+     */
+    private function posted_api_url() {
+        if (!self::is_development_mode() || !isset($_POST['api_url'])) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Callers check the nonce first
+            return '';
+        }
+        return esc_url_raw(wp_unslash($_POST['api_url'])); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Callers check the nonce first
+    }
+
     /**
      * AJAX handler for logout
      */
@@ -1044,28 +1022,28 @@ class LivrariaPlugin {
         check_ajax_referer('livraria_admin_nonce', 'nonce');
         $this->require_capability('manage_options');
         
-        if (!isset($_POST['api_url']) || !isset($_POST['username']) || !isset($_POST['password'])) {
-            wp_send_json_error('API URL, username, and password are required');
+        if (!isset($_POST['username']) || !isset($_POST['password'])) {
+            wp_send_json_error('Username and password are required');
             return;
         }
         
-        $api_url = esc_url_raw(wp_unslash($_POST['api_url']));
         $username = sanitize_text_field(wp_unslash($_POST['username']));
         $password = sanitize_text_field(wp_unslash($_POST['password']));
         
-        if (empty($api_url) || empty($username) || empty($password)) {
-            wp_send_json_error('API URL, username, and password are required');
+        if (empty($username) || empty($password)) {
+            wp_send_json_error('Username and password are required');
             return;
         }
         
-        // Update API URL first
-        update_option('courier_api_base_url', $api_url);
-        
-        // Create API client and attempt login
+        // Production host unless in development mode. Nothing is saved before
+        // the login succeeds.
+        $api_url = Livraria_API_Client::resolve_base_url($this->posted_api_url());
         $api_client = new Livraria_API_Client($api_url);
         $result = $api_client->login($username, $password);
         
         if ($result['success']) {
+            update_option('courier_api_base_url', $api_url);
+            
             // Check if "Remember me" is enabled
             $remember_me = isset($_POST['remember_me']) && $_POST['remember_me'] === '1';
             update_option('livraria_remember_credentials', $remember_me);

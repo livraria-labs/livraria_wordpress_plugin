@@ -28,6 +28,7 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
             return new WP_Error('mocked', 'Stopped by test');
         }, 10, 3);
 
+        update_option('courier_api_base_url', Livraria_API_Client::PRODUCTION_API_URL);
         $this->plugin = new LivrariaPlugin();
     }
 
@@ -98,6 +99,94 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
         }
 
         $this->assertCount(0, $this->captured);
+    }
+
+    public function test_login_uses_the_production_host_and_saves_no_posted_api_url() {
+        $this->as_user(array('read', 'manage_options'));
+        $_POST = array(
+            'api_url' => 'https://collector.example.net/',
+            'username' => 'merchant@example.com',
+            'password' => 'invented-password-1',
+            'remember_me' => '1',
+        );
+
+        // The login request is stopped (WP_Error): the login fails
+        $response = $this->call_ajax('ajax_login');
+
+        $this->assertFalse($response->success);
+        $this->assertCount(1, $this->captured);
+        $this->assertSame('https://api.livraria.ro/auth/login', $this->captured[0]['url']);
+        $this->assertSame(Livraria_API_Client::PRODUCTION_API_URL, get_option('courier_api_base_url'));
+        $this->assertSame('', (string) get_option('courier_api_password', ''), 'nothing stored after a failed login');
+    }
+
+    public function test_login_success_keeps_the_production_host() {
+        $this->as_user(array('read', 'manage_options'));
+        $GLOBALS['wp_test_filters'] = array();
+        $urls = array();
+        add_filter('pre_http_request', function($preempt, $args, $url) use (&$urls) {
+            $urls[] = $url;
+            return array(
+                'response' => array('code' => 200, 'message' => 'OK'),
+                'body' => json_encode(array('accessToken' => 'invented-token-1', 'expiresIn' => 3600)),
+                'headers' => array(),
+            );
+        }, 10, 3);
+        $_POST = array(
+            'api_url' => 'https://collector.example.net/',
+            'username' => 'merchant@example.com',
+            'password' => 'invented-password-1',
+            'remember_me' => '0',
+        );
+
+        $response = $this->call_ajax('ajax_login');
+
+        $this->assertTrue($response->success);
+        $this->assertSame(array('https://api.livraria.ro/auth/login'), $urls);
+        $this->assertSame(Livraria_API_Client::PRODUCTION_API_URL, get_option('courier_api_base_url'));
+    }
+
+    public function test_test_connection_handlers_ignore_a_posted_api_url() {
+        $this->as_user(array('read', 'manage_options'));
+        $_POST = array(
+            'api_url' => 'https://collector.example.net/',
+            'username' => 'merchant@example.com',
+            'password' => 'invented-password-1',
+        );
+
+        $this->call_ajax('ajax_test_connectivity');
+        $this->call_ajax('ajax_test_api_connection');
+
+        $this->assertCount(2, $this->captured);
+        foreach ($this->captured as $request) {
+            $this->assertStringStartsWith('https://api.livraria.ro/', $request['url']);
+        }
+    }
+
+    public function test_load_resets_a_foreign_api_url_and_logs_one_line() {
+        update_option('courier_api_base_url', 'https://collector.example.net/api/');
+        update_option('livraria_api_token', 'token-from-the-other-host');
+        update_option('livraria_token_expires_at', time() + 3600);
+        $this->start_log_capture();
+
+        new LivrariaPlugin();
+
+        $this->assertSame(Livraria_API_Client::PRODUCTION_API_URL, get_option('courier_api_base_url'));
+        $this->assertFalse(get_option('livraria_api_token', false));
+        $lines = array_values(array_filter(explode("\n", $this->captured_log())));
+        $this->assertCount(1, $lines);
+        $this->assertStringContainsString('collector.example.net', $lines[0]);
+        $this->assertStringNotContainsString('/api/', $lines[0]);
+    }
+
+    public function test_load_on_a_fresh_install_sets_production_without_logging() {
+        delete_option('courier_api_base_url');
+        $this->start_log_capture();
+
+        new LivrariaPlugin();
+
+        $this->assertSame(Livraria_API_Client::PRODUCTION_API_URL, get_option('courier_api_base_url'));
+        $this->assertSame('', $this->captured_log());
     }
 
     public function test_logout_runs_for_an_administrator() {

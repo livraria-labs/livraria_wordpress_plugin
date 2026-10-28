@@ -8,15 +8,85 @@ if (!defined('ABSPATH')) {
 }
 
 class Livraria_API_Client {
-    
+
+    /**
+     * The Livraria API every shop talks to. Outside development mode the
+     * plugin uses this host and nothing else.
+     */
+    const PRODUCTION_API_URL = 'https://api.livraria.ro/';
+
     private $api_base_url;
     private $api_token;
     private $token_expires_at;
     
     public function __construct($api_base_url = null) {
-        $this->api_base_url = $api_base_url ?: get_option('courier_api_base_url', '');
+        $this->api_base_url = self::resolve_base_url($api_base_url);
         $this->api_token = get_option('livraria_api_token', '');
         $this->token_expires_at = get_option('livraria_token_expires_at', 0);
+    }
+
+    /**
+     * Development mode: wp-config.php enables WP_DEBUG and also defines
+     * LIVRARIA_DEV_MODE as boolean true. Only then may the API base URL be
+     * changed and debug lines be logged. Nothing a shop can set from wp-admin
+     * turns it on.
+     *
+     * @return bool
+     */
+    public static function is_dev_mode() {
+        if (!defined('WP_DEBUG') || !WP_DEBUG) {
+            return false;
+        }
+        return defined('LIVRARIA_DEV_MODE') && LIVRARIA_DEV_MODE === true;
+    }
+
+    /**
+     * The API base URL to use. Outside development mode always
+     * PRODUCTION_API_URL, whatever is passed or stored; in development mode
+     * $candidate, else the stored courier_api_base_url, else production.
+     *
+     * @param string|null $candidate URL asked for by the caller
+     * @return string
+     */
+    public static function resolve_base_url($candidate = null) {
+        if (!self::is_dev_mode()) {
+            return self::PRODUCTION_API_URL;
+        }
+        $candidate = (string) $candidate;
+        if ($candidate === '') {
+            $candidate = (string) get_option('courier_api_base_url', '');
+        }
+        return $candidate !== '' ? $candidate : self::PRODUCTION_API_URL;
+    }
+
+    /**
+     * Outside development mode, put courier_api_base_url back to the
+     * production host if anything else is stored there. A stored URL that
+     * points elsewhere is where the next login would send the merchant's
+     * password, so the reset is logged (host only) and the API session,
+     * which belongs to that other host, is dropped.
+     */
+    public static function enforce_production_api_url() {
+        if (self::is_dev_mode()) {
+            return;
+        }
+        $stored = (string) get_option('courier_api_base_url', '');
+        if (rtrim($stored, '/') === rtrim(self::PRODUCTION_API_URL, '/')) {
+            return;
+        }
+
+        update_option('courier_api_base_url', self::PRODUCTION_API_URL);
+        if ($stored === '') {
+            return; // fresh install, nothing was redirected
+        }
+
+        delete_option('livraria_api_token');
+        delete_option('livraria_token_expires_at');
+
+        $host = wp_parse_url($stored, PHP_URL_HOST);
+        $host = is_string($host) ? preg_replace('/[^A-Za-z0-9.:\-]/', '', $host) : '';
+        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- One security line: the stored API URL was not the production host
+        error_log('Livraria: the stored API base URL pointed at "' . ($host !== '' ? $host : 'an unparseable URL') . '", not ' . self::PRODUCTION_API_URL . '; reset to ' . self::PRODUCTION_API_URL . ' and logged the shop out of the API. Check who changed the plugin settings.');
     }
     
     /**
@@ -691,7 +761,7 @@ class Livraria_API_Client {
      * @param string $url
      */
     public function set_api_base_url($url) {
-        $this->api_base_url = rtrim($url, '/');
+        $this->api_base_url = rtrim(self::resolve_base_url($url), '/');
     }
     
     /**

@@ -24,10 +24,37 @@ class Livraria_TestCase extends PHPUnit\Framework\TestCase {
         $this->set_default_options();
     }
     
+    private $log_file = null;
+    private $previous_error_log = null;
+
+    /**
+     * Send error_log() to a temporary file for the rest of this test
+     */
+    protected function start_log_capture() {
+        $this->log_file = tempnam(sys_get_temp_dir(), 'livraria-log-');
+        $this->previous_error_log = ini_set('error_log', $this->log_file);
+    }
+
+    /**
+     * Everything error_log() wrote since start_log_capture()
+     *
+     * @return string
+     */
+    protected function captured_log() {
+        clearstatcache();
+        return $this->log_file && file_exists($this->log_file) ? (string) file_get_contents($this->log_file) : '';
+    }
+
     /**
      * Clean up after each test
      */
     public function tearDown(): void {
+        if ($this->log_file !== null) {
+            ini_set('error_log', $this->previous_error_log === false ? '' : (string) $this->previous_error_log);
+            @unlink($this->log_file);
+            $this->log_file = null;
+        }
+
         // Clean up plugin options
         delete_option('courier_api_base_url');
         delete_option('courier_api_username');

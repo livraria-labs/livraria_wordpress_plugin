@@ -8,31 +8,26 @@ jQuery(document).ready(function($) {
         var originalText = btn.text();
         var resultDiv = $('#api-test-result-connectivity');
         
-        // Get API URL from form input or from debug modal data attribute
-        var apiUrl = $('input[name="courier_api_base_url"]').val();
-        if (!apiUrl) {
-            // Try reading from debug modal data attribute
-            apiUrl = $('#livraria-debug-modal').find('td[data-api-url]').attr('data-api-url');
-        }
-        
-        if (!apiUrl || apiUrl === 'Not set') {
-            resultDiv.html('<div class="notice notice-error"><p>Please enter API URL before testing connectivity.</p></div>');
-            return;
-        }
+        // The URL field exists only in development mode; otherwise the server
+        // uses the production API and ignores api_url.
+        var apiUrl = $('#login-api-url').val() || '';
+        var shownUrl = apiUrl || $('#livraria-debug-modal').find('td[data-api-url]').attr('data-api-url') || 'the Livraria API';
         
         btn.text('Testing...').prop('disabled', true);
-        resultDiv.html('<div class="notice notice-info"><p>Testing network connectivity to ' + apiUrl + '...</p></div>');
+        resultDiv.html('<div class="notice notice-info"><p>Testing network connectivity to ' + $('<span>').text(shownUrl).html() + '...</p></div>');
         
-        console.log('Livraria Debug: Testing connectivity to:', apiUrl);
+        var requestData = {
+            action: 'livraria_test_connectivity',
+            nonce: livrariaAdmin.nonce
+        };
+        if (apiUrl) {
+            requestData.api_url = apiUrl;
+        }
         
         $.ajax({
             url: ajaxurl,
             type: 'POST',
-            data: {
-                action: 'livraria_test_connectivity',
-                api_url: apiUrl,
-                nonce: livrariaAdmin.nonce
-            },
+            data: requestData,
             success: function(response) {
                 console.log('Livraria Debug: Connectivity test response:', response);
                 
@@ -61,14 +56,13 @@ jQuery(document).ready(function($) {
         var resultDiv = $('#api-test-result-auth');
         
         // Get values from form inputs or from debug modal data attributes
-        var apiUrl = $('input[name="courier_api_base_url"]').val();
+        // The URL field exists only in development mode; otherwise the server
+        // uses the production API and ignores api_url.
+        var apiUrl = $('#login-api-url').val() || '';
         var username = $('input[name="courier_api_username"]').val();
         var password = $('input[name="courier_api_password"]').val();
         
         // If not found in form inputs, try reading from debug modal
-        if (!apiUrl) {
-            apiUrl = $('#livraria-debug-modal').find('td[data-api-url]').attr('data-api-url');
-        }
         if (!username) {
             username = $('#livraria-debug-modal').find('td[data-api-username]').attr('data-api-username');
         }
@@ -80,10 +74,9 @@ jQuery(document).ready(function($) {
         }
         
         // Validate values (check for empty strings, null, undefined, or 'Not set')
-        if (!apiUrl || apiUrl === '' || apiUrl === 'Not set' || 
-            !username || username === '' || username === 'Not set' || 
+        if (!username || username === '' || username === 'Not set' || 
             !password || password === '' || password === 'Not set') {
-            resultDiv.html('<div class="notice notice-error"><p>Please enter API URL, Username, and Password before testing.</p></div>');
+            resultDiv.html('<div class="notice notice-error"><p>Please enter Username and Password before testing.</p></div>');
             return;
         }
         
@@ -93,19 +86,20 @@ jQuery(document).ready(function($) {
         $('#step-login .status').html('<span style="color: orange;">⏳ In progress</span>');
         $('#step-api .status').html('<span style="color: #ccc;">⏸ Waiting</span>');
         
-        console.log('Livraria Debug: Starting API test with URL:', apiUrl);
-        console.log('Livraria Debug: Username:', username);
+        var requestData = {
+            action: 'livraria_test_courier_api_connection',
+            username: username,
+            password: password,
+            nonce: livrariaAdmin.nonce
+        };
+        if (apiUrl) {
+            requestData.api_url = apiUrl;
+        }
         
         $.ajax({
             url: ajaxurl,
             type: 'POST',
-            data: {
-                action: 'livraria_test_courier_api_connection',
-                api_url: apiUrl,
-                username: username,
-                password: password,
-                nonce: livrariaAdmin.nonce
-            },
+            data: requestData,
             success: function(response) {
                 console.log('Livraria Debug: AJAX response received:', response);
                 
@@ -451,7 +445,9 @@ jQuery(document).ready(function($) {
     });
 
     $('#livraria-login-btn').on('click', function() {
-        var apiUrl = $('#login-api-url').val() || $('input[name="courier_api_base_url"]').val() || 'https://api.livraria.ro/';
+        // Only in development mode is there a URL field; otherwise the server
+        // uses the production API.
+        var apiUrl = $('#login-api-url').val() || '';
         var username = $('#login-username').val() || $('input[name="courier_api_username"]').val();
         var password = $('#login-password').val() || $('input[name="courier_api_password"]').val();
         var rememberMe = $('#remember-me').is(':checked') ? '1' : '0';
@@ -464,14 +460,19 @@ jQuery(document).ready(function($) {
         $.ajax({
             url: ajaxurl,
             type: 'POST',
-            data: {
-                action: 'livraria_login',
-                api_url: apiUrl,
-                username: username,
-                password: password,
-                remember_me: rememberMe,
-                nonce: livrariaAdmin.nonce
-            },
+            data: (function() {
+                var loginData = {
+                    action: 'livraria_login',
+                    username: username,
+                    password: password,
+                    remember_me: rememberMe,
+                    nonce: livrariaAdmin.nonce
+                };
+                if (apiUrl) {
+                    loginData.api_url = apiUrl;
+                }
+                return loginData;
+            })(),
             success: function(response) {
                 if (response.success) {
                     location.reload();
