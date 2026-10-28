@@ -158,7 +158,8 @@ Service provider: Livraria Hub S.R.L.
 = 1.0.4 =
 * Security: TLS certificates are verified on every request to the Livraria API
 * Security: only administrators (manage_options) can log in, log out or test the connection; order actions need edit_shop_orders
-* Security: the API address is fixed to https://www.api.livraria.ro/ and cannot be changed from the settings page
+* Security: the plugin talks only to Livraria API hosts; the settings page shows the API address read-only
+* Security: if the stored API address is not a Livraria host, all API calls stop and an administrator must log in again
 * Security: the stored password is no longer included in the settings page
 * Security: no request data, passwords or tokens in the debug log
 * Security: without PHP OpenSSL the password is not stored at all

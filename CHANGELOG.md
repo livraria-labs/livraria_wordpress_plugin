@@ -14,13 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Login, logout, the connection tests and settings changes require the
   `manage_options` capability; the order meta box actions require
   `edit_shop_orders`. Before, the nonce printed on every wp-admin page was enough.
-- The API base URL is fixed to `https://www.api.livraria.ro/` outside development
-  mode (`WP_DEBUG` plus `LIVRARIA_DEV_MODE` defined `true`): a posted URL is
-  ignored, the settings page has no URL field, and login saves the URL only
-  after it succeeds. On load, the previous default `https://api.livraria.ro/`
-  is rewritten to the www address silently (the API session is kept); a stored
-  URL that points anywhere else is reset to the production host, the API
-  session is dropped and one line is logged with the host it replaced.
+- Outside development mode (`WP_DEBUG` plus `LIVRARIA_DEV_MODE` defined `true`)
+  the plugin talks only to `https://` on the Livraria API hosts
+  (`www.api.livraria.ro`, `api.livraria.ro`, `www.api-uat.livraria.ro`,
+  `api-uat.livraria.ro`). A stored URL on those hosts is kept as it is; the
+  settings page shows it read-only. A fresh install gets
+  `https://www.api.livraria.ro/`. Login saves the URL only after it succeeds and
+  refuses a posted URL on any other host.
+- A stored URL on any other host is never changed or replaced: the plugin stops
+  every API call, drops the API session, shows a wp-admin notice to
+  administrators and logs one line with the host, until an administrator logs
+  in again from the settings page.
 - The username, password and API URL are no longer registered settings, so
   `options.php` cannot write them (a password in clear text, or another host);
   only the login writes them.
