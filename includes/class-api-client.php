@@ -166,124 +166,357 @@ class Livraria_API_Client {
         return true;
     }
     
+    // -------------------------------------------------------------------------
+    // API session: access token (one hour) + refresh token (a few days)
+    // -------------------------------------------------------------------------
+
+    /** The refresh token, stored with set_encrypted_option() */
+    const OPT_REFRESH_TOKEN = 'livraria_refresh_token';
+    /** '' or 'expired' */
+    const OPT_SESSION_STATE = 'livraria_session_state';
+    const OPT_SESSION_EXPIRED_AT = 'livraria_session_expired_at';
+    const OPT_CONNECTED_AT = 'livraria_connected_at';
+    /** 1.0.x stored the password here. 1.1.0 reads it once to migrate, then deletes it; nothing writes it. */
+    const OPT_LEGACY_PASSWORD = 'courier_api_password';
+
     /**
-     * Login to get JWT token
+     * At most one refresh (or migration login) per PHP request, so a failing
+     * API (429, 5xx, network) is not hammered by every call on a page.
+     */
+    private static $refresh_tried = false;
+
+    /**
+     * Forget that this request already tried a refresh (unit tests run many
+     * "requests" in one process)
+     */
+    public static function reset_refresh_guard() {
+        self::$refresh_tried = false;
+    }
+
+    /**
+     * Login to get JWT token. Uses the password once and never stores it: on
+     * success the access token, the refresh token (encrypted), the username
+     * and the connection time are stored, and any 1.0.x password is deleted.
+     * A failed login changes nothing that is stored.
      * 
      * @param string $username Username/email
      * @param string $password Password
-     * @return array Result with success status and message
+     * @return array success, message, code (HTTP status, 0 = no response), refresh_stored
      */
     public function login($username, $password) {
         // Debug: Log the attempt (never the username, password or response)
         $this->log_debug('Login attempt to URL: ' . $this->api_base_url);
-        
-        $response = $this->raw_api_request('POST', '/auth/login', array(
+
+        $r = $this->request_json('POST', '/auth/login', array(
             'email' => $username,
             'password' => $password
         ));
-        
-        // Handle your backend's response format
+
+        $body = is_array($r['data']) ? $r['data'] : array();
+        // {"success": true, "data": {"accessToken", "refreshToken", "expiresIn", ...}}
+        $data = (isset($body['data']) && is_array($body['data'])) ? $body['data'] : $body;
         $token = null;
-        $expires_in = 3600; // default
-        
-        if ($response && isset($response['success']) && $response['success'] && isset($response['data'])) {
-            // Your backend format: {"success": true, "data": {"accessToken": "...", "expiresIn": 3600}}
-            $data = $response['data'];
-            if (isset($data['accessToken'])) {
-                $token = $data['accessToken'];
-                $expires_in = isset($data['expiresIn']) ? $data['expiresIn'] : 3600;
-            }
-        } else if ($response) {
-            // Fallback: check for other possible formats
-            if (isset($response['access_token'])) {
-                $token = $response['access_token'];
-                $expires_in = isset($response['expires_in']) ? $response['expires_in'] : 3600;
-            } else if (isset($response['accessToken'])) {
-                $token = $response['accessToken'];
-                $expires_in = isset($response['expiresIn']) ? $response['expiresIn'] : 3600;
-            } else if (isset($response['token'])) {
-                $token = $response['token'];
+        foreach (array('accessToken', 'access_token', 'token') as $key) {
+            if (!empty($data[$key]) && is_string($data[$key])) {
+                $token = $data[$key];
+                break;
             }
         }
-        
-        if ($response && $token) {
-            $this->api_token = $token;
-            $this->token_expires_at = time() + $expires_in;
-            
-            // Store token and expiration in WordPress options
-            update_option('livraria_api_token', $this->api_token);
-            update_option('livraria_token_expires_at', $this->token_expires_at);
-            
+
+        if ($r['code'] >= 200 && $r['code'] < 300 && $token !== null) {
+            $expires_in = isset($data['expiresIn']) ? (int) $data['expiresIn'] : (isset($data['expires_in']) ? (int) $data['expires_in'] : 3600);
+            $this->store_access_token($token, $expires_in);
+
+            $refresh = '';
+            foreach (array('refreshToken', 'refresh_token') as $key) {
+                if (!empty($data[$key]) && is_string($data[$key])) {
+                    $refresh = $data[$key];
+                    break;
+                }
+            }
+            $refresh_stored = $refresh !== '' && $this->set_encrypted_option(self::OPT_REFRESH_TOKEN, $refresh);
+            if (!$refresh_stored) {
+                delete_option(self::OPT_REFRESH_TOKEN);
+            }
+
+            if (!$this->set_encrypted_option('courier_api_username', $username)) {
+                update_option('courier_api_username', $username); // an email address, not a secret
+            }
+            update_option(self::OPT_CONNECTED_AT, time());
+            delete_option(self::OPT_SESSION_STATE);
+            delete_option(self::OPT_SESSION_EXPIRED_AT);
+            delete_option(self::OPT_LEGACY_PASSWORD);
+            delete_option('livraria_remember_credentials');
+            self::$refresh_tried = false;
+
+            $this->log_debug('Login succeeded' . ($refresh_stored ? '' : ' (no refresh token stored)'));
             return array(
                 'success' => true,
                 'message' => 'Login successful',
-                'token' => $this->api_token,
+                'code' => $r['code'],
+                'refresh_stored' => $refresh_stored,
                 'expires_at' => $this->token_expires_at
             );
-        } else {
-            // Clear existing tokens on failed login to prevent confusion
-            // This ensures that if a new login fails, the user isn't still authenticated with old credentials
-            $this->api_token = '';
-            $this->token_expires_at = 0;
-            delete_option('livraria_api_token');
-            delete_option('livraria_token_expires_at');
-            
-            // Enhanced error message with debug info
-            $error_details = array(
-                'response_received' => $response !== false,
-                'response_data' => $response,
-                'api_url' => $this->api_base_url
-            );
-            
-            $this->log_debug('Login failed', array(
-                'response_received' => $error_details['response_received'],
-                'api_url' => $error_details['api_url']
-            ));
-            
-            $error_msg = 'Login failed: ';
-            if ($response === false) {
-                $error_msg .= 'No response from server';
-            } else if (isset($response['message'])) {
-                $error_msg .= $response['message'];
-            } else {
-                $error_msg .= 'Invalid credentials or server error';
-            }
-            
-            return array(
-                'success' => false,
-                'message' => $error_msg,
-                'debug' => $error_details
-            );
         }
+
+        $this->log_debug('Login failed (HTTP ' . $r['code'] . ')');
+        $error_msg = 'Login failed: ';
+        if ($r['code'] === 0) {
+            $error_msg .= 'No response from server';
+        } elseif (self::error_message($r['data']) !== '') {
+            $error_msg .= self::error_message($r['data']);
+        } else {
+            $error_msg .= 'Invalid credentials or server error';
+        }
+
+        return array(
+            'success' => false,
+            'message' => $error_msg,
+            'code' => $r['code'],
+            'refresh_stored' => false
+        );
     }
-    
+
     /**
-     * Check if current token is valid and refresh if needed
+     * Whether the shop has an API session to use: not expired, and an access
+     * token, a refresh token or a 1.0.x password to migrate from
+     *
+     * @return bool
+     */
+    public function has_session() {
+        if (self::is_session_expired()) {
+            return false;
+        }
+        if ($this->api_token && $this->token_expires_at > time()) {
+            return true;
+        }
+        return (string) get_option(self::OPT_REFRESH_TOKEN, '') !== ''
+            || (string) get_option(self::OPT_LEGACY_PASSWORD, '') !== '';
+    }
+
+    /**
+     * Refresh (or migrate) the session now if the access token is not valid,
+     * e.g. before the settings page decides what to show
+     *
+     * @return bool True if an access token is available
+     */
+    public function ensure_session() {
+        return $this->ensure_valid_token();
+    }
+
+    /**
+     * @return bool True when the session ended and an administrator must log in again
+     */
+    public static function is_session_expired() {
+        return get_option(self::OPT_SESSION_STATE, '') === 'expired';
+    }
+
+    /**
+     * Forget the API session (logout). The username stays for the login form.
+     */
+    public static function clear_session() {
+        delete_option('livraria_api_token');
+        delete_option('livraria_token_expires_at');
+        delete_option(self::OPT_REFRESH_TOKEN);
+        delete_option(self::OPT_CONNECTED_AT);
+        delete_option(self::OPT_SESSION_STATE);
+        delete_option(self::OPT_SESSION_EXPIRED_AT);
+        delete_option(self::OPT_LEGACY_PASSWORD);
+        delete_option('livraria_remember_credentials');
+    }
+
+    private function store_access_token($token, $expires_in) {
+        $this->api_token = $token;
+        $this->token_expires_at = time() + max(60, (int) $expires_in);
+        update_option('livraria_api_token', $this->api_token);
+        update_option('livraria_token_expires_at', $this->token_expires_at);
+    }
+
+    /**
+     * Make sure there is an access token to send:
+     * - still valid: use it;
+     * - else a refresh token: POST /auth/refresh (refresh_session());
+     * - else a 1.0.x password: log in once with it and drop it (migrate_from_password());
+     * - else, if there was a session, it has ended (mark_session_expired()).
      * 
-     * @return bool True if token is valid, false if login failed
+     * @return bool True if a token is available for this request
      */
     private function ensure_valid_token() {
         // Check if token exists and is not expired (with 5 minute buffer)
         if ($this->api_token && $this->token_expires_at > (time() + 300)) {
             return true;
         }
-        
-        // Try to refresh token using stored credentials (only if "Remember me" is enabled)
-        if (!get_option('livraria_remember_credentials', false)) {
-            $this->log_error('Credentials not stored (Remember me not enabled)');
+        if (self::is_session_expired()) {
             return false;
         }
-        
+        if ((string) get_option(self::OPT_REFRESH_TOKEN, '') !== '') {
+            return $this->refresh_session();
+        }
+        if ((string) get_option(self::OPT_LEGACY_PASSWORD, '') !== '') {
+            return $this->migrate_from_password();
+        }
+        if ((string) get_option('livraria_api_token', '') !== '') {
+            // An access token without a refresh token (e.g. no OpenSSL to store it)
+            $this->mark_session_expired('access token expired, no refresh token');
+        }
+        return false;
+    }
+
+    /**
+     * POST /auth/refresh with the stored refresh token.
+     * - 2xx: new access token stored (and the rotated refresh token, if sent);
+     * - 401 REFRESH_EXPIRED: the session is over (mark_session_expired());
+     * - anything else (429, 5xx, network): this request fails, nothing changes.
+     *
+     * @return bool True when a new access token was stored
+     */
+    private function refresh_session() {
+        if (self::$refresh_tried) {
+            return false;
+        }
+        self::$refresh_tried = true;
+
+        $refresh = $this->get_encrypted_option(self::OPT_REFRESH_TOKEN, '');
+        if ($refresh === '') {
+            if ((string) get_option(self::OPT_REFRESH_TOKEN, '') !== '') {
+                // Stored but unreadable (e.g. the WordPress salts changed)
+                $this->mark_session_expired('stored refresh token unreadable');
+            }
+            return false;
+        }
+
+        $r = $this->request_json('POST', '/auth/refresh', array('refreshToken' => $refresh));
+        $body = is_array($r['data']) ? $r['data'] : array();
+        $data = (isset($body['data']) && is_array($body['data'])) ? $body['data'] : array();
+
+        if ($r['code'] >= 200 && $r['code'] < 300 && !empty($data['accessToken']) && is_string($data['accessToken'])) {
+            $this->store_access_token($data['accessToken'], isset($data['expiresIn']) ? $data['expiresIn'] : 3600);
+            if (!empty($data['refreshToken']) && is_string($data['refreshToken'])) {
+                $this->set_encrypted_option(self::OPT_REFRESH_TOKEN, $data['refreshToken']); // rotated
+            }
+            $this->log_debug('Session refresh succeeded');
+            return true;
+        }
+
+        if ($r['code'] === 401 && self::error_reason($r['data']) === 'REFRESH_EXPIRED') {
+            $this->log_debug('Session refresh expired');
+            $this->mark_session_expired('refresh token expired');
+            return false;
+        }
+
+        $this->log_debug('Session refresh failed (HTTP ' . $r['code'] . ')');
+        return false;
+    }
+
+    /**
+     * 1.0.x stored the password ("Remember me"). Log in with it once, keep
+     * the refresh token, delete the password. A 401 (password changed)
+     * deletes it too and ends the session; 429, 5xx or no response keep it
+     * for the next attempt.
+     *
+     * @return bool True when the login succeeded
+     */
+    private function migrate_from_password() {
+        if (self::$refresh_tried) {
+            return false;
+        }
+        self::$refresh_tried = true;
+
+        $password = $this->get_encrypted_option(self::OPT_LEGACY_PASSWORD, '');
         $username = $this->get_encrypted_option('courier_api_username', '');
-        $password = $this->get_encrypted_option('courier_api_password', '');
-        
-        if (empty($username) || empty($password)) {
-            $this->log_error('No credentials stored for token refresh');
+        if ($password === '' || $username === '') {
+            delete_option(self::OPT_LEGACY_PASSWORD); // unreadable or unusable
             return false;
         }
-        
+
         $result = $this->login($username, $password);
-        return $result['success'];
+        if ($result['success']) {
+            $this->log_debug('Migrated the 1.0.x stored password to a refresh token');
+            return true;
+        }
+        if ($result['code'] === 401) {
+            delete_option(self::OPT_LEGACY_PASSWORD);
+            $this->mark_session_expired('stored 1.0.x password rejected');
+        }
+        return false;
+    }
+
+    /**
+     * The session is over: drop every token and, the first time, tell the
+     * site administrator by email. wp-admin shows a notice until someone
+     * logs in again.
+     *
+     * @param string $why For the dev-mode debug line
+     */
+    private function mark_session_expired($why) {
+        $this->api_token = '';
+        $this->token_expires_at = 0;
+        delete_option('livraria_api_token');
+        delete_option('livraria_token_expires_at');
+        delete_option(self::OPT_REFRESH_TOKEN);
+
+        if (self::is_session_expired()) {
+            return;
+        }
+        update_option(self::OPT_SESSION_STATE, 'expired');
+        update_option(self::OPT_SESSION_EXPIRED_AT, time());
+        $this->log_debug('Session expired: ' . $why);
+        self::send_session_expired_email();
+    }
+
+    /**
+     * One plain-text email to the site administrator: no tokens, no shop data
+     */
+    private static function send_session_expired_email() {
+        if (!function_exists('wp_mail')) {
+            return;
+        }
+        $to = (string) get_option('admin_email', '');
+        if ($to === '') {
+            return;
+        }
+        $settings_url = function_exists('admin_url') ? admin_url('options-general.php?page=courier-api-settings') : '';
+        $body = "The Livraria plugin is no longer connected to your Livraria account: its session has ended.\n\n"
+            . "Until an administrator logs in again, the plugin cannot get quotes or create shipments.\n\n"
+            . "Log in again in WordPress, under Settings > Livraria:\n"
+            . $settings_url . "\n";
+        wp_mail($to, 'Livraria: log in again to keep creating shipments', $body);
+    }
+
+    /**
+     * The error text of an API error envelope: message, or message.error
+     *
+     * @param mixed $data Decoded response body
+     * @return string
+     */
+    private static function error_message($data) {
+        if (!is_array($data) || !isset($data['message'])) {
+            return '';
+        }
+        $message = $data['message'];
+        if (is_array($message)) {
+            if (isset($message['error']) && is_string($message['error'])) {
+                return $message['error'];
+            }
+            return (string) wp_json_encode($message, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        }
+        return (string) $message;
+    }
+
+    /**
+     * message.reason of an API error envelope, e.g. REFRESH_EXPIRED
+     *
+     * @param mixed $data Decoded response body
+     * @return string
+     */
+    private static function error_reason($data) {
+        if (is_array($data) && isset($data['message']) && is_array($data['message']) && isset($data['message']['reason'])) {
+            return (string) $data['message']['reason'];
+        }
+        if (is_array($data) && isset($data['reason'])) {
+            return (string) $data['reason'];
+        }
+        return '';
     }
     
     /**
@@ -305,46 +538,47 @@ class Livraria_API_Client {
         $login_result = $this->login($username, $password);
         
         if (!$login_result['success']) {
-            // Include debug info in the response for troubleshooting
             $error_msg = $login_result['message'];
-            if (isset($login_result['debug'])) {
-                $debug = $login_result['debug'];
-                if (!$debug['response_received']) {
-                    $error_msg .= ' (No response from server - check URL and network)';
-                } else if ($debug['response_data'] === null) {
-                    $error_msg .= ' (Empty response from server)';
-                }
+            if ($login_result['code'] === 0) {
+                $error_msg .= ' (No response from server - check URL and network)';
             }
-            
             return array(
                 'success' => false,
                 'message' => $error_msg
             );
         }
         
-        // Step 2: Test the token by making an authenticated API call
-        try {
-            $test_response = $this->api_request('GET', '/expedition');
-            
-            if ($test_response !== false) {
-                return array(
-                    'success' => true,
-                    'message' => 'Authentication successful! Login works and API access confirmed.',
-                    'token_expires_at' => gmdate('Y-m-d H:i:s', $this->token_expires_at)
-                );
-            } else {
-                return array(
-                    'success' => false,
-                    'message' => 'Login successful but API access failed. Check API permissions.'
-                );
-            }
-            
-        } catch (Exception $e) {
+        return $this->test_api_access('Authentication successful! Login works and API access confirmed.');
+    }
+
+    /**
+     * Check that the stored session reaches the API (refreshing it if needed)
+     *
+     * @return array Result with success status and message
+     */
+    public function test_session() {
+        if (self::is_session_expired()) {
+            return array('success' => false, 'message' => 'Login failed: the Livraria session expired. Log in again.');
+        }
+        if (!$this->has_session()) {
+            return array('success' => false, 'message' => 'Login failed: not connected. Log in first.');
+        }
+        return $this->test_api_access('The stored session works: API access confirmed.');
+    }
+
+    private function test_api_access($success_message) {
+        $test_response = $this->api_request('GET', '/expedition');
+        if ($test_response !== false) {
             return array(
-                'success' => false,
-                'message' => 'Login successful but API test failed: ' . $e->getMessage()
+                'success' => true,
+                'message' => $success_message,
+                'token_expires_at' => gmdate('Y-m-d H:i:s', $this->token_expires_at)
             );
         }
+        return array(
+            'success' => false,
+            'message' => 'Login successful but API access failed. Check API permissions.'
+        );
     }
     
     /**
@@ -485,7 +719,7 @@ class Livraria_API_Client {
 
     /**
      * Make API request for binary data (PDFs, images, etc.)
-     * Similar to api_request() but handles binary responses
+     * Like api_request(): one refresh and one retry on a 401.
      *
      * @param string $method HTTP method
      * @param string $endpoint API endpoint
@@ -504,32 +738,37 @@ class Livraria_API_Client {
 
         $url = rtrim($this->api_base_url, '/') . $endpoint;
         $url = $this->convert_localhost_for_docker($url);
-
-        $args = array(
-            'method' => $method,
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $this->api_token,
-                'Accept' => 'application/pdf',
-                'X-Livraria-Client' => $this->client_header()
-            ),
-            'timeout' => 60, // Longer timeout for PDF generation
-            'user-agent' => 'WordPress-Livraria-Plugin/1.0',
-            'sslverify' => self::ssl_verify()
-        );
-
         $this->log_debug('Binary API Request: ' . $method . ' ' . $url);
 
-        $response = wp_remote_request($url, $args);
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            $args = array(
+                'method' => $method,
+                'headers' => array(
+                    'Authorization' => 'Bearer ' . $this->api_token,
+                    'Accept' => 'application/pdf',
+                    'X-Livraria-Client' => $this->client_header()
+                ),
+                'timeout' => 60, // Longer timeout for PDF generation
+                'user-agent' => 'WordPress-Livraria-Plugin/1.0',
+                'sslverify' => self::ssl_verify()
+            );
 
-        if (is_wp_error($response)) {
-            $this->log_error('Binary API Request Failed: ' . $response->get_error_message());
-            return false;
+            $response = wp_remote_request($url, $args);
+
+            if (is_wp_error($response)) {
+                $this->log_error('Binary API Request Failed: ' . $response->get_error_message());
+                return false;
+            }
+
+            $response_code = (int) wp_remote_retrieve_response_code($response);
+            if ($response_code === 401 && $attempt === 0 && $this->refresh_session()) {
+                continue; // one retry with the refreshed token
+            }
+            break;
         }
 
-        $response_code = wp_remote_retrieve_response_code($response);
-
+        $body = wp_remote_retrieve_body($response);
         if ($response_code >= 200 && $response_code < 300) {
-            $body = wp_remote_retrieve_body($response);
             $headers = wp_remote_retrieve_headers($response);
 
             $this->log_debug('Binary API Request Successful: ' . strlen($body) . ' bytes received');
@@ -540,11 +779,10 @@ class Livraria_API_Client {
                 'content_type' => $headers['content-type'] ?? 'application/pdf',
                 'content_length' => $headers['content-length'] ?? strlen($body)
             );
-        } else {
-            $body = wp_remote_retrieve_body($response);
-            $this->log_error('Binary API Error: HTTP ' . $response_code . ' (' . strlen($body) . ' bytes)');
-            return false;
         }
+
+        $this->log_error('Binary API Error: HTTP ' . $response_code . ' (' . strlen($body) . ' bytes)');
+        return false;
     }
 
 
@@ -627,83 +865,102 @@ class Livraria_API_Client {
     }
     
     /**
+     * Send one JSON request to the API and return its status and decoded
+     * body. Never logs a body outside development mode (log_debug redacts
+     * passwords and tokens there too).
+     *
+     * @param string $method HTTP method
+     * @param string $endpoint API endpoint
+     * @param array|null $data Request data
+     * @param bool $with_auth Send the access token
+     * @return array code (0 = no response or refused), data (decoded body or null), json_ok
+     */
+    private function request_json($method, $endpoint, $data = null, $with_auth = false) {
+        $result = array('code' => 0, 'data' => null, 'json_ok' => false);
+        if (!$this->base_url_allowed()) {
+            return $result;
+        }
+
+        $url = rtrim($this->api_base_url, '/') . $endpoint;
+        $url = $this->convert_localhost_for_docker($url);
+
+        $headers = array(
+            'Content-Type' => 'application/json',
+            'Accept' => 'application/json',
+            'X-Livraria-Client' => $this->client_header()
+        );
+        if ($with_auth) {
+            $headers['Authorization'] = 'Bearer ' . $this->api_token;
+        }
+        $args = array(
+            'method' => $method,
+            'headers' => $headers,
+            'timeout' => 30,
+            'user-agent' => 'WordPress-Livraria-Plugin/1.0',
+            'sslverify' => self::ssl_verify()
+        );
+
+        if ($data && in_array($method, array('POST', 'PUT', 'PATCH'), true)) {
+            $args['body'] = wp_json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            // Dev mode only, redacted
+            $this->log_debug('API Request: ' . $method . ' ' . $url, $data);
+        }
+
+        $response = wp_remote_request($url, $args);
+
+        if (is_wp_error($response)) {
+            $this->log_error('API Request Failed: ' . $response->get_error_message());
+            return $result;
+        }
+
+        $result['code'] = (int) wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        $this->log_debug('API Response: ' . $result['code'], $body);
+
+        $decoded = json_decode((string) $body, true);
+        $result['json_ok'] = json_last_error() === JSON_ERROR_NONE;
+        $result['data'] = $result['json_ok'] ? $decoded : null;
+        return $result;
+    }
+
+    /**
+     * Turn a request_json() result into the decoded body, or false (logged)
+     *
+     * @param array $r request_json() result
+     * @param string $label For the error line
+     * @return mixed
+     */
+    private function json_result($r, $label) {
+        if ($r['code'] >= 200 && $r['code'] < 300) {
+            if (!$r['json_ok']) {
+                $this->log_error('Invalid JSON response');
+                return false;
+            }
+            return $r['data'];
+        }
+        if ($r['code'] !== 0) {
+            $message = self::error_message($r['data']);
+            // Never the body itself: it can echo what was sent
+            $this->log_error($label . ': HTTP ' . $r['code'] . ($message !== '' ? ': ' . $message : ' (no message field)'));
+        }
+        return false;
+    }
+
+    /**
      * Make a raw API request (without authentication)
-     * Used for login and other non-authenticated endpoints
-     * 
+     *
      * @param string $method HTTP method
      * @param string $endpoint API endpoint
      * @param array|null $data Request data
      * @return array|false API response or false on failure
      */
     private function raw_api_request($method, $endpoint, $data = null) {
-        if (!$this->base_url_allowed()) {
-            return false;
-        }
-        
-        $url = rtrim($this->api_base_url, '/') . $endpoint;
-        $url = $this->convert_localhost_for_docker($url);
-        
-        // Debug: Log the full URL being called
-        $this->log_debug('Making request to URL: ' . $url);
-        
-        $args = array(
-            'method' => $method,
-            'headers' => array(
-                'Content-Type' => 'application/json',
-                'Accept' => 'application/json',
-                'X-Livraria-Client' => $this->client_header()
-            ),
-            'timeout' => 30,
-            'user-agent' => 'WordPress-Livraria-Plugin/1.0',
-            'sslverify' => self::ssl_verify()
-        );
-        
-        if ($data && in_array($method, array('POST', 'PUT', 'PATCH'))) {
-            $args['body'] = json_encode($data);
-            
-            // Log request for debugging (dev mode only, password redacted)
-            $this->log_debug('Raw API Request: ' . $method . ' ' . $url, $data);
-        }
-        
-        $response = wp_remote_request($url, $args);
-        
-        if (is_wp_error($response)) {
-            $error_message = $response->get_error_message();
-            $this->log_error('Raw API Request Failed: ' . $error_message);
-            return false;
-        }
-        
-        $response_code = wp_remote_retrieve_response_code($response);
-        $response_body = wp_remote_retrieve_body($response);
-        
-        // Log response for debugging
-        $this->log_debug('Raw API Response: ' . $response_code, $response_body);
-        
-        if ($response_code >= 200 && $response_code < 300) {
-            $decoded = json_decode($response_body, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                $this->log_error('Invalid JSON response: ' . json_last_error_msg());
-                return false;
-            }
-            return $decoded;
-        } else {
-            $error_message = 'HTTP ' . $response_code;
-            if ($response_body) {
-                $error_data = json_decode($response_body, true);
-                if (isset($error_data['message'])) {
-                    $error_message .= ': ' . $error_data['message'];
-                } else {
-                    // Never the body itself: it can echo what was sent
-                    $error_message .= ' (' . strlen($response_body) . ' bytes, no message field)';
-                }
-            }
-            $this->log_error('Raw API Error: ' . $error_message);
-            return false;
-        }
+        return $this->json_result($this->request_json($method, $endpoint, $data), 'Raw API Error');
     }
     
     /**
-     * Make an API request
+     * Make an authenticated API request. A 401 to a token that looked valid
+     * gets one refresh and one retry; a second 401 is a failure.
      * 
      * @param string $method HTTP method
      * @param string $endpoint API endpoint
@@ -721,70 +978,11 @@ class Livraria_API_Client {
             return false;
         }
         
-        $url = rtrim($this->api_base_url, '/') . $endpoint;
-        $url = $this->convert_localhost_for_docker($url);
-        
-        $args = array(
-            'method' => $method,
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $this->api_token,
-                'Content-Type' => 'application/json',
-                'Accept' => 'application/json',
-                'X-Livraria-Client' => $this->client_header()
-            ),
-            'timeout' => 30,
-            'user-agent' => 'WordPress-Livraria-Plugin/1.0',
-            'sslverify' => self::ssl_verify()
-        );
-        
-        if ($data && in_array($method, array('POST', 'PUT', 'PATCH'))) {
-            $json_body = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-            $args['body'] = $json_body;
-
-            // Dev mode only, redacted (this body was logged on every shop)
-            $this->log_debug('API Request: ' . $method . ' ' . $url, $data);
+        $r = $this->request_json($method, $endpoint, $data, true);
+        if ($r['code'] === 401 && $this->refresh_session()) {
+            $r = $this->request_json($method, $endpoint, $data, true);
         }
-        
-        $response = wp_remote_request($url, $args);
-        
-        if (is_wp_error($response)) {
-            $error_message = $response->get_error_message();
-            $this->log_error('API Request Failed: ' . $error_message);
-            return false;
-        }
-        
-        $response_code = wp_remote_retrieve_response_code($response);
-        $response_body = wp_remote_retrieve_body($response);
-        
-        // Log response for debugging
-        $this->log_debug('API Response: ' . $response_code, $response_body);
-        
-        if ($response_code >= 200 && $response_code < 300) {
-            $decoded = json_decode($response_body, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                $this->log_error('Invalid JSON response: ' . json_last_error_msg());
-                return false;
-            }
-            return $decoded;
-        } else {
-            $error_message = 'HTTP ' . $response_code;
-            if ($response_body) {
-                $error_data = json_decode($response_body, true);
-                if (isset($error_data['message'])) {
-                    $message = $error_data['message'];
-                    // Handle case where message might be an array
-                    if (is_array($message)) {
-                        $message = json_encode($message, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                    }
-                    $error_message .= ': ' . $message;
-                } else {
-                    // Never the body itself: it can echo what was sent
-                    $error_message .= ' (' . strlen($response_body) . ' bytes, no message field)';
-                }
-            }
-            $this->log_error('API Error: ' . $error_message);
-            return false;
-        }
+        return $this->json_result($r, 'API Error');
     }
     
     /**
@@ -1033,8 +1231,8 @@ class Livraria_API_Client {
 
     /**
      * Set encrypted option value (public method for use outside class)
-     * Encrypts sensitive data before storing. Without encryption nothing is
-     * stored: a password in clear text is worse than no stored password.
+     * Encrypts sensitive data (the refresh token) before storing. Without
+     * encryption nothing is stored: a token in clear text is worse than none.
      * 
      * @param string $option_name Option name
      * @param string $value Value to encrypt and store

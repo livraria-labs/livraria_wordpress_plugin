@@ -1,14 +1,15 @@
 <?php
 /**
- * Unit tests for Livraria_Admin_Page: the stored password never reaches the
- * settings page HTML, only whether one is stored.
+ * Unit tests for Livraria_Admin_Page: no password field is ever prefilled,
+ * no token reaches the page, and the session state is shown.
  */
 
 require_once dirname(__DIR__) . '/TestCase.php';
 
 class Admin_Page_Test extends Livraria_TestCase {
 
-    const PASSWORD = 'Invented-Pass-0700000123';
+    const REFRESH = 'invented-refresh-token-0700000123';
+    const ACCESS = 'invented-access-token-0700000124';
 
     private $client;
 
@@ -19,40 +20,50 @@ class Admin_Page_Test extends Livraria_TestCase {
         }, 10, 3);
 
         $this->client = new Livraria_API_Client();
-        update_option('livraria_remember_credentials', true);
         $this->client->set_encrypted_option('courier_api_username', 'merchant@example.com');
-        $this->client->set_encrypted_option('courier_api_password', self::PASSWORD);
-        $this->assertSame(self::PASSWORD, $this->client->get_encrypted_option('courier_api_password'));
     }
 
     private function render_page() {
-        $page = new Livraria_Admin_Page($this->client);
+        $page = new Livraria_Admin_Page(new Livraria_API_Client());
         ob_start();
         $page->render();
         return ob_get_clean();
     }
 
-    public function test_login_form_does_not_contain_the_stored_password() {
-        // No API session: the login form is shown
-        $html = $this->render_page();
-
-        $this->assertStringContainsString('id="login-password"', $html);
-        $this->assertStringNotContainsString(self::PASSWORD, $html);
-        $this->assertStringNotContainsString(htmlspecialchars(self::PASSWORD, ENT_QUOTES), $html);
-        $this->assertStringContainsString('data-stored="1"', $html);
-        $this->assertStringContainsString('Stored (encrypted)', $html);
-        $this->assertStringNotContainsString('livraria-copy-password', $html);
-    }
-
-    public function test_logged_in_page_does_not_contain_the_stored_password() {
-        update_option('livraria_api_token', 'invented-token-1');
+    public function test_connected_page_shows_the_user_and_no_token() {
+        update_option('livraria_api_token', self::ACCESS);
         update_option('livraria_token_expires_at', time() + 3600);
+        $this->client->set_encrypted_option(Livraria_API_Client::OPT_REFRESH_TOKEN, self::REFRESH);
+        update_option(Livraria_API_Client::OPT_CONNECTED_AT, time() - 60);
 
         $html = $this->render_page();
 
         $this->assertStringNotContainsString('id="login-password"', $html);
-        $this->assertStringNotContainsString(self::PASSWORD, $html);
-        $this->assertStringContainsString('data-password-stored="1"', $html);
+        $this->assertStringContainsString('Connected as merchant@example.com since', $html);
+        $this->assertStringContainsString('data-session="1"', $html);
+        $this->assertStringNotContainsString(self::REFRESH, $html);
+        $this->assertStringNotContainsString(self::ACCESS, $html);
+    }
+
+    public function test_not_connected_shows_an_empty_login_form_without_remember_me() {
+        $html = $this->render_page();
+
+        $this->assertStringContainsString('id="login-password"', $html);
+        $this->assertStringContainsString('name="courier_api_password" value=""', $html);
+        $this->assertStringContainsString('value="merchant@example.com"', $html);
+        $this->assertStringNotContainsString('remember', strtolower($html));
+        $this->assertStringContainsString('Not connected', $html);
+    }
+
+    public function test_expired_session_shows_the_message_and_the_login_form() {
+        update_option(Livraria_API_Client::OPT_SESSION_STATE, 'expired');
+        update_option(Livraria_API_Client::OPT_SESSION_EXPIRED_AT, time() - 60);
+
+        $html = $this->render_page();
+
+        $this->assertStringContainsString('Livraria session expired', $html);
+        $this->assertStringContainsString('log in again', $html);
+        $this->assertStringContainsString('id="login-password"', $html);
     }
 
     public function test_no_url_field_outside_dev_mode() {
@@ -60,5 +71,6 @@ class Admin_Page_Test extends Livraria_TestCase {
 
         $this->assertStringNotContainsString('login-api-url', $html);
         $this->assertStringNotContainsString('name="courier_api_base_url"', $html);
+        $this->assertStringContainsString('livraria-api-url-display', $html);
     }
 }

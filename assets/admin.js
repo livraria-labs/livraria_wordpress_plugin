@@ -66,11 +66,9 @@ jQuery(document).ready(function($) {
         if (!username) {
             username = $('#livraria-debug-modal').find('td[data-api-username]').attr('data-api-username');
         }
-        // The stored password is not in the page; the server uses it when asked
-        var useStored = !password && (
-            $('#livraria-debug-modal').find('td[data-password-stored]').attr('data-password-stored') === '1' ||
-            $('#login-password').attr('data-stored') === '1'
-        );
+        // No password typed while connected: the server tests the stored session
+        var useStored = !password &&
+            $('#livraria-debug-modal').find('td[data-session]').attr('data-session') === '1';
         
         // Validate values (check for empty strings, null, undefined, or 'Not set')
         if (!username || username === '' || username === 'Not set' || 
@@ -92,7 +90,7 @@ jQuery(document).ready(function($) {
             nonce: livrariaAdmin.nonce
         };
         if (useStored) {
-            requestData.use_stored_credentials = '1';
+            requestData.use_session = '1';
         }
         if (apiUrl) {
             requestData.api_url = apiUrl;
@@ -452,10 +450,7 @@ jQuery(document).ready(function($) {
         var apiUrl = $('#login-api-url').val() || '';
         var username = $('#login-username').val() || $('input[name="courier_api_username"]').val();
         var password = $('#login-password').val() || $('input[name="courier_api_password"]').val();
-        var rememberMe = $('#remember-me').is(':checked') ? '1' : '0';
-        // An empty password with a stored one: the server uses the stored one
-        var hasStored = $('#login-password').attr('data-stored') === '1';
-        if (!username || (!password && !hasStored)) {
+        if (!username || !password) {
             alert('Please fill in Username and Password before logging in.');
             return;
         }
@@ -469,7 +464,6 @@ jQuery(document).ready(function($) {
                     action: 'livraria_login',
                     username: username,
                     password: password,
-                    remember_me: rememberMe,
                     nonce: livrariaAdmin.nonce
                 };
                 if (apiUrl) {
@@ -479,7 +473,7 @@ jQuery(document).ready(function($) {
             })(),
             success: function(response) {
                 if (response.success) {
-                    // e.g. credentials not stored because they cannot be encrypted
+                    // e.g. the session could not be stored encrypted
                     if (response.data && response.data.message && response.data.message !== 'Login successful') {
                         alert(response.data.message);
                     }

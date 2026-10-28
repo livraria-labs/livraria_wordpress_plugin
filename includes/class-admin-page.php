@@ -19,10 +19,14 @@ class Livraria_Admin_Page {
      * Render the admin settings page
      */
     public function render() {
-        // Check if user is logged in (has valid token)
-        $api_token = get_option('livraria_api_token', '');
-        $token_expires_at = get_option('livraria_token_expires_at', 0);
-        $is_logged_in = !empty($api_token) && $token_expires_at > (time() + 300); // 5 minute buffer
+        // Connected: a session that is not expired. Refresh it now if needed,
+        // so the page shows the state the API reports.
+        if ($this->api_client->has_session()) {
+            $this->api_client->ensure_session();
+        }
+        $session_expired = Livraria_API_Client::is_session_expired();
+        $is_logged_in = !$session_expired && $this->api_client->has_session();
+        $stored_username = $this->api_client->get_encrypted_option('courier_api_username', '');
         
         ?>
         <div class="wrap">
@@ -42,6 +46,12 @@ class Livraria_Admin_Page {
                 </div>
             </div>
             
+            <?php if ($session_expired): ?>
+            <div id="livraria-session-expired" style="background: #fcf0f1; border-left: 4px solid #d63638; padding: 12px 16px; margin-top: 15px; border-radius: 2px;">
+                <p style="margin: 0; color: #d63638;"><strong>Livraria session expired<?php $expired_at = (int) get_option(Livraria_API_Client::OPT_SESSION_EXPIRED_AT, 0); if ($expired_at) { echo ' on ' . esc_html(self::format_time($expired_at)); } ?>, log in again.</strong> Until then the plugin cannot get quotes or create shipments.</p>
+            </div>
+            <?php endif; ?>
+
             <?php if (!$is_logged_in): ?>
             <!-- Login form (shown when not logged in) -->
             <div style="background: #f7f7f7; border-left: 4px solid #2271b1; padding: 12px 16px; margin-top: 15px; margin-bottom: 15px; border-radius: 2px;">
@@ -75,36 +85,24 @@ class Livraria_Admin_Page {
                     <tr>
                         <th scope="row">Username</th>
                         <td>
-                            <?php 
-                            $remember_me = get_option('livraria_remember_credentials', false);
-                            $username = $remember_me ? $this->api_client->get_encrypted_option('courier_api_username', '') : '';
-                            ?>
-                            <input type="text" id="login-username" name="courier_api_username" value="<?php echo esc_attr($username); ?>" class="regular-text" />
+                            <input type="text" id="login-username" name="courier_api_username" value="<?php echo esc_attr($stored_username); ?>" class="regular-text" />
                         </td>
                     </tr>
                     <tr>
                         <th scope="row">Password</th>
                         <td>
-                            <?php
-                            // The stored password is never written into the page: only whether one exists
-                            $has_stored_password = $remember_me && $this->api_client->get_encrypted_option('courier_api_password', '') !== '';
-                            ?>
-                            <input type="password" id="login-password" name="courier_api_password" value="" autocomplete="new-password" class="regular-text"<?php if ($has_stored_password): ?> data-stored="1" placeholder="Stored (leave empty to use it)"<?php endif; ?> />
+                            <?php // The password is used for this login only and is never stored ?>
+                            <input type="password" id="login-password" name="courier_api_password" value="" autocomplete="current-password" class="regular-text" />
                         </td>
                     </tr>
+                    <?php if (!Livraria_API_Client::can_encrypt()): ?>
                     <tr>
-                        <th scope="row">Remember me</th>
+                        <th scope="row">Session</th>
                         <td>
-                            <?php if (Livraria_API_Client::can_encrypt()): ?>
-                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                <input type="checkbox" id="remember-me" name="remember_me" value="1" <?php checked(true, $remember_me); ?> />
-                            </label>
-                            <?php else: ?>
-                            <input type="checkbox" id="remember-me" name="remember_me" value="1" disabled="disabled" />
-                            <p class="description" style="color: #d63638;">Unavailable: this server's PHP has no OpenSSL, so the plugin cannot encrypt your password and will not store it. You will log in again when the API session ends (about an hour). Ask your host to enable the PHP OpenSSL extension.</p>
-                            <?php endif; ?>
+                            <p class="description" style="color: #d63638;">This server's PHP has no OpenSSL, so the plugin cannot store the session encrypted and will not store it. You will have to log in again about every hour. Ask your host to enable the PHP OpenSSL extension.</p>
                         </td>
                     </tr>
+                    <?php endif; ?>
                 </table>
                 <p class="submit">
                     <button type="button" id="livraria-login-btn" class="button button-primary">Login</button>
@@ -140,20 +138,12 @@ class Livraria_Admin_Page {
                                 </tr>
                                 <tr>
                                     <td style="padding: 6px 0; font-size: 12px; color: #646970; width: 120px; vertical-align: top;">Username:</td>
-                                    <?php 
-                                    $remember_me = get_option('livraria_remember_credentials', false);
-                                    $stored_username = $remember_me ? $this->api_client->get_encrypted_option('courier_api_username', '') : '';
-                                    ?>
                                     <td style="padding: 6px 0; font-size: 12px; color: #1d2327; font-family: monospace;" data-api-username="<?php echo esc_attr($stored_username); ?>"><?php echo esc_html($stored_username ?: 'Not set'); ?></td>
                                 </tr>
                                 <tr>
-                                    <td style="padding: 6px 0; font-size: 12px; color: #646970; width: 120px; vertical-align: top;">Password:</td>
-                                    <?php
-                                    // Only whether a password is stored; its value never reaches the page
-                                    $password_stored = $remember_me && $this->api_client->get_encrypted_option('courier_api_password', '') !== '';
-                                    ?>
-                                    <td style="padding: 6px 0; font-size: 12px; color: #1d2327; font-family: monospace;" data-password-stored="<?php echo $password_stored ? '1' : '0'; ?>">
-                                        <span id="livraria-password-display"><?php echo $password_stored ? 'Stored (encrypted)' : 'Not stored'; ?></span>
+                                    <td style="padding: 6px 0; font-size: 12px; color: #646970; width: 120px; vertical-align: top;">Session:</td>
+                                    <td style="padding: 6px 0; font-size: 12px; color: #1d2327; font-family: monospace;" data-session="<?php echo $is_logged_in ? '1' : '0'; ?>">
+                                        <span id="livraria-session-display"><?php echo $is_logged_in ? 'Connected' : ($session_expired ? 'Expired: log in again' : 'Not connected'); ?></span>
                                     </td>
                                 </tr>
                             </table>
@@ -200,14 +190,22 @@ class Livraria_Admin_Page {
     }
     
     /**
+     * A timestamp in the site's date and time format
+     *
+     * @param int $timestamp
+     * @return string
+     */
+    private static function format_time($timestamp) {
+        if (function_exists('wp_date')) {
+            return (string) wp_date(get_option('date_format', 'Y-m-d') . ' ' . get_option('time_format', 'H:i'), $timestamp);
+        }
+        return gmdate('Y-m-d H:i', $timestamp) . ' UTC';
+    }
+
+    /**
      * Render account information section (user profile and sender profile)
      */
     private function render_account_information() {
-        $api_token = get_option('livraria_api_token', '');
-        if (empty($api_token)) {
-            return;
-        }
-        
         // Ensure API client has latest base URL
         $current_base_url = get_option('courier_api_base_url', '');
         if (!empty($current_base_url)) {
@@ -218,6 +216,11 @@ class Livraria_Admin_Page {
         $sender_profile = $this->api_client->get_sender_profile();
         ?>
         <div id="user-info-section" style="margin-top: 30px;">
+            <?php
+            $connected_as = $this->api_client->get_encrypted_option('courier_api_username', '');
+            $connected_at = (int) get_option(Livraria_API_Client::OPT_CONNECTED_AT, 0);
+            ?>
+            <p id="livraria-session-state" style="margin: 0 0 4px 0; color: #00a32a;">Connected<?php if ($connected_as !== '') { echo ' as ' . esc_html($connected_as); } ?><?php if ($connected_at) { echo ' since ' . esc_html(self::format_time($connected_at)); } ?></p>
             <p class="description" style="margin: 0 0 8px 0;">API address: <code id="livraria-api-url-display"><?php echo esc_html(Livraria_API_Client::resolve_base_url()); ?></code></p>
             <?php $this->render_user_profile($user_info, $sender_profile); ?>
         </div>
