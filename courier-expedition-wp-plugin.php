@@ -119,9 +119,10 @@ class LivrariaPlugin {
     }
     
     public function admin_init() {
-        register_setting('courier_api_settings', 'courier_api_base_url', array('sanitize_callback' => 'esc_url_raw'));
-        register_setting('courier_api_settings', 'courier_api_username', array('sanitize_callback' => 'sanitize_text_field'));
-        register_setting('courier_api_settings', 'courier_api_password', array('sanitize_callback' => 'sanitize_text_field'));
+        // courier_api_base_url, courier_api_username and courier_api_password
+        // are deliberately not registered: options.php must not write them
+        // (a password in clear text, or another API host). ajax_login is
+        // their only writer.
         register_setting('courier_api_settings', 'courier_auto_create', array('sanitize_callback' => array($this, 'sanitize_boolean')));
         register_setting('courier_api_settings', 'courier_default_sender_name', array('sanitize_callback' => 'sanitize_text_field'));
         register_setting('courier_api_settings', 'courier_default_sender_email', array('sanitize_callback' => 'sanitize_email'));

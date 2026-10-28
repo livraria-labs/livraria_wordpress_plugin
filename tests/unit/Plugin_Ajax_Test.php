@@ -266,6 +266,19 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
         $this->assertSame('', $this->captured_log());
     }
 
+    public function test_credentials_and_api_url_are_not_registered_settings() {
+        global $wp_test_registered_settings;
+        $wp_test_registered_settings = array();
+
+        $this->plugin->admin_init();
+
+        foreach (array('courier_api_base_url', 'courier_api_username', 'courier_api_password') as $option) {
+            $this->assertArrayNotHasKey($option, $wp_test_registered_settings, $option);
+        }
+        $this->assertArrayHasKey('courier_auto_create', $wp_test_registered_settings);
+        $this->assertArrayHasKey('courier_sender_apartment', $wp_test_registered_settings);
+    }
+
     public function test_logout_runs_for_an_administrator() {
         $this->as_user(array('read', 'manage_options'));
         update_option('livraria_api_token', 'existing-token');

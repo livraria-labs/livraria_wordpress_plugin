@@ -224,6 +224,13 @@ if (!function_exists('current_user_can')) {
     }
 }
 
+if (!function_exists('register_setting')) {
+    function register_setting($option_group, $option_name, $args = array()) {
+        global $wp_test_registered_settings;
+        $wp_test_registered_settings[$option_name] = $option_group;
+    }
+}
+
 if (!function_exists('add_action')) {
     function add_action($tag, $callback, $priority = 10, $accepted_args = 1) {
         return true;
