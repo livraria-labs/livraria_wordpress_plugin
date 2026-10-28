@@ -373,7 +373,7 @@ class Livraria_API_Client {
             ),
             'timeout' => 60, // Longer timeout for PDF generation
             'user-agent' => 'WordPress-Livraria-Plugin/1.0',
-            'sslverify' => false
+            'sslverify' => self::ssl_verify()
         );
 
         $this->log_debug('Binary API Request: ' . $method . ' ' . $url);
@@ -438,6 +438,28 @@ class Livraria_API_Client {
     }
 
     /**
+     * Whether requests verify the API's TLS certificate. Always, except on a
+     * development install whose wp-config.php enables WP_DEBUG and also
+     * defines LIVRARIA_ALLOW_INSECURE_TLS as boolean true (for a local API
+     * with a self-signed certificate). A shop has no setting for it.
+     *
+     * @return bool
+     */
+    public static function ssl_verify() {
+        return !self::allow_insecure_tls();
+    }
+
+    /**
+     * @return bool Whether this install may skip TLS verification (both constants above, set by hand)
+     */
+    public static function allow_insecure_tls() {
+        if (!defined('WP_DEBUG') || !WP_DEBUG) {
+            return false;
+        }
+        return defined('LIVRARIA_ALLOW_INSECURE_TLS') && LIVRARIA_ALLOW_INSECURE_TLS === true;
+    }
+
+    /**
      * Convert localhost/127.0.0.1 to host.docker.internal for Docker
      * 
      * @param string $url Original URL
@@ -493,7 +515,7 @@ class Livraria_API_Client {
             ),
             'timeout' => 30,
             'user-agent' => 'WordPress-Livraria-Plugin/1.0',
-            'sslverify' => false // For development/testing - set to true in production
+            'sslverify' => self::ssl_verify()
         );
         
         if ($data && in_array($method, array('POST', 'PUT', 'PATCH'))) {
@@ -572,7 +594,7 @@ class Livraria_API_Client {
             ),
             'timeout' => 30,
             'user-agent' => 'WordPress-Livraria-Plugin/1.0',
-            'sslverify' => false // For development/testing - set to true in production
+            'sslverify' => self::ssl_verify()
         );
         
         if ($data && in_array($method, array('POST', 'PUT', 'PATCH'))) {
@@ -730,7 +752,7 @@ class Livraria_API_Client {
             ),
             'timeout' => 10,
             'user-agent' => 'WordPress-Livraria-Plugin/1.0',
-            'sslverify' => false
+            'sslverify' => self::ssl_verify()
         );
         
         $this->log_debug('Testing connectivity to: ' . $test_url);

@@ -284,6 +284,31 @@ class API_Client_Test extends Livraria_TestCase {
         }
     }
 
+    public function test_every_request_verifies_tls_outside_dev_mode() {
+        // The unit-test bootstrap defines neither WP_DEBUG nor
+        // LIVRARIA_ALLOW_INSECURE_TLS: this is a production install.
+        $this->assertFalse(Livraria_API_Client::allow_insecure_tls());
+
+        update_option('livraria_api_token', 'valid-token');
+        update_option('livraria_token_expires_at', time() + 3600);
+        $this->api_client = new Livraria_API_Client('http://test-api.example.com');
+
+        $captured = array();
+        $this->capture_requests($captured);
+
+        $this->api_client->get_user_info();                          // api_request
+        $this->api_client->download_awb_pdf('AWB0000000001');        // api_request_binary
+        $this->api_client->test_connectivity();                      // connectivity check
+        $this->api_client->get_available_couriers();                 // raw_api_request
+        $this->api_client->login('test_user', 'test_pass');          // raw_api_request (login)
+
+        $this->assertCount(5, $captured);
+        foreach ($captured as $request) {
+            $this->assertArrayHasKey('sslverify', $request['args'], $request['url']);
+            $this->assertTrue($request['args']['sslverify'], $request['url']);
+        }
+    }
+
     public function tearDown(): void {
         global $wp_test_bloginfo_version;
         $wp_test_bloginfo_version = null;
