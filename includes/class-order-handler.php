@@ -42,6 +42,12 @@ class Livraria_Order_Handler {
             );
         }
         
+        // The recipient first: an unusable phone stops here, before any API call
+        $recipient = $this->build_recipient($order);
+        if (isset($recipient['error'])) {
+            return array('success' => false, 'message' => $recipient['error'], 'fix' => $recipient['fix'] ?? '');
+        }
+        
         try {
             // Get available couriers first (with caching)
             $courier_ids = $this->get_available_courier_ids();
@@ -51,7 +57,7 @@ class Livraria_Order_Handler {
             }
             
             // Create quote request and get courier quotes
-            $quote_request_data = $this->prepare_quote_request_data($order, $custom_data, $courier_ids);
+            $quote_request_data = $this->prepare_quote_request_data($order, $custom_data, $courier_ids, $recipient);
             
             // Debug: Log the data being sent (only in development mode)
             if (Livraria_API_Client::is_dev_mode()) {
@@ -245,7 +251,7 @@ class Livraria_Order_Handler {
             'shipping_country' => 'Shipping Country',
             // Keep email and phone from billing since they're not typically in shipping
             'billing_email' => 'Email Address',
-            'billing_phone' => 'Phone Number'
+            // The phone is checked by build_recipient() (shipping, then billing)
         );
         
         $missing_fields = array();
@@ -329,33 +335,184 @@ class Livraria_Order_Handler {
     }
     
     /**
-     * Parse phone number into country code and NSN
-     * 
-     * @param string $phone Phone number (e.g., +40123456789)
-     * @return array Array with phoneCountryCode and phoneNSN
+     * Split a phone number into a country code and a national significant
+     * number (NSN), as the Livraria API wants it: phoneCountryCode "+40" and
+     * a 9-digit phoneNSN starting 7, 2 or 3 for Romania.
+     *
+     * Romanian numbers turn up in every shape: 0722 123 456, 0722.123.456,
+     * +40722123456, 0040722123456, 40722123456, 722123456, +40 0722 123 456.
+     * A number with another country code is accepted when it is written with
+     * "+" (or "00"). Anything else comes back with an empty country code, and
+     * phone_problem() turns that into a stop. Ported from the PrestaShop
+     * module (OrderHandler::normalizePhone).
+     *
+     * @param string $phone As typed
+     * @return array phoneCountryCode, phoneNSN
      */
-    private function parse_phone_number($phone) {
-        $phone = trim($phone);
-        $phone = preg_replace('/\s+/', '', $phone); // Remove spaces
-        
-        if (empty($phone)) {
+    public static function normalize_phone($phone) {
+        $raw = preg_replace('/[^\d+]/', '', (string) $phone);
+        if ($raw === '' || $raw === null) {
             return array('phoneCountryCode' => '', 'phoneNSN' => '');
         }
-        
-        if (preg_match('/^(\+\d{1,3})(.+)$/', $phone, $matches)) {
-            return array(
-                'phoneCountryCode' => $matches[1],
-                'phoneNSN' => $matches[2]
-            );
+
+        // 00 as the international prefix
+        if (strpos($raw, '00') === 0) {
+            $raw = '+' . substr($raw, 2);
         }
-        
-        // If no country code, return as-is (no fallback)
+        $digits = preg_replace('/\D/', '', $raw);
+
+        if (strpos($raw, '+40') === 0
+            || (strpos($raw, '+') !== 0 && (strpos($digits, '40') === 0 || strpos($digits, '0') === 0 || preg_match('/^[723]\d{8}$/', $digits)))) {
+            $national = $digits;
+            if (strpos($national, '40') === 0 && strlen($national) > 9) {
+                $national = substr($national, 2);
+            }
+            // Trunk zero, including the "+40 0722..." double prefix
+            while (strpos($national, '0') === 0 && strlen($national) > 9) {
+                $national = substr($national, 1);
+            }
+            return array('phoneCountryCode' => '+40', 'phoneNSN' => $national);
+        }
+
+        if (strpos($raw, '+') === 0) {
+            // Longest match first, so "+36" is never read as "+367"
+            $known = array(
+                '+373', '+359', '+355', '+356', '+357', '+358', '+350', '+351', '+352', '+353', '+354',
+                '+380', '+381', '+382', '+383', '+385', '+386', '+387', '+389',
+                '+420', '+421', '+423', '+370', '+371', '+372', '+374', '+375', '+376', '+377', '+378',
+                '+30', '+31', '+32', '+33', '+34', '+36', '+39', '+41', '+43', '+44', '+45',
+                '+46', '+47', '+48', '+49', '+90', '+20', '+27', '+7', '+1',
+            );
+            foreach ($known as $code) {
+                $bare = substr($code, 1);
+                if (strpos($digits, $bare) === 0) {
+                    return array('phoneCountryCode' => $code, 'phoneNSN' => ltrim(substr($digits, strlen($bare)), '0'));
+                }
+            }
+            // Unknown code: two digits is the commonest length in Europe
+            return array('phoneCountryCode' => '+' . substr($digits, 0, 2), 'phoneNSN' => substr($digits, 2));
+        }
+
+        return array('phoneCountryCode' => '', 'phoneNSN' => $digits);
+    }
+
+    /**
+     * Why a normalised phone cannot be sent, '' when it can
+     *
+     * @param array $parsed normalize_phone() result
+     * @return string '', 'missing', 'unplaceable' or 'invalid_ro'
+     */
+    public static function phone_problem($parsed) {
+        if ($parsed['phoneNSN'] === '' && $parsed['phoneCountryCode'] === '') {
+            return 'missing';
+        }
+        if ($parsed['phoneCountryCode'] === '' || $parsed['phoneNSN'] === '' || strlen($parsed['phoneNSN']) < 4) {
+            return 'unplaceable';
+        }
+        if ($parsed['phoneCountryCode'] === '+40' && !preg_match('/^[723]\d{8}$/', $parsed['phoneNSN'])) {
+            return 'invalid_ro';
+        }
+        return '';
+    }
+
+    /**
+     * The recipient phone as typed: the shipping phone (WooCommerce 5.6+),
+     * else the billing phone
+     *
+     * @param WC_Order $order
+     * @return array phone (trimmed, '' if none), source ('shipping', 'billing' or '')
+     */
+    public static function recipient_phone($order) {
+        $candidates = array(
+            'shipping' => method_exists($order, 'get_shipping_phone') ? $order->get_shipping_phone() : '',
+            'billing' => method_exists($order, 'get_billing_phone') ? $order->get_billing_phone() : '',
+        );
+        foreach ($candidates as $source => $value) {
+            $value = trim((string) $value);
+            if ($value !== '') {
+                return array('phone' => $value, 'source' => $source);
+            }
+        }
+        return array('phone' => '', 'source' => '');
+    }
+
+    /**
+     * The recipient of the quote request, or array('error' => message,
+     * 'fix' => order field the merchant can fill in) when the order cannot be
+     * shipped as it is. Runs before any API call.
+     *
+     * @param WC_Order $order
+     * @return array
+     */
+    public function build_recipient($order) {
+        $phone = self::recipient_phone($order);
+        $parsed = self::normalize_phone($phone['phone']);
+        $problem = self::phone_problem($parsed);
+        if ($problem === 'missing' && $phone['phone'] !== '') {
+            $problem = 'unplaceable'; // typed, but no digits in it
+        }
+        switch ($problem) {
+            case 'missing':
+                return array(
+                    'error' => 'The order has no recipient phone number (shipping or billing phone). Couriers refuse a shipment without one; add it to the order.',
+                    'fix' => 'phone',
+                );
+            case 'unplaceable':
+                return array(
+                    'error' => 'The recipient phone "' . $phone['phone'] . '" (' . $phone['source'] . ' phone) cannot be used: it is neither a Romanian number (07XX XXX XXX) nor an international number starting with + and its country code. Correct it on the order.',
+                    'fix' => 'phone',
+                );
+            case 'invalid_ro':
+                return array(
+                    'error' => 'The recipient phone "' . $phone['phone'] . '" (' . $phone['source'] . ' phone) is not a valid Romanian number: couriers need 10 digits starting 07, 02 or 03. Correct it on the order.',
+                    'fix' => 'phone',
+                );
+        }
+
+        $recipient_name = trim($this->get_shipping_or_billing($order, 'first_name') . ' ' . $this->get_shipping_or_billing($order, 'last_name'));
+
+        // Get state and convert code to full name if needed
+        $recipient_state = trim($this->get_shipping_or_billing($order, 'state'));
+        $recipient_county = $recipient_state;
+
+        // Try to convert state code to full name using WooCommerce state mapping
+        if (!empty($recipient_state) && function_exists('WC') && WC()->countries) {
+            $romanian_states = WC()->countries->get_states('RO');
+            if ($romanian_states && isset($romanian_states[$recipient_state])) {
+                $recipient_county = $romanian_states[$recipient_state];
+            }
+        }
+
+        // Remove diacritics from county and uppercase
+        $recipient_county = strtoupper($this->remove_romanian_diacritics($recipient_county));
+
+        // Uppercase and remove diacritics from recipient city
+        $recipient_city = $this->get_shipping_or_billing($order, 'city');
+        $recipient_city = !empty($recipient_city)
+            ? strtoupper($this->remove_romanian_diacritics($recipient_city))
+            : '';
+
         return array(
-            'phoneCountryCode' => '',
-            'phoneNSN' => $phone
+            'name' => $recipient_name,
+            'phoneCountryCode' => $parsed['phoneCountryCode'],
+            'phoneNSN' => $parsed['phoneNSN'],
+            'email' => trim($order->get_billing_email()),
+            'isCompany' => false,
+            'address' => array(
+                'country' => 'Romania',
+                'county' => $recipient_county,
+                'city' => $recipient_city,
+                'postcode' => $this->get_shipping_or_billing($order, 'postcode'),
+                'street' => $this->get_shipping_or_billing($order, 'address_1'),
+                'streetNumber' => $this->get_shipping_or_billing($order, 'address_2'),
+                'block' => '',
+                'staircase' => '',
+                'floor' => '',
+                'apartment' => '',
+            )
         );
     }
-    
+
     /**
      * Sanitize shop name for use in externalRef
      * 
@@ -396,9 +553,10 @@ class Livraria_Order_Handler {
      * @param WC_Order $order
      * @param array $custom_data Custom expedition data
      * @param array $courier_ids Available courier IDs
+     * @param array|null $recipient build_recipient() result, built here when null
      * @return array
      */
-    private function prepare_quote_request_data($order, $custom_data = array(), $courier_ids = array()) {
+    private function prepare_quote_request_data($order, $custom_data = array(), $courier_ids = array(), $recipient = null) {
         $sender_profile = $this->get_sender_profile_from_api();
         $sender_info = $this->get_sender_info();
         $packages = $this->calculate_packages_from_order($order, $custom_data);
@@ -412,7 +570,7 @@ class Livraria_Order_Handler {
                 'phoneNSN' => $sender_profile['phoneNSN']
             );
         } else {
-            $sender_phone_parsed = $this->parse_phone_number($sender_phone);
+            $sender_phone_parsed = self::normalize_phone($sender_phone);
         }
         
         // Get sender address - use profile directly if available
@@ -499,10 +657,6 @@ class Livraria_Order_Handler {
         
         $sender_address['localityPostcode'] = $sender_address['postcode'] ?? '';
         
-        // Parse recipient phone number
-        $recipient_phone = trim($order->get_billing_phone());
-        $recipient_phone_parsed = $this->parse_phone_number($recipient_phone);
-        
         // Build sender object - ensure proper data types
         $sender_is_company = isset($sender_info['isCompany']) ? (bool)$sender_info['isCompany'] : false;
         
@@ -536,54 +690,11 @@ class Livraria_Order_Handler {
             'cui' => $sender_info['cui'] ?? '',
         );
         
-        // Build recipient object
-        $recipient_name = trim($this->get_shipping_or_billing($order, 'first_name') . ' ' . $this->get_shipping_or_billing($order, 'last_name'));
-        
-        // Get state and convert code to full name if needed
-        $recipient_state = trim($this->get_shipping_or_billing($order, 'state'));
-        $recipient_county = $recipient_state;
-        
-        // Try to convert state code to full name using WooCommerce state mapping
-        if (!empty($recipient_state) && function_exists('WC') && WC()->countries) {
-            $romanian_states = WC()->countries->get_states('RO');
-            if ($romanian_states && isset($romanian_states[$recipient_state])) {
-                $recipient_county = $romanian_states[$recipient_state];
-            }
+        // Build recipient object (build_recipient() stops on an unusable phone)
+        $recipient_obj = $recipient !== null ? $recipient : $this->build_recipient($order);
+        if (isset($recipient_obj['error'])) {
+            throw new Exception($recipient_obj['error']);
         }
-        
-        // Remove diacritics from county and uppercase
-        $recipient_county = strtoupper($this->remove_romanian_diacritics($recipient_county));
-        
-        // Uppercase and remove diacritics from recipient city
-        $recipient_city = $this->get_shipping_or_billing($order, 'city');
-        $recipient_city = !empty($recipient_city) 
-            ? strtoupper($this->remove_romanian_diacritics($recipient_city)) 
-            : '';
-        
-        // Default phoneCountryCode to +40 if empty
-        $recipient_phone_country_code = !empty($recipient_phone_parsed['phoneCountryCode']) 
-            ? $recipient_phone_parsed['phoneCountryCode'] 
-            : '+40';
-        
-        $recipient_obj = array(
-            'name' => $recipient_name,
-            'phoneCountryCode' => $recipient_phone_country_code,
-            'phoneNSN' => $recipient_phone_parsed['phoneNSN'],
-            'email' => trim($order->get_billing_email()),
-            'isCompany' => false,
-            'address' => array(
-                'country' => 'Romania',
-                'county' => $recipient_county,
-                'city' => $recipient_city,
-                'postcode' => $this->get_shipping_or_billing($order, 'postcode'),
-                'street' => $this->get_shipping_or_billing($order, 'address_1'),
-                'streetNumber' => $this->get_shipping_or_billing($order, 'address_2'),
-                'block' => '',
-                'staircase' => '',
-                'floor' => '',
-                'apartment' => '',
-            )
-        );
         
         // Debug: Log sender and recipient data (only in development mode)
         if (Livraria_API_Client::is_dev_mode()) {
