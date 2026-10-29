@@ -126,6 +126,7 @@ jQuery(document).ready(function($) {
             type: 'POST',
             data: {
                 action: 'livraria_get_quotes_for_order',
+                auto: 1,
                 order_id: orderId,
                 nonce: $('#courier_expedition_nonce_field').val(),
                 expedition_data: {}
@@ -162,6 +163,7 @@ jQuery(document).ready(function($) {
                     type: 'POST',
                     data: {
                         action: 'livraria_select_quote',
+                        auto: 1,
                         order_id: orderId,
                         quote_request_id: quoteRequestId,
                         courier_quote_id: selectedQuote.id,
@@ -183,6 +185,7 @@ jQuery(document).ready(function($) {
                             type: 'POST',
                             data: {
                                 action: 'livraria_generate_label',
+                                auto: 1,
                                 order_id: orderId,
                                 nonce: $('#courier_expedition_nonce_field').val()
                             },
@@ -279,6 +282,7 @@ jQuery(document).ready(function($) {
                         type: 'POST',
                         data: {
                             action: 'livraria_get_quotes_for_order',
+                            auto: 1,
                             order_id: orderId,
                             nonce: $('#courier_expedition_nonce_field').val(),
                             expedition_data: {}
@@ -315,6 +319,7 @@ jQuery(document).ready(function($) {
                                 type: 'POST',
                                 data: {
                                     action: 'livraria_select_quote',
+                                    auto: 1,
                                     order_id: orderId,
                                     quote_request_id: quoteRequestId,
                                     courier_quote_id: selectedQuote.id,
@@ -336,6 +341,7 @@ jQuery(document).ready(function($) {
                                         type: 'POST',
                                         data: {
                                             action: 'livraria_generate_label',
+                                            auto: 1,
                                             order_id: orderId,
                                             nonce: $('#courier_expedition_nonce_field').val()
                                         },

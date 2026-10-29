@@ -84,6 +84,8 @@ class LivrariaPlugin {
         add_action('wp_ajax_livraria_select_quote', array($this, 'ajax_select_quote'));
         add_action('wp_ajax_livraria_generate_label', array($this, 'ajax_generate_label'));
         add_action('wp_ajax_livraria_auto_create_expedition', array($this, 'ajax_auto_create_expedition'));
+        // order.js clears the 60 s "auto-create pending" flag with this action
+        add_action('wp_ajax_clear_auto_create_flag', array($this, 'ajax_clear_auto_create_flag'));
         add_action('wp_ajax_livraria_test_courier_api_connection', array($this, 'ajax_test_api_connection'));
         add_action('wp_ajax_livraria_test_connectivity', array($this, 'ajax_test_connectivity'));
         add_action('wp_ajax_livraria_logout', array($this, 'ajax_logout'));
@@ -551,145 +553,81 @@ class LivrariaPlugin {
      * This is the actual implementation that can be called from hook or AJAX
      */
     private function run_auto_create_expedition($order_id) {
-        if (self::is_development_mode()) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-            error_log('Livraria Debug: auto_create_expedition called for order ID: ' . $order_id);
-        }
-        
         if (!get_option('courier_auto_create')) {
-            if (self::is_development_mode()) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                error_log('Livraria Debug: Auto-create expeditions is disabled');
-            }
             return;
         }
-        
-        // Check if expedition already exists
-        if (Livraria_Order_Handler::get_order_meta($order_id, '_courier_expedition_id')) {
-            if (self::is_development_mode()) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                error_log('Livraria Debug: Expedition already exists for order ID: ' . $order_id);
-            }
-            return;
-        }
-        
-        if (self::is_development_mode()) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-            error_log('Livraria Debug: Starting auto-create expedition process for order ID: ' . $order_id);
-        }
-        
-        // Step 1: Get quotes (creates quote request)
-        $quotes_result = $this->order_handler->get_quotes_for_order($order_id);
-        
+
+        // Claims the order: a second run, or an order with a shipment, stops here
+        $quotes_result = $this->order_handler->get_quotes_for_order($order_id, array(), true);
         if (!$quotes_result['success']) {
-            if (self::is_development_mode()) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                error_log('Livraria Debug: Failed to get quotes: ' . $quotes_result['message']);
-            }
+            $this->auto_create_stop($quotes_result['message']);
             return;
         }
-        
-        if (empty($quotes_result['quotes'])) {
-            if (self::is_development_mode()) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                error_log('Livraria Debug: No quotes available for order ID: ' . $order_id);
-            }
-            return;
-        }
-        
+
         $quote_request_id = $quotes_result['quoteRequestId'];
-        $quotes = $quotes_result['quotes'];
-        
-        // Step 2: the cheapest usable quote, never a disabled one
-        $selected_quote = Livraria_Order_Handler::select_best_quote($quotes);
-        if ($selected_quote === null) {
-            if (self::is_development_mode()) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                error_log('Livraria Debug: No usable quote for order ID: ' . $order_id);
-            }
-            return;
-        }
+        $selected_quote = Livraria_Order_Handler::select_best_quote($quotes_result['quotes']);
         $selected_quote_id = $selected_quote['id'];
-        
-        if (self::is_development_mode()) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-            error_log('Livraria Debug: Selected quote ID: ' . $selected_quote_id . ' for order ID: ' . $order_id);
-        }
-        
-        // Store selected quote in order meta
         Livraria_Order_Handler::set_order_meta($order_id, array('_courier_selected_quote_id' => $selected_quote_id));
-        
-        // Step 3: Select the quote via API
-        $select_result = $this->api_client->select_courier_quote($quote_request_id, $selected_quote_id);
-        
-        if ($select_result === false) {
-            if (self::is_development_mode()) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                error_log('Livraria Debug: Failed to select quote via API for order ID: ' . $order_id);
-            }
+
+        if ($this->api_client->select_courier_quote($quote_request_id, $selected_quote_id) === false) {
+            $message = $this->order_handler->api_error_message('Could not select the quote');
+            $this->order_handler->auto_create_failed($order_id, $message, true);
+            $this->auto_create_stop($message);
             return;
         }
-        
-        // Step 4: Attach billing info from default sender profile
+
         $default_sender_profile_id = get_option('livraria_default_sender_profile_id', '');
-        
         if (empty($default_sender_profile_id)) {
-            if (self::is_development_mode()) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                error_log('Livraria Debug: No default sender profile configured for order ID: ' . $order_id);
-            }
+            $message = 'No default sender profile is set under Settings > Livraria.';
+            $this->order_handler->auto_create_failed($order_id, $message, true);
+            $this->auto_create_stop($message);
             return;
         }
-        
-        $billing_response = $this->api_client->attach_billing_info_from_sender_profile($quote_request_id, $default_sender_profile_id);
-        
-        if ($billing_response === false || !isset($billing_response['id'])) {
-            if (self::is_development_mode()) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                error_log('Livraria Debug: Failed to attach billing information from sender profile for order ID: ' . $order_id);
-            }
+
+        if ($this->api_client->attach_billing_info_from_sender_profile($quote_request_id, $default_sender_profile_id) === false) {
+            $message = $this->order_handler->api_error_message('Could not attach the billing information');
+            $this->order_handler->auto_create_failed($order_id, $message, true);
+            $this->auto_create_stop($message);
             return;
         }
-        
-        $billing_info_id = $billing_response['id'];
-        
-        // Step 5: Create expedition
-        $expedition_data = array(
-            'quoteRequestId' => $quote_request_id,
-        );
-        
-        $expedition_response = $this->api_client->create_expedition($expedition_data);
-        
+
+        $expedition_response = $this->api_client->create_expedition(array('quoteRequestId' => $quote_request_id));
         if ($expedition_response === false || !isset($expedition_response['id'])) {
-            if (self::is_development_mode()) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                error_log('Livraria Debug: Failed to create expedition for order ID: ' . $order_id);
-            }
+            $message = $expedition_response === false
+                ? $this->order_handler->api_error_message('Could not create the shipment')
+                : 'Could not create the shipment: the Livraria API answered without a shipment id.';
+            // No response: the shipment may exist, so the claim holds until it expires
+            $release = !($expedition_response === false && $this->api_client->last_error_status() === 0);
+            $this->order_handler->auto_create_failed($order_id, $message, $release);
+            $this->auto_create_stop($message);
             return;
         }
-        
-        // Step 6: Save expedition data
+
         $order = wc_get_order($order_id);
         if ($order) {
             $this->order_handler->save_expedition_data($order_id, $expedition_response, $selected_quote);
             $this->order_handler->add_expedition_order_note($order, $expedition_response);
         }
-        
-        // Clean up temporary meta
-        Livraria_Order_Handler::delete_order_meta($order_id, array('_courier_quote_request_id', '_courier_selected_quote_id', '_courier_selected_quote_name'));
+        Livraria_Order_Handler::delete_order_meta($order_id, array('_courier_quote_request_id', '_courier_selected_quote_id', '_courier_selected_quote_name', Livraria_Order_Handler::AUTO_CLAIM_META));
 
-        if (self::is_development_mode()) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-            error_log('Livraria Debug: Auto-create expedition completed successfully for order ID: ' . $order_id . ', Expedition ID: ' . $expedition_response['id']);
-        }
-        
-        // If called via AJAX, send JSON response
         if (defined('DOING_AJAX') && DOING_AJAX) {
             wp_send_json_success(array(
                 'message' => 'Expedition created successfully',
                 'expedition_id' => $expedition_response['id'],
                 'awb_number' => $expedition_response['awbNumber'] ?? null
             ));
+        }
+    }
+
+    /**
+     * End an unattended run that did not create a shipment: the AJAX caller
+     * gets the reason (the order already has it as a note)
+     *
+     * @param string $message
+     */
+    private function auto_create_stop($message) {
+        if (defined('DOING_AJAX') && DOING_AJAX) {
+            wp_send_json_error($message);
         }
     }
     
@@ -766,7 +704,9 @@ class LivrariaPlugin {
             $custom_data = $this->sanitize_expedition_data($custom_data);
         }
         
-        $result = $this->order_handler->get_quotes_for_order($order_id, $custom_data);
+        // The unattended run (order.js after a status change) claims the order
+        $auto = !empty($_POST['auto']);
+        $result = $this->order_handler->get_quotes_for_order($order_id, $custom_data, $auto);
         
         if ($result['success']) {
             wp_send_json_success($result);
@@ -853,7 +793,11 @@ class LivrariaPlugin {
             
             wp_send_json_success(array('message' => 'Quote selected successfully'));
         } else {
-            wp_send_json_error($this->order_handler->api_error_message('Could not select the quote'));
+            $message = $this->order_handler->api_error_message('Could not select the quote');
+            if (!empty($_POST['auto'])) {
+                $this->order_handler->auto_create_failed($order_id, $message, true);
+            }
+            wp_send_json_error($message);
         }
     }
     
@@ -870,29 +814,35 @@ class LivrariaPlugin {
         }
         
         $order_id = intval(wp_unslash($_POST['order_id']));
+        $auto = !empty($_POST['auto']);
+
+        // One shipment per order, whatever the screen says
+        $existing_awb = Livraria_Order_Handler::get_order_meta($order_id, '_courier_expedition_id');
+        if ($existing_awb) {
+            wp_send_json_error('This order already has a shipment; no second one was created. Reload the page to see it.');
+        }
+
         $quote_request_id = Livraria_Order_Handler::get_order_meta($order_id, '_courier_quote_request_id');
         $courier_quote_id = Livraria_Order_Handler::get_order_meta($order_id, '_courier_selected_quote_id');
         
         if (!$quote_request_id || !$courier_quote_id) {
-            wp_send_json_error('Quote request ID or selected quote ID not found');
+            $this->label_failed($order_id, $auto, 'Quote request ID or selected quote ID not found', true);
         }
         
         // Attach billing info from default sender profile
         $default_sender_profile_id = get_option('livraria_default_sender_profile_id', '');
         
         if (empty($default_sender_profile_id)) {
-            wp_send_json_error('No default sender profile configured');
+            $this->label_failed($order_id, $auto, 'No default sender profile configured', true);
         }
         
         $billing_response = $this->api_client->attach_billing_info_from_sender_profile($quote_request_id, $default_sender_profile_id);
         if ($billing_response === false) {
-            wp_send_json_error($this->order_handler->api_error_message('Could not attach the billing information'));
+            $this->label_failed($order_id, $auto, $this->order_handler->api_error_message('Could not attach the billing information'), true);
         }
         if (!isset($billing_response['id'])) {
-            wp_send_json_error('Could not attach the billing information: the Livraria API answered without a billing record.');
+            $this->label_failed($order_id, $auto, 'Could not attach the billing information: the Livraria API answered without a billing record.', true);
         }
-        
-        $billing_info_id = $billing_response['id'];
         
         // Create expedition
         $expedition_data = array(
@@ -918,8 +868,8 @@ class LivrariaPlugin {
                 $this->order_handler->add_expedition_order_note($order, $expedition_response);
             }
 
-            // Clean up temporary meta
-            Livraria_Order_Handler::delete_order_meta($order_id, array('_courier_quote_request_id', '_courier_selected_quote_id', '_courier_selected_quote_name'));
+            // Clean up temporary meta and the unattended run's claim
+            Livraria_Order_Handler::delete_order_meta($order_id, array('_courier_quote_request_id', '_courier_selected_quote_id', '_courier_selected_quote_name', Livraria_Order_Handler::AUTO_CLAIM_META));
             
             wp_send_json_success(array(
                 'message' => 'Expedition created successfully',
@@ -929,13 +879,36 @@ class LivrariaPlugin {
         } elseif ($expedition_response === false) {
             $error = $this->api_client->get_last_error();
             $message = $this->order_handler->api_error_message('Could not create the shipment');
+            // No response at all: the shipment may exist, so an unattended run keeps its claim
+            $release = $this->api_client->last_error_status() !== 0;
             if (is_array($error) && $error['code'] === 'RECIPIENT_FIELDS_REQUIRED' && in_array('email', $error['missingRecipientFields'], true)) {
-                wp_send_json_error(array('message' => $message, 'fix' => 'email'));
+                $this->label_failed($order_id, $auto, $message, $release, 'email');
             }
-            wp_send_json_error($message);
+            $this->label_failed($order_id, $auto, $message, $release);
         } else {
-            wp_send_json_error('Could not create the shipment: the Livraria API answered without a shipment id.');
+            $this->label_failed($order_id, $auto, 'Could not create the shipment: the Livraria API answered without a shipment id.', false);
         }
+    }
+
+    /**
+     * Stop ajax_generate_label() with $message; for the unattended run, also
+     * write it on the order and (when nothing can have been bought) release
+     * the claim
+     *
+     * @param int $order_id
+     * @param bool $auto
+     * @param string $message
+     * @param bool $release
+     * @param string $fix 'email' when the panel should offer "Add email"
+     */
+    private function label_failed($order_id, $auto, $message, $release, $fix = '') {
+        if ($auto) {
+            $this->order_handler->auto_create_failed($order_id, $message, $release);
+        }
+        if ($fix !== '') {
+            wp_send_json_error(array('message' => $message, 'fix' => $fix));
+        }
+        wp_send_json_error($message);
     }
     
     private function sanitize_expedition_data($data) {

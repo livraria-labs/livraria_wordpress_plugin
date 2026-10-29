@@ -16,14 +16,114 @@ class Livraria_Order_Handler {
         $this->api_client = $api_client;
     }
     
+    /** Order meta holding the unattended run's claim: a Unix timestamp */
+    const AUTO_CLAIM_META = '_livraria_auto_create_claim';
+    /** How long a claim holds before another run may take the order over */
+    const AUTO_CLAIM_TTL = 600;
+
     /**
      * Get quotes for WooCommerce order (creates quote request)
+     *
+     * With $auto (the unattended run on a status change), the order is
+     * claimed first (claim_order_for_auto_create()): a second run, or an
+     * order that already has a shipment, is refused before any API call. A
+     * run that cannot go on releases its claim and writes why on the order.
      * 
      * @param int $order_id WooCommerce order ID
      * @param array $custom_data Custom expedition data from admin interface
+     * @param bool $auto The unattended run
      * @return array Result array with success status, quotes, and quoteRequestId
      */
-    public function get_quotes_for_order($order_id, $custom_data = array()) {
+    public function get_quotes_for_order($order_id, $custom_data = array(), $auto = false) {
+        if (!$auto) {
+            return $this->quote_order($order_id, $custom_data);
+        }
+
+        $claim = self::claim_order_for_auto_create($order_id);
+        if (!$claim['claimed']) {
+            return array('success' => false, 'message' => $claim['message'], 'claimRefused' => true);
+        }
+
+        $result = $this->quote_order($order_id, $custom_data);
+        if ($result['success'] && empty($result['autoQuoteId'])) {
+            $result = array(
+                'success' => false,
+                'message' => 'No courier can take this order automatically: ' . ($result['unusableSummary'] !== '' ? $result['unusableSummary'] : 'no usable quote.'),
+            );
+        }
+        if (!$result['success']) {
+            $this->auto_create_failed($order_id, $result['message'], true);
+        }
+        return $result;
+    }
+
+    /**
+     * Claim the order for one unattended run. Refused when the order already
+     * has a shipment, or another run claimed it less than AUTO_CLAIM_TTL
+     * seconds ago. Fails safe: a claim whose timestamp cannot be read holds.
+     *
+     * @param mixed $order_or_id WC_Order or order id
+     * @param int|null $now Unix time (tests)
+     * @return array claimed (bool), message (why not)
+     */
+    public static function claim_order_for_auto_create($order_or_id, $now = null) {
+        $now = $now === null ? time() : (int) $now;
+        $order = self::order_object($order_or_id);
+        if (!$order) {
+            return array('claimed' => false, 'message' => 'Order not found');
+        }
+        if (self::get_order_meta($order, '_courier_expedition_id')) {
+            return array('claimed' => false, 'message' => 'This order already has a shipment; no second one was created.');
+        }
+        $claim = self::get_order_meta($order, self::AUTO_CLAIM_META);
+        if ($claim !== '') {
+            $claimed_at = (is_numeric($claim) && (int) $claim > 0) ? (int) $claim : null;
+            if ($claimed_at === null) {
+                return array('claimed' => false, 'message' => 'An automatic shipment for this order is already marked as in progress. Create the shipment from the order panel.');
+            }
+            if ($now - $claimed_at < self::AUTO_CLAIM_TTL) {
+                return array('claimed' => false, 'message' => 'An automatic shipment for this order started ' . max(0, $now - $claimed_at) . ' seconds ago and is still running; no second one was started.');
+            }
+        }
+        self::set_order_meta($order, array(self::AUTO_CLAIM_META => (string) $now));
+        return array('claimed' => true, 'message' => '');
+    }
+
+    /**
+     * End the unattended run's claim
+     *
+     * @param mixed $order_or_id
+     */
+    public static function release_auto_create_claim($order_or_id) {
+        self::delete_order_meta($order_or_id, array(self::AUTO_CLAIM_META));
+    }
+
+    /**
+     * The unattended run stopped: say why on the order and, when nothing can
+     * have been bought, release the claim so a later run may try again
+     *
+     * @param int $order_id
+     * @param string $message
+     * @param bool $release False when the outcome is unknown (no response to /expedition)
+     */
+    public function auto_create_failed($order_id, $message, $release) {
+        $order = self::order_object($order_id);
+        if ($order && method_exists($order, 'add_order_note')) {
+            $order->add_order_note('Livraria: the automatic shipment was not created. ' . $message);
+        }
+        if ($release) {
+            self::release_auto_create_claim($order_id);
+        }
+    }
+
+    /**
+     * Quote the order: validation, recipient, couriers, POST /public/awb/quotes
+     *
+     * @param int $order_id
+     * @param array $custom_data
+     * @return array
+     */
+    private function quote_order($order_id, $custom_data = array()) {
         if (!class_exists('WooCommerce') || !function_exists('wc_get_order')) {
             return array('success' => false, 'message' => 'WooCommerce not found');
         }
