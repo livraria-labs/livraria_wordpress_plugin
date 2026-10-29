@@ -1,0 +1,194 @@
+/*
+ * "Deliver with Livraria" order box. WordPress admin look: admin type scale,
+ * 8 px spacing grid, WP components, one accent (the admin theme colour).
+ * Responsive by the box's own width (container query, with the .lp-narrow
+ * class set by order.js where container queries are missing): the main
+ * column (~940 px) and the sidebar (~280 px).
+ */
+
+.livraria-box-title { display: inline-flex; align-items: center; gap: 8px; }
+.livraria-box-logo { width: 20px; height: 20px; }
+
+.livraria-panel {
+    --lp-accent: var(--wp-admin-theme-color, #2271b1);
+    --lp-accent-soft: #f0f6fc;
+    --lp-text: #1d2327;
+    --lp-muted: #646970;
+    --lp-disabled: #8c8f94;
+    --lp-border: #dcdcde;
+    --lp-border-strong: #c3c4c7;
+    --lp-surface: #f6f7f7;
+    --lp-ok: #00a32a;
+    --lp-warn: #dba617;
+    --lp-danger: #d63638;
+    container-type: inline-size;
+    container-name: lp;
+    color: var(--lp-text);
+    font-size: 13px;
+    line-height: 1.5;
+}
+.livraria-panel [hidden] { display: none !important; }
+.livraria-panel p { margin: 0; }
+.livraria-panel code { font-size: 12px; padding: 0 4px; }
+.livraria-panel-error { color: var(--lp-danger); }
+
+/* Status line ------------------------------------------------------------ */
+.lp-status {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    padding: 0 0 8px; margin: 0 0 16px;
+    border-bottom: 1px solid var(--lp-border);
+    color: var(--lp-muted); font-size: 12px;
+}
+.lp-status__text { flex: 1 1 auto; min-width: 0; }
+.lp-badge {
+    display: inline-block; padding: 0 8px; border-radius: 2px;
+    font-size: 11px; font-weight: 600; line-height: 20px; letter-spacing: .02em;
+    background: var(--lp-surface); color: var(--lp-muted); border: 1px solid var(--lp-border);
+    vertical-align: middle;
+}
+.lp-badge--env { background: #fcf9e8; color: #614a00; border-color: var(--lp-warn); }
+.lp-badge--ok { background: #edfaef; color: #00450c; border-color: var(--lp-ok); }
+.lp-badge--info { background: var(--lp-accent-soft); color: var(--lp-accent); border-color: var(--lp-accent); }
+
+/* Sections ---------------------------------------------------------------- */
+.lp-section { margin: 0 0 24px; }
+.lp-label {
+    margin: 0 0 8px !important; padding: 0 !important;
+    font-size: 11px !important; font-weight: 600; line-height: 16px !important;
+    text-transform: uppercase; letter-spacing: .06em; color: var(--lp-muted);
+    display: flex; align-items: center; gap: 8px;
+}
+.lp-label .lp-badge { text-transform: none; letter-spacing: 0; }
+.lp-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.lp-field > label, .lp-field__label { font-weight: 600; }
+.lp-field select, .lp-field textarea { width: 100%; max-width: 100%; }
+.lp-field .description { color: var(--lp-muted); font-size: 12px; }
+.lp-messages:empty { display: none; }
+.lp-messages p { margin: 8px 0 0; }
+.lp-error { color: var(--lp-danger); }
+.lp-success { color: var(--lp-ok); }
+.lp-warning { color: #996800; }
+.lp-inline-result { display: block; font-size: 12px; }
+
+/* Notices inside the box: inline, no icons, the action inside */
+.livraria-panel .notice.inline { margin: 0 0 8px; padding: 8px 12px; }
+.livraria-panel .notice.inline p { margin: 0; padding: 0; }
+.livraria-panel .notice.inline p + p { margin-top: 4px; }
+
+/* Route ------------------------------------------------------------------- */
+.lp-route { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.lp-end-detail:empty { display: none; }
+.lp-end-detail { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding-top: 4px; }
+.lp-end-detail .lp-locker { font-weight: 600; }
+.lp-note { flex-basis: 100%; color: var(--lp-muted); font-size: 12px; }
+.lp-picker { margin-top: 16px; padding: 8px 16px; border: 1px solid var(--lp-border); background: #fff; }
+
+/* Parcels ----------------------------------------------------------------- */
+.livraria-panel .livraria-packages { border-color: var(--lp-border); box-shadow: none; }
+.livraria-panel .livraria-packages th,
+.livraria-panel .livraria-packages td { padding: 8px; vertical-align: middle; }
+.livraria-panel .livraria-packages thead th { font-size: 12px; font-weight: 600; color: var(--lp-muted); }
+.livraria-panel .livraria-packages tbody th { font-weight: 600; white-space: nowrap; }
+.livraria-panel .livraria-packages input[type=number] { width: 100%; max-width: 7.5em; }
+.lp-remove-cell { text-align: right; }
+.lp-row-actions { margin: 8px 0 16px !important; }
+
+/* Options ----------------------------------------------------------------- */
+.livraria-options { display: grid; grid-template-columns: repeat(2, minmax(0, 11em)) minmax(0, 1fr) minmax(0, 1.4fr); gap: 16px; align-items: start; }
+.lp-field--amount input { width: 100%; }
+.lp-field--check { gap: 8px; padding-top: 24px; }
+.lp-field--check label { font-weight: 400; }
+
+/* Quotes ------------------------------------------------------------------ */
+.livraria-panel .lp-tabs { display: flex; flex-wrap: wrap; padding: 0; margin: 0 0 8px; border-bottom: 1px solid var(--lp-border-strong); }
+.livraria-panel .lp-tabs .nav-tab { margin: 0 4px -1px 0; font-size: 13px; line-height: 20px; padding: 4px 12px; cursor: pointer; }
+.livraria-panel .lp-tabs .nav-tab[disabled] { color: var(--lp-disabled); cursor: default; background: transparent; }
+.lp-tab__count { color: var(--lp-muted); font-weight: 400; }
+.lp-tab__cheapest { color: var(--lp-ok); font-weight: 600; }
+
+.lp-quotes { margin: 0; padding: 0; border: 0; min-width: 0; }
+.lp-quote {
+    display: grid; grid-template-columns: 20px minmax(0, 1fr) auto 20px; align-items: center; gap: 4px 12px;
+    padding: 8px 12px; margin: 0 0 4px; border: 1px solid var(--lp-border); border-radius: 2px; background: #fff;
+    cursor: pointer;
+}
+.lp-quote:hover { border-color: var(--lp-border-strong); }
+.lp-quote input[type=radio] { margin: 0; }
+.lp-quote input[type=radio]:focus-visible { box-shadow: 0 0 0 2px var(--lp-accent); }
+.lp-quote:focus-within { box-shadow: 0 0 0 1px var(--lp-accent); }
+.lp-quote__main { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.lp-quote__courier { font-weight: 600; }
+.lp-quote__route { font-size: 11px; color: var(--lp-muted); padding: 0 6px; border: 1px solid var(--lp-border); border-radius: 2px; line-height: 18px; }
+.lp-quote__eta { font-size: 12px; color: var(--lp-muted); }
+.lp-quote__price { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.lp-quote__check { visibility: hidden; color: var(--lp-accent); font-weight: 700; text-align: center; }
+.lp-quote.is-selected { border-color: var(--lp-accent); box-shadow: 0 0 0 1px var(--lp-accent); background: var(--lp-accent-soft); }
+.lp-quote.is-selected .lp-quote__check { visibility: visible; }
+.lp-quote.is-disabled { cursor: default; background: var(--lp-surface); color: var(--lp-muted); border-style: dashed; }
+.lp-quote.is-disabled .lp-quote__courier { font-weight: 600; color: var(--lp-muted); }
+.lp-quote.is-disabled .lp-quote__price { color: var(--lp-disabled); font-weight: 400; }
+.lp-quote__state { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--lp-disabled); }
+.lp-quote__reason { grid-column: 2 / -1; font-size: 12px; }
+.lp-quote .livraria-fill-in { grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.lp-quote .livraria-fill-in input { flex: 1 1 12em; min-width: 0; max-width: 20em; }
+.livraria-fill-in .livraria-fill-in-result { flex-basis: 100%; font-size: 12px; }
+
+/* The one primary action ------------------------------------------------- */
+.lp-actions { padding-top: 16px; border-top: 1px solid var(--lp-border); }
+.lp-actions__bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.lp-actions .lp-messages { margin-bottom: 8px; }
+.lp-busy { display: inline-flex; align-items: center; gap: 4px; color: var(--lp-muted); margin-right: auto; }
+.lp-busy .spinner { float: none; margin: 0; }
+
+/* Shipment card ----------------------------------------------------------- */
+.lp-card { display: flex; flex-direction: column; gap: 8px; }
+.lp-card__title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 14px; }
+.lp-card__courier { font-weight: 600; }
+.lp-card__meta { color: var(--lp-muted); font-size: 12px; word-break: break-all; }
+.lp-card__actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 8px; }
+.lp-card__danger { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--lp-border); }
+.lp-card__danger .description { color: var(--lp-muted); font-size: 12px; margin-top: 4px; }
+
+/* Narrow box (sidebar, ~280 px): one column ------------------------------ */
+@container lp (max-width: 560px) {
+    .lp-route { grid-template-columns: 1fr; }
+    .livraria-options { grid-template-columns: 1fr; }
+    .lp-field--check { padding-top: 0; }
+    .livraria-packages thead { display: none; }
+    .livraria-packages tr { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--lp-border); }
+    .livraria-panel .livraria-packages th, .livraria-panel .livraria-packages td { display: flex; flex-direction: column; gap: 2px; padding: 0 8px; border: 0; }
+    .livraria-packages tbody th { grid-column: 1 / -1; flex-direction: row !important; }
+    .livraria-packages td[data-label]::before { content: attr(data-label); font-size: 11px; color: var(--lp-muted); }
+    .livraria-panel .livraria-packages input[type=number] { max-width: none; }
+    .lp-remove-cell { grid-column: 1 / -1; text-align: left; }
+    .lp-quote { grid-template-columns: 20px minmax(0, 1fr) 20px; }
+    .lp-quote__price { grid-column: 2; text-align: left; }
+    .lp-quote__check { grid-row: 1; grid-column: 3; }
+    .lp-actions__bar { justify-content: stretch; }
+    .lp-actions__bar .button-primary { flex: 1 1 100%; text-align: center; white-space: normal; height: auto; }
+    .lp-tabs .nav-tab { font-size: 12px !important; padding: 2px 8px !important; }
+    .lp-quote.is-disabled .lp-quote__price { display: none; }
+    .lp-actions__bar > * { flex: 1 1 100%; }
+    .lp-actions__bar .button { width: 100%; text-align: center; white-space: normal; height: auto; }
+    .lp-status__text { flex-basis: 100%; }
+}
+.livraria-panel.lp-narrow .lp-route { grid-template-columns: 1fr; }
+.livraria-panel.lp-narrow .livraria-options { grid-template-columns: 1fr; }
+.livraria-panel.lp-narrow .lp-field--check { padding-top: 0; }
+.livraria-panel.lp-narrow .livraria-packages thead { display: none; }
+.livraria-panel.lp-narrow .livraria-packages tr { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--lp-border); }
+.livraria-panel.lp-narrow .livraria-packages th, .livraria-panel.lp-narrow .livraria-packages td { display: flex; flex-direction: column; gap: 2px; padding: 0 8px; border: 0; }
+.livraria-panel.lp-narrow .livraria-packages tbody th { grid-column: 1 / -1; flex-direction: row; }
+.livraria-panel.lp-narrow .livraria-packages td[data-label]::before { content: attr(data-label); font-size: 11px; color: var(--lp-muted); }
+.livraria-panel.lp-narrow .livraria-packages input[type=number] { max-width: none; }
+.livraria-panel.lp-narrow .lp-remove-cell { grid-column: 1 / -1; text-align: left; }
+.livraria-panel.lp-narrow .lp-quote { grid-template-columns: 20px minmax(0, 1fr) 20px; }
+.livraria-panel.lp-narrow .lp-quote__price { grid-column: 2; text-align: left; }
+.livraria-panel.lp-narrow .lp-quote__check { grid-row: 1; grid-column: 3; }
+.livraria-panel.lp-narrow .lp-actions__bar { justify-content: stretch; }
+.livraria-panel.lp-narrow .lp-actions__bar .button-primary { flex: 1 1 100%; text-align: center; white-space: normal; height: auto; }
+.livraria-panel.lp-narrow .lp-tabs .nav-tab { font-size: 12px; padding: 2px 8px; }
+.livraria-panel.lp-narrow .lp-quote.is-disabled .lp-quote__price { display: none; }
+.livraria-panel.lp-narrow .lp-actions__bar > * { flex: 1 1 100%; }
+.livraria-panel.lp-narrow .lp-actions__bar .button { width: 100%; text-align: center; white-space: normal; height: auto; }
+.livraria-panel.lp-narrow .lp-status__text { flex-basis: 100%; }

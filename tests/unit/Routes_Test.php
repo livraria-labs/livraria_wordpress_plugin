@@ -363,7 +363,7 @@ class Routes_Test extends Livraria_Quote_Flow_TestCase {
         $html = ob_get_clean();
 
         $this->assertStringContainsString('id="livraria-origin-mode"', $html);
-        $this->assertStringContainsString('The buyer&#039;s pick: easybox Sameday easybox Exemplu Centru', $html);
+        $this->assertStringContainsString('The buyer&#039;s locker: easybox Sameday easybox Exemplu Centru', $html);
         $this->assertStringContainsString('livrare la locker', $html);
         $this->assertCount(0, $this->requests);
     }

@@ -201,7 +201,7 @@ class LivrariaPlugin {
         
         // Check if logo exists, otherwise use a placeholder or just text
         if (file_exists($logo_path)) {
-            return '<img src="' . esc_url($logo_url) . '" alt="Livraria" style="width: 20px; height: 20px; vertical-align: middle;" /> Deliver with Livraria';
+            return '<span class="livraria-box-title"><img class="livraria-box-logo" src="' . esc_url($logo_url) . '" alt="" /> ' . esc_html__('Deliver with Livraria', 'livraria-shipping-for-woocommerce') . '</span>';
         }
         
         // Fallback: return text only if logo doesn't exist
@@ -309,12 +309,12 @@ class LivrariaPlugin {
         }
 
         if (Livraria_API_Client::blocked_api_url() !== '') {
-            echo '<p style="color: #d63638;">' . esc_html('The configured Livraria API address is not a Livraria API host, so shipments cannot be created or downloaded. An administrator must log in again from Settings > Livraria.') . '</p>';
+            echo '<p class="livraria-panel-error">' . esc_html('The configured Livraria API address is not a Livraria API host, so shipments cannot be created or downloaded. An administrator must log in again from Settings > Livraria.') . '</p>';
             return;
         }
 
         if (Livraria_API_Client::is_session_expired()) {
-            echo '<p style="color: #d63638;">' . esc_html('Livraria session expired, log in again: an administrator must log in from Settings > Livraria before shipments can be created or downloaded.') . '</p>';
+            echo '<p class="livraria-panel-error">' . esc_html('Livraria session expired, log in again: an administrator must log in from Settings > Livraria before shipments can be created or downloaded.') . '</p>';
             return;
         }
         
@@ -335,152 +335,191 @@ class LivrariaPlugin {
         $is_cod = Livraria_Order_Handler::is_cod_order($order);
         $cod_amount_default = $is_cod ? $order->get_total() : '0';
         
+        echo '<div id="courier-expedition-meta" class="livraria-panel">';
+        $this->render_status_line((bool) $expedition_id);
+        if ($expedition_id) {
+            $this->render_shipment_card($order_id, $expedition_id, $awb_number, $courier_name);
+        } else {
+            $this->render_route_section($order);
+            $this->render_parcels_section($order);
+            $this->render_options_section($order_id, $is_cod, $cod_amount_default);
+            $this->render_quotes_section();
+        }
+        echo '</div>';
+    }
+
+    /**
+     * The status line on top of the box: which Livraria API (a badge when
+     * it is not production), the connection, and "AWB created"
+     *
+     * @param bool $has_shipment
+     */
+    private function render_status_line($has_shipment) {
+        $environment = self::environment_badge($this->api_client->get_api_base_url());
+        echo '<div class="lp-status">';
+        if ($environment !== '') {
+            echo '<span class="lp-badge lp-badge--env livraria-env-badge">' . esc_html($environment) . '</span>';
+        }
+        if ($has_shipment) {
+            echo '<span class="lp-badge lp-badge--ok">✓ ' . esc_html__('AWB created', 'livraria-shipping-for-woocommerce') . '</span>';
+        }
+        if ($environment !== '') {
+            echo '<span class="lp-status__text">' . esc_html($environment === 'UAT'
+                ? __('Connected to the Livraria test API (uat): AWBs created here are real on uat couriers.', 'livraria-shipping-for-woocommerce')
+                : __('Connected to a Livraria development API.', 'livraria-shipping-for-woocommerce')) . '</span>';
+        } else {
+            echo '<span class="lp-status__text">' . esc_html__('Connected to Livraria', 'livraria-shipping-for-woocommerce') . '</span>';
+        }
+        echo '</div>';
+    }
+
+    /**
+     * An order with a shipment: courier and AWB, the expedition id, the AWB
+     * actions, and removing the local record (which cancels nothing)
+     */
+    private function render_shipment_card($order_id, $expedition_id, $awb_number, $courier_name) {
+        $download = function($size) use ($order_id, $awb_number) {
+            return add_query_arg(array(
+                'action' => 'livraria_download_awb_pdf',
+                'order_id' => $order_id,
+                'awb_number' => $awb_number,
+                'paperSize' => $size,
+                'nonce' => wp_create_nonce('courier_expedition_nonce'),
+            ), admin_url('admin-ajax.php'));
+        };
         ?>
-        <div id="courier-expedition-meta">
-            <?php $environment = self::environment_badge($this->api_client->get_api_base_url()); ?>
-            <?php if ($environment !== ''): ?>
-                <p><span class="livraria-env-badge" style="display:inline-block; padding:1px 8px; border-radius:10px; background:#dba617; color:#1d2327; font-size:11px; font-weight:600;"><?php echo esc_html($environment); ?></span> <span style="font-size:11px; color:#646970;">Livraria <?php echo esc_html($environment === 'UAT' ? 'test (uat)' : 'development'); ?> API: AWBs created here are real on uat couriers.</span></p>
-            <?php endif; ?>
-            <?php if ($expedition_id): ?>
-                <p><strong>Expedition ID:</strong> <?php echo esc_html($expedition_id); ?></p>
-                <?php if ($courier_name): ?>
-                    <p><strong>Courier:</strong> <?php echo esc_html($courier_name); ?></p>
-                <?php endif; ?>
-                <?php if ($awb_number): ?>
-                    <p><strong>AWB Number:</strong> <?php echo esc_html($awb_number); ?></p>
-                    <div class="awb-actions">
-                        <a href="<?php echo esc_url('https://livraria.ro/dashboard/track?awbNumber=' . urlencode($awb_number)); ?>"
-                           target="_blank"
-                           class="button button-secondary">
-                            <span class="dashicons dashicons-location-alt"></span>
-                            Track Package
-                        </a>
-                        <a href="<?php
-                            echo esc_url(add_query_arg(array(
-                                'action' => 'livraria_download_awb_pdf',
-                                'order_id' => $order_id,
-                                'awb_number' => $awb_number,
-                                'paperSize' => 'A4',
-                                'nonce' => wp_create_nonce('courier_expedition_nonce')
-                            ), admin_url('admin-ajax.php')));
-                        ?>"
-                           class="button button-primary download-awb-pdf"
-                           data-awb="<?php echo esc_attr($awb_number); ?>"
-                           data-size="A4">
-                            <span class="dashicons dashicons-download"></span>
-                            Download AWB (A4)
-                        </a>
-                        <a href="<?php
-                            echo esc_url(add_query_arg(array(
-                                'action' => 'livraria_download_awb_pdf',
-                                'order_id' => $order_id,
-                                'awb_number' => $awb_number,
-                                'paperSize' => 'A6',
-                                'nonce' => wp_create_nonce('courier_expedition_nonce')
-                            ), admin_url('admin-ajax.php')));
-                        ?>"
-                           class="button button-primary download-awb-pdf"
-                           data-awb="<?php echo esc_attr($awb_number); ?>"
-                           data-size="A6">
-                            <span class="dashicons dashicons-download"></span>
-                            Download AWB (A6)
-                        </a>
-                    </div>
-                <?php endif; ?>
-                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee;">
-                    <button type="button"
-                            id="livraria-delete-expedition-btn"
-                            class="button button-link-delete"
-                            data-order-id="<?php echo absint($order_id); ?>"
-                            data-nonce="<?php echo esc_attr(wp_create_nonce('courier_expedition_nonce')); ?>">
-                        Remove expedition association
-                    </button>
-                    <span style="display:block; margin-top:4px; font-size:11px; color:#999;">
-                        ⚠️ This only removes the local record. It does not cancel the AWB with the courier.
-                    </span>
-                </div>
-            <?php else: ?>
-                
-                <?php
-                // One parcel for the whole order, worked out from the products
-                // (kg and cm); the merchant can change it or add rows
-                $parcels = $this->order_handler->calculate_packages_from_order($order);
-                $parcel = $parcels[0];
-                ?>
-
-                <?php $this->render_route_section($order); ?>
-
-                <!-- Packages -->
-                <div class="expedition-section livraria-packages-section">
-                    <h4>Packages</h4>
-                    <table class="widefat livraria-packages">
-                        <thead>
-                            <tr><th>Package</th><th>Weight (kg)</th><th>Length (cm)</th><th>Width (cm)</th><th>Height (cm)</th><th></th></tr>
-                        </thead>
-                        <tbody id="packages-container">
-                            <tr class="package-item" data-package="1">
-                                <td class="livraria-package-label">Package 1</td>
-                                <td><input type="number" name="package_weight[]" step="0.01" min="1" value="<?php echo esc_attr($parcel['weight']); ?>" aria-label="Weight (kg)"></td>
-                                <td><input type="number" name="package_length[]" step="1" min="10" value="<?php echo esc_attr($parcel['length']); ?>" aria-label="Length (cm)"></td>
-                                <td><input type="number" name="package_width[]" step="1" min="10" value="<?php echo esc_attr($parcel['width']); ?>" aria-label="Width (cm)"></td>
-                                <td><input type="number" name="package_height[]" step="1" min="10" value="<?php echo esc_attr($parcel['height']); ?>" aria-label="Height (cm)"></td>
-                                <td><button type="button" class="button remove-package" style="display:none;">Remove</button></td>
-                            </tr>
-                        </tbody>
-                    </table>
-                    <p><button type="button" id="add-package-btn" class="button">Add Another Package</button></p>
-                    <p>
-                        <label for="livraria-content-description"><strong>Content description</strong></label><br>
-                        <textarea id="livraria-content-description" name="content_description" placeholder="Describe the package contents..." rows="2" style="width:100%;"></textarea>
-                    </p>
-                </div>
-
-                <!-- Options -->
-                <div class="expedition-section livraria-options-section">
-                    <h4>Options
-                        <?php if ($order && $is_cod): ?>
-                            <span class="service-badge cod">✓ Cash on Delivery</span>
-                        <?php else: ?>
-                            <span class="service-badge no-cod">No COD</span>
-                        <?php endif; ?>
-                    </h4>
-                    <div class="livraria-options">
-                        <label class="livraria-option">COD amount (RON)<br><input type="number" name="cod_amount" step="0.01" min="0" value="<?php echo esc_attr($cod_amount_default); ?>"></label>
-                        <label class="livraria-option">Insurance amount (RON)<br><input type="number" name="insurance_amount" step="0.01" min="0" value="0"></label>
-                        <label class="livraria-option livraria-option-check"><input type="checkbox" name="open_on_delivery" value="1"> Open on delivery</label>
-                        <label class="livraria-option livraria-option-check"><input type="checkbox" name="saturday_delivery" value="1"> Saturday delivery</label>
-                        <div class="livraria-option livraria-option-profile">
-                            <strong>Sender profile</strong>
-                            <?php $this->render_sender_profile_select($order_id); ?>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="expedition-section livraria-actions">
-                    <button type="button" id="create-expedition-btn" class="button button-primary">Get Quotes</button>
-                    <div id="expedition-loading" style="display:none;">Loading quotes...</div>
-                    <div id="expedition-result"></div>
-                </div>
-                
-                <!-- Quotes -->
-                <div id="quotes-section" class="expedition-section" style="display:none;">
-                    <h4>Available Shipping Options</h4>
-                    <div id="quotes-container"></div>
-                    <div id="quote-selection-result"></div>
-                </div>
-                
-                <!-- Generate Label Section -->
-                <div id="generate-label-section" class="expedition-section" style="display:none;">
-                    <button type="button" id="generate-label-btn" class="button button-primary">Generate Label</button>
-                    <div id="label-loading" style="display:none;">Generating label...</div>
-                    <div id="label-result"></div>
+        <div class="lp-card">
+            <p class="lp-card__title">
+                <?php if ($courier_name): ?><span class="lp-card__courier"><?php echo esc_html($courier_name); ?></span><?php endif; ?>
+                <?php if ($awb_number): ?><span class="lp-card__awb"><?php esc_html_e('AWB', 'livraria-shipping-for-woocommerce'); ?> <code><?php echo esc_html($awb_number); ?></code></span><?php endif; ?>
+            </p>
+            <p class="lp-card__meta"><?php esc_html_e('Expedition', 'livraria-shipping-for-woocommerce'); ?> <code><?php echo esc_html($expedition_id); ?></code></p>
+            <?php if ($awb_number): ?>
+                <div class="lp-card__actions awb-actions">
+                    <a href="<?php echo esc_url('https://livraria.ro/dashboard/track?awbNumber=' . urlencode($awb_number)); ?>" target="_blank" rel="noopener" class="button"><?php esc_html_e('Track', 'livraria-shipping-for-woocommerce'); ?></a>
+                    <a href="<?php echo esc_url($download('A4')); ?>" class="button download-awb-pdf" data-awb="<?php echo esc_attr($awb_number); ?>" data-size="A4"><?php esc_html_e('Download A4', 'livraria-shipping-for-woocommerce'); ?></a>
+                    <a href="<?php echo esc_url($download('A6')); ?>" class="button download-awb-pdf" data-awb="<?php echo esc_attr($awb_number); ?>" data-size="A6"><?php esc_html_e('Download A6', 'livraria-shipping-for-woocommerce'); ?></a>
                 </div>
             <?php endif; ?>
+            <div class="lp-card__danger">
+                <button type="button" id="livraria-delete-expedition-btn" class="button-link button-link-delete"
+                        data-order-id="<?php echo absint($order_id); ?>"
+                        data-nonce="<?php echo esc_attr(wp_create_nonce('courier_expedition_nonce')); ?>"><?php esc_html_e('Remove local record', 'livraria-shipping-for-woocommerce'); ?></button>
+                <p class="description"><?php esc_html_e('This only removes the record from this order. It does not cancel the AWB with the courier.', 'livraria-shipping-for-woocommerce'); ?></p>
+            </div>
         </div>
-        
-        <?php // Order meta box JS moved to assets/order.js; data provided via wp_localize_script in enqueue_admin_styles(). ?>
         <?php
     }
+
+    /**
+     * Parcels: one row per parcel (weight, length, width, height), worked
+     * out from the products as one parcel; the merchant can change or add rows
+     *
+     * @param WC_Order $order
+     */
+    private function render_parcels_section($order) {
+        $parcels = $this->order_handler->calculate_packages_from_order($order);
+        $parcel = $parcels[0];
+        $columns = array(
+            'package_weight' => array(__('Weight (kg)', 'livraria-shipping-for-woocommerce'), 'weight', '0.01', '1'),
+            'package_length' => array(__('Length (cm)', 'livraria-shipping-for-woocommerce'), 'length', '1', '10'),
+            'package_width' => array(__('Width (cm)', 'livraria-shipping-for-woocommerce'), 'width', '1', '10'),
+            'package_height' => array(__('Height (cm)', 'livraria-shipping-for-woocommerce'), 'height', '1', '10'),
+        );
+        ?>
+        <section class="lp-section livraria-packages-section" aria-labelledby="lp-parcels-title">
+            <h3 class="lp-label" id="lp-parcels-title"><?php esc_html_e('Parcels', 'livraria-shipping-for-woocommerce'); ?></h3>
+            <table class="widefat livraria-packages">
+                <thead>
+                    <tr>
+                        <th scope="col"><?php esc_html_e('Parcel', 'livraria-shipping-for-woocommerce'); ?></th>
+                        <?php foreach ($columns as $column): ?><th scope="col"><?php echo esc_html($column[0]); ?></th><?php endforeach; ?>
+                        <th scope="col"><span class="screen-reader-text"><?php esc_html_e('Remove', 'livraria-shipping-for-woocommerce'); ?></span></th>
+                    </tr>
+                </thead>
+                <tbody id="packages-container">
+                    <tr class="package-item" data-package="1">
+                        <th scope="row" class="livraria-package-label"><?php esc_html_e('Parcel 1', 'livraria-shipping-for-woocommerce'); ?></th>
+                        <?php foreach ($columns as $name => $column): ?>
+                            <td data-label="<?php echo esc_attr($column[0]); ?>"><input type="number" name="<?php echo esc_attr($name); ?>[]" step="<?php echo esc_attr($column[2]); ?>" min="<?php echo esc_attr($column[3]); ?>" value="<?php echo esc_attr($parcel[$column[1]]); ?>" aria-label="<?php echo esc_attr($column[0]); ?>"></td>
+                        <?php endforeach; ?>
+                        <td class="lp-remove-cell"><button type="button" class="button-link button-link-delete remove-package" hidden><?php esc_html_e('Remove', 'livraria-shipping-for-woocommerce'); ?></button></td>
+                    </tr>
+                </tbody>
+            </table>
+            <p class="lp-row-actions"><button type="button" id="add-package-btn" class="button"><?php esc_html_e('Add parcel', 'livraria-shipping-for-woocommerce'); ?></button></p>
+            <p class="lp-field">
+                <label for="livraria-content-description"><?php esc_html_e('Content description', 'livraria-shipping-for-woocommerce'); ?></label>
+                <textarea id="livraria-content-description" name="content_description" rows="2" placeholder="<?php esc_attr_e('Describe the parcel contents', 'livraria-shipping-for-woocommerce'); ?>"></textarea>
+            </p>
+        </section>
+        <?php
+    }
+
+    /**
+     * Options: COD amount, insurance, open on delivery, Saturday delivery,
+     * sender profile
+     */
+    private function render_options_section($order_id, $is_cod, $cod_amount_default) {
+        ?>
+        <section class="lp-section livraria-options-section" aria-labelledby="lp-options-title">
+            <h3 class="lp-label" id="lp-options-title"><?php esc_html_e('Options', 'livraria-shipping-for-woocommerce'); ?>
+                <?php if ($is_cod): ?>
+                    <span class="lp-badge lp-badge--info service-badge cod"><?php esc_html_e('Cash on delivery', 'livraria-shipping-for-woocommerce'); ?></span>
+                <?php else: ?>
+                    <span class="lp-badge service-badge no-cod"><?php esc_html_e('No COD', 'livraria-shipping-for-woocommerce'); ?></span>
+                <?php endif; ?>
+            </h3>
+            <div class="livraria-options">
+                <p class="lp-field lp-field--amount">
+                    <label for="livraria-cod-amount"><?php esc_html_e('COD amount (RON)', 'livraria-shipping-for-woocommerce'); ?></label>
+                    <input type="number" id="livraria-cod-amount" name="cod_amount" step="0.01" min="0" value="<?php echo esc_attr($cod_amount_default); ?>">
+                </p>
+                <p class="lp-field lp-field--amount">
+                    <label for="livraria-insurance-amount"><?php esc_html_e('Insurance (RON)', 'livraria-shipping-for-woocommerce'); ?></label>
+                    <input type="number" id="livraria-insurance-amount" name="insurance_amount" step="0.01" min="0" value="0">
+                </p>
+                <p class="lp-field lp-field--check">
+                    <label><input type="checkbox" name="open_on_delivery" value="1"> <?php esc_html_e('Open on delivery', 'livraria-shipping-for-woocommerce'); ?></label>
+                    <label><input type="checkbox" name="saturday_delivery" value="1"> <?php esc_html_e('Saturday delivery', 'livraria-shipping-for-woocommerce'); ?></label>
+                </p>
+                <div class="lp-field lp-field--profile">
+                    <?php if (Livraria_API_Client::cached_sender_profiles() !== false): ?>
+                        <label for="livraria-sender-profile-select"><?php esc_html_e('Sender profile', 'livraria-shipping-for-woocommerce'); ?></label>
+                    <?php else: ?>
+                        <span class="lp-field__label"><?php esc_html_e('Sender profile', 'livraria-shipping-for-woocommerce'); ?></span>
+                    <?php endif; ?>
+                    <?php $this->render_sender_profile_select($order_id); ?>
+                </div>
+            </div>
+        </section>
+        <?php
+    }
+
+    /**
+     * Quotes (filled by order.js) and the one primary action: "Get quotes",
+     * then "Create AWB · <courier> · <price>" once a quote is selected
+     */
+    private function render_quotes_section() {
+        ?>
+        <section id="quotes-section" class="lp-section" aria-labelledby="lp-quotes-title" hidden>
+            <h3 class="lp-label" id="lp-quotes-title"><?php esc_html_e('Quotes', 'livraria-shipping-for-woocommerce'); ?></h3>
+            <div id="quotes-container"></div>
+            <div id="quote-selection-result" class="lp-messages" aria-live="polite"></div>
+        </section>
+        <div class="lp-actions livraria-actions">
+            <div id="expedition-result" class="lp-messages" aria-live="polite"></div>
+            <div id="label-result" class="lp-messages" aria-live="polite"></div>
+            <div class="lp-actions__bar">
+                <span id="expedition-loading" class="lp-busy" hidden><span class="spinner is-active"></span><?php esc_html_e('Getting quotes…', 'livraria-shipping-for-woocommerce'); ?></span>
+                <span id="label-loading" class="lp-busy" hidden><span class="spinner is-active"></span><?php esc_html_e('Creating the AWB…', 'livraria-shipping-for-woocommerce'); ?></span>
+                <button type="button" id="create-expedition-btn" class="button button-primary"><?php esc_html_e('Get quotes', 'livraria-shipping-for-woocommerce'); ?></button>
+                <span id="generate-label-section" hidden><button type="button" id="generate-label-btn" class="button button-primary"><?php esc_html_e('Create AWB', 'livraria-shipping-for-woocommerce'); ?></button></span>
+            </div>
+        </div>
+        <?php
+    }
+
 
     /**
      * What order.js needs for the Route control, from the order's data only:
@@ -575,36 +614,36 @@ class LivrariaPlugin {
         $pick = Livraria_Order_Handler::read_buyer_pick($order);
         $banner = Livraria_Order_Handler::route_banner($pick, $pick ? 'buyer' : 'order');
         ?>
-        <div class="expedition-section" id="livraria-route">
-            <h4>Route</h4>
-            <div id="livraria-route-banner">
+        <section class="lp-section" id="livraria-route" aria-labelledby="lp-route-title">
+            <h3 class="lp-label" id="lp-route-title"><?php esc_html_e('Route', 'livraria-shipping-for-woocommerce'); ?></h3>
+            <div id="livraria-route-banner" aria-live="polite">
                 <?php if ($banner): ?>
-                    <div class="notice notice-<?php echo esc_attr($banner['type'] === 'buyer' ? 'info' : 'warning'); ?> inline"><p><?php echo esc_html($banner['message']); ?></p></div>
+                    <div class="notice notice-<?php echo esc_attr($banner['type'] === 'buyer' ? 'info' : 'warning'); ?> inline lp-notice"><p><?php echo esc_html($banner['message']); ?></p></div>
                 <?php endif; ?>
             </div>
-            <div class="livraria-route-grid">
-                <div class="livraria-route-end">
-                    <label for="livraria-origin-mode"><strong>From</strong></label><br>
+            <div class="livraria-route-grid lp-route">
+                <div class="lp-field livraria-route-end">
+                    <label for="livraria-origin-mode"><?php esc_html_e('From', 'livraria-shipping-for-woocommerce'); ?></label>
                     <select id="livraria-origin-mode">
-                        <option value="pickup">Courier pickup at the sender address</option>
-                        <option value="locker">Drop-off at a locker</option>
+                        <option value="pickup"><?php esc_html_e('Courier pickup at the sender address', 'livraria-shipping-for-woocommerce'); ?></option>
+                        <option value="locker"><?php esc_html_e('Drop-off at a locker', 'livraria-shipping-for-woocommerce'); ?></option>
                     </select>
-                    <div id="livraria-origin-locker"></div>
+                    <div id="livraria-origin-locker" class="lp-end-detail"></div>
                 </div>
-                <div class="livraria-route-end">
-                    <label for="livraria-destination-mode"><strong>To</strong></label><br>
+                <div class="lp-field livraria-route-end">
+                    <label for="livraria-destination-mode"><?php esc_html_e('To', 'livraria-shipping-for-woocommerce'); ?></label>
                     <select id="livraria-destination-mode">
                         <?php if ($pick): ?>
-                            <option value="buyer" selected="selected"><?php echo esc_html("The buyer's pick: " . ($pick['supported'] ? Livraria_Lockers::display($pick) : $pick['name'] . ' (cannot be used)')); ?></option>
+                            <option value="buyer" selected="selected"><?php echo esc_html(__("The buyer's locker:", 'livraria-shipping-for-woocommerce') . ' ' . ($pick['supported'] ? Livraria_Lockers::display($pick) : $pick['name'] . ' ' . __('(cannot be used)', 'livraria-shipping-for-woocommerce'))); ?></option>
                         <?php endif; ?>
-                        <option value="order"<?php echo $pick ? '' : ' selected="selected"'; ?>>The order's shipping address</option>
-                        <option value="locker">A locker</option>
+                        <option value="order"<?php echo $pick ? '' : ' selected="selected"'; ?>><?php esc_html_e("The order's shipping address", 'livraria-shipping-for-woocommerce'); ?></option>
+                        <option value="locker"><?php esc_html_e('A locker', 'livraria-shipping-for-woocommerce'); ?></option>
                     </select>
-                    <div id="livraria-destination-locker"></div>
+                    <div id="livraria-destination-locker" class="lp-end-detail"></div>
                 </div>
             </div>
-            <div id="livraria-route-picker" style="display:none;"></div>
-        </div>
+            <div id="livraria-route-picker" class="lp-picker" hidden></div>
+        </section>
         <?php
     }
 
@@ -668,9 +707,9 @@ class LivrariaPlugin {
         $profiles = Livraria_API_Client::cached_sender_profiles();
         echo '<div id="livraria-sender-profiles">';
         if ($profiles === false) {
-            echo '<p class="description">Sender profiles are not loaded yet.</p>';
-            echo '<button type="button" class="button" id="livraria-reload-profiles">Reload profiles</button>';
-            echo '<span id="livraria-reload-profiles-result" style="display:block; font-size:12px;"></span>';
+            echo '<p class="description">' . esc_html__('Sender profiles are not loaded yet.', 'livraria-shipping-for-woocommerce') . '</p>';
+            echo '<button type="button" class="button" id="livraria-reload-profiles">' . esc_html__('Reload profiles', 'livraria-shipping-for-woocommerce') . '</button>';
+            echo '<span id="livraria-reload-profiles-result" class="lp-inline-result" aria-live="polite"></span>';
         } else {
             $selected_id = $this->selected_sender_profile_id($order_id);
             echo '<select id="livraria-sender-profile-select" name="livraria_sender_profile_id">';
@@ -678,7 +717,7 @@ class LivrariaPlugin {
                 echo '<option value="' . esc_attr($option['id']) . '"' . ($option['id'] === (string) $selected_id ? ' selected="selected"' : '') . '>' . esc_html($option['label']) . '</option>';
             }
             echo '</select>';
-            echo '<p class="description">Select the sender profile to use for this expedition</p>';
+            echo '<p class="description">' . esc_html__('Billing and pickup use this profile.', 'livraria-shipping-for-woocommerce') . '</p>';
         }
         echo '</div>';
     }
@@ -1575,321 +1614,8 @@ class LivrariaPlugin {
             'shouldAutoCreate'  => (bool) get_transient('livraria_auto_create_order_' . $order_id),
         ), $is_draft ? array() : self::route_script_data($order_id)));
 
-        // Inline CSS for expedition form styling
-        $css = "
-        .expedition-form-section {
-            background: #f9f9f9;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            padding: 15px;
-            margin-bottom: 15px;
-        }
-        
-        .expedition-form-section h4 {
-            margin-top: 0;
-            margin-bottom: 15px;
-            color: #333;
-            font-size: 14px;
-            font-weight: 600;
-        }
-        
-        .packages-container {
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            background: #fff;
-        }
-        
-        .package-item {
-            border-bottom: 1px solid #eee;
-            padding: 15px;
-            background: #fff;
-            position: relative;
-        }
-        
-        .package-item:last-child {
-            border-bottom: none;
-        }
-        
-        .package-item h5 {
-            margin: 0 0 10px 0;
-            font-size: 13px;
-            font-weight: 600;
-            color: #555;
-        }
-        
-        .package-dimensions {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            align-items: center;
-        }
-        
-        .package-dimensions label {
-            font-size: 12px;
-            color: #666;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-        
-        .package-dimensions input {
-            width: 60px;
-            padding: 2px 6px;
-            font-size: 12px;
-            border: 1px solid #ddd;
-            border-radius: 3px;
-        }
-        
-        .remove-package {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            background: #dc3545;
-            color: white;
-            border: none;
-            border-radius: 3px;
-            padding: 3px 8px;
-            font-size: 11px;
-            cursor: pointer;
-            line-height: 1;
-        }
-        
-        .remove-package:hover {
-            background: #c82333;
-        }
-        
-        .add-package-btn {
-            background: #0073aa;
-            color: white;
-            border: none;
-            padding: 8px 15px;
-            border-radius: 3px;
-            cursor: pointer;
-            font-size: 12px;
-            margin-top: 10px;
-        }
-        
-        .add-package-btn:hover {
-            background: #005a87;
-        }
-        
-        .service-options {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin-bottom: 15px;
-        }
-        
-        .service-options label {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 12px;
-            color: #666;
-        }
-        
-        .service-options input[type='number'] {
-            width: 80px;
-            padding: 4px 8px;
-            border: 1px solid #ddd;
-            border-radius: 3px;
-            font-size: 12px;
-        }
-        
-        .service-options input[type='checkbox'] {
-            margin: 0;
-        }
-        
-        .content-description textarea {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 3px;
-            font-size: 12px;
-            resize: vertical;
-            min-height: 60px;
-        }
-        
-        .sender-address-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-top: 10px;
-        }
-        
-        .sender-address-grid label {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-            font-size: 12px;
-            color: #666;
-        }
-        
-        .sender-address-grid input {
-            padding: 6px;
-            border: 1px solid #ddd;
-            border-radius: 3px;
-            font-size: 12px;
-        }
-        
-        .sender-address-grid .full-width {
-            grid-column: span 2;
-        }
-        
-        #expedition-loading {
-            display: none;
-            padding: 10px;
-            background: #e7f3ff;
-            border: 1px solid #b3d9ff;
-            border-radius: 4px;
-            margin: 10px 0;
-            font-size: 12px;
-            color: #0073aa;
-        }
-        
-        .notice {
-            padding: 10px 15px;
-            border-left: 4px solid #ddd;
-            background: #f9f9f9;
-            margin: 10px 0;
-            font-size: 13px;
-        }
-        
-        .notice-success {
-            border-left-color: #46b450;
-            background: #ecf7ed;
-        }
-        
-        .notice-error {
-            border-left-color: #dc3545;
-            background: #fdf2f2;
-        }
-        
-        .notice-warning {
-            border-left-color: #f0ad4e;
-            background: #fcf8e3;
-        }
-        
-        .quote-item {
-            border: 1px solid #ddd;
-            padding: 12px;
-            margin-bottom: 10px;
-            border-radius: 4px;
-            background: #fff;
-        }
-        
-        .quote-item.selected {
-            border-color: #0073aa;
-            background-color: #f0f8ff;
-        }
-        
-        .quote-item strong {
-            font-size: 14px;
-            color: #333;
-        }
-        
-        .select-quote-btn {
-            margin-top: 8px;
-        }
-        
-        .select-quote-btn:disabled {
-            background-color: #46b450 !important;
-            color: white !important;
-            cursor: not-allowed;
-        }
-
-        /* AWB Actions */
-        .awb-actions {
-            display: flex;
-            gap: 8px;
-            margin-top: 12px;
-            flex-wrap: wrap;
-        }
-
-        .awb-actions .button {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 12px;
-            text-decoration: none;
-            font-size: 13px;
-            line-height: 1.4;
-        }
-
-        .awb-actions .button .dashicons {
-            font-size: 16px;
-            width: 16px;
-            height: 16px;
-        }
-
-        .awb-actions .button-secondary {
-            background: #f6f7f7;
-            border-color: #dcdcde;
-            color: #2c3338;
-        }
-
-        .awb-actions .button-secondary:hover {
-            background: #f0f0f1;
-            border-color: #8c8f94;
-            color: #1d2327;
-        }
-
-        .awb-actions .button-primary {
-            background: #2271b1;
-            border-color: #2271b1;
-            color: #fff;
-        }
-
-        .awb-actions .button-primary:hover {
-            background: #135e96;
-            border-color: #135e96;
-            color: #fff;
-        }
-
-        /* Loading state for download button */
-        .download-awb-pdf.loading {
-            opacity: 0.6;
-            pointer-events: none;
-        }
-
-        .download-awb-pdf.loading::before {
-            content: '';
-            display: inline-block;
-            width: 14px;
-            height: 14px;
-            margin-right: 6px;
-            border: 2px solid #fff;
-            border-top-color: transparent;
-            border-radius: 50%;
-            animation: spin 0.6s linear infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        ";
-        
-        // The box sits in the main column (context normal): lay it out wide
-        $css .= "
-        #livraria-shipping .expedition-section { margin: 12px 0 16px; }
-        #livraria-shipping .expedition-section h4 { margin: 0 0 8px; font-size: 13px; }
-        .livraria-route-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 24px; }
-        .livraria-route-grid select { width: 100%; max-width: 100%; }
-        .livraria-packages input[type=number] { width: 7em; }
-        .livraria-packages td, .livraria-packages th { vertical-align: middle; }
-        .livraria-options { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; }
-        .livraria-options input[type=number] { width: 8em; }
-        .livraria-option-check { padding-bottom: 6px; }
-        .livraria-option-profile select { min-width: 14em; }
-        .livraria-quotes td { vertical-align: middle; }
-        .livraria-quotes tr.quote-disabled td { color: #8c8f94; background: #f6f7f7; }
-        .livraria-quotes .livraria-fill-in { margin-top: 4px; }
-        @media (max-width: 782px) {
-            .livraria-route-grid { grid-template-columns: 1fr; }
-        }
-        ";
-
-        wp_add_inline_style('wp-admin', $css);
+        // The box's own stylesheet (scoped to .livraria-panel)
+        wp_enqueue_style('livraria-order-panel', plugin_dir_url(__FILE__) . 'assets/order-panel.css', array(), LIVRARIA_WC_PLUGIN_VERSION);
     }
 }
 
