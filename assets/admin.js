@@ -147,51 +147,6 @@ jQuery(document).ready(function($) {
         });
     });
     
-    // Create expedition button in order meta box
-    $(document).on('click', '#create-expedition-btn', function() {
-        var btn = $(this);
-        var orderId = btn.data('order-id') || livrariaAdmin.orderId;
-        var nonce = $('#courier_expedition_nonce_field').val();
-        
-        if (!orderId || !nonce) {
-            alert('Missing required data for expedition creation');
-            return;
-        }
-        
-        btn.prop('disabled', true);
-        $('#expedition-loading').show();
-        $('#expedition-result').html('');
-        
-        $.ajax({
-            url: ajaxurl,
-            type: 'POST',
-            data: {
-                action: 'livraria_create_expedition',
-                order_id: orderId,
-                nonce: nonce
-            },
-            success: function(response) {
-                if (response.success) {
-                    $('#expedition-result').html('<div class="notice notice-success"><p>Expedition created successfully!</p></div>');
-                    // Reload the page to show updated expedition info
-                    setTimeout(function() {
-                        location.reload();
-                    }, 2000);
-                } else {
-                    $('#expedition-result').html('<div class="notice notice-error"><p>Error: ' + response.data + '</p></div>');
-                    btn.prop('disabled', false);
-                }
-            },
-            error: function(xhr, status, error) {
-                $('#expedition-result').html('<div class="notice notice-error"><p>AJAX error: ' + error + '</p></div>');
-                btn.prop('disabled', false);
-            },
-            complete: function() {
-                $('#expedition-loading').hide();
-            }
-        });
-    });
-    
     // Update expedition status button
     $(document).on('click', '#update-expedition-status-btn', function() {
         var btn = $(this);
@@ -534,6 +489,66 @@ jQuery(document).ready(function($) {
                 checkbox.prop('checked', originalValue);
                 alert('AJAX error while saving setting');
                 checkbox.prop('disabled', false);
+            }
+        });
+    });
+});
+
+// Locker settings (and any other on/off option marked livraria-auto-option): saved on change
+jQuery(document).ready(function($) {
+    $('.livraria-auto-option').on('change', function() {
+        var checkbox = $(this);
+        var isChecked = checkbox.is(':checked');
+        var feedback = $('.livraria-auto-option-feedback');
+        checkbox.prop('disabled', true);
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: {
+                action: 'livraria_update_option',
+                option_name: checkbox.attr('data-option'),
+                option_value: isChecked ? '1' : '0',
+                nonce: livrariaAdmin.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    feedback.text('✓ Saved');
+                    setTimeout(function() { feedback.text(''); }, 2000);
+                } else {
+                    checkbox.prop('checked', !isChecked);
+                    feedback.text('');
+                    alert('Failed to save setting: ' + (typeof response.data === 'string' ? response.data : 'Unknown error'));
+                }
+                checkbox.prop('disabled', false);
+            },
+            error: function() {
+                checkbox.prop('checked', !isChecked);
+                alert('AJAX error while saving setting');
+                checkbox.prop('disabled', false);
+            }
+        });
+    });
+});
+
+// Shipping methods that show the locker choice: saved as one list on change
+jQuery(document).ready(function($) {
+    $('.livraria-locker-method').on('change', function() {
+        var $boxes = $('.livraria-locker-method');
+        var values = $boxes.filter(':checked').map(function() { return this.value; }).get();
+        var feedback = $('.livraria-auto-option-feedback');
+        $boxes.prop('disabled', true);
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: { action: 'livraria_update_option', option_name: 'livraria_locker_methods', option_value: values.join(','), nonce: livrariaAdmin.nonce },
+            success: function(response) {
+                feedback.text(response.success ? '✓ Saved' : 'Not saved: ' + (typeof response.data === 'string' ? response.data : 'unknown error'));
+                setTimeout(function() { feedback.text(''); }, 2500);
+                $boxes.prop('disabled', false);
+            },
+            error: function() {
+                feedback.text('Not saved: request failed');
+                $boxes.prop('disabled', false);
             }
         });
     });

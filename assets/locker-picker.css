@@ -1,0 +1,14 @@
+.livraria-lp { margin: 12px 0; }
+.livraria-lp-modes { display: flex; gap: 16px; flex-wrap: wrap; margin: 6px 0 10px; }
+.livraria-lp-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+.livraria-lp-chip { border: 1px solid #c3c4c7; border-radius: 14px; background: #fff; padding: 2px 10px; cursor: pointer; }
+.livraria-lp-chip.is-active { background: #2271b1; border-color: #2271b1; color: #fff; }
+.livraria-lp-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+.livraria-lp-filters input[type=search] { min-width: 12em; flex: 1; }
+.livraria-lp-list { list-style: none; margin: 6px 0; padding: 0; max-height: 320px; overflow-y: auto; border: 1px solid #dcdcde; }
+.livraria-lp-list li { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; padding: 6px 8px; border-bottom: 1px solid #f0f0f1; }
+.livraria-lp-name { font-weight: 600; }
+.livraria-lp-address { color: #646970; font-size: 0.9em; flex: 1 1 100%; }
+.livraria-lp-chosen { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.livraria-lp-gate { color: #646970; font-size: 0.9em; }
+.livraria-lp-error { color: #d63638; }

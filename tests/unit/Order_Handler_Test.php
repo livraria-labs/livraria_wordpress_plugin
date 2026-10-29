@@ -183,44 +183,6 @@ class Order_Handler_Test extends Livraria_TestCase {
     }
     
     /**
-     * Test phone number parsing
-     */
-    public function test_parse_phone_number() {
-        $reflection = new ReflectionClass($this->order_handler);
-        $method = $reflection->getMethod('parse_phone_number');
-        $method->setAccessible(true);
-        
-        // Test with country code (Romania +40)
-        // Note: Current implementation matches up to 3 digits, so +401 matches as +401
-        // For proper parsing, we'd need country code lookup, but testing current behavior
-        $result = $method->invoke($this->order_handler, '+40123456789');
-        // The regex \d{1,3} will match 3 digits when possible, so +401 is matched
-        $this->assertNotEmpty($result['phoneCountryCode']);
-        $this->assertStringStartsWith('+', $result['phoneCountryCode']);
-        $this->assertNotEmpty($result['phoneNSN']);
-        
-        // Test with 2-digit country code explicitly
-        $result = $method->invoke($this->order_handler, '+40123456789');
-        // Current implementation: matches +401 (3 digits)
-        $this->assertEquals('+401', $result['phoneCountryCode']);
-        $this->assertEquals('23456789', $result['phoneNSN']);
-        
-        // Test without country code
-        $result = $method->invoke($this->order_handler, '123456789');
-        $this->assertEquals('', $result['phoneCountryCode']);
-        $this->assertEquals('123456789', $result['phoneNSN']);
-        
-        // Test with proper 2-digit country code format
-        $result = $method->invoke($this->order_handler, '+40123456789');
-        // For Romania (+40), we expect +40, but current regex will match +401
-        // This test documents current behavior - implementation could be improved
-        $this->assertTrue(
-            $result['phoneCountryCode'] === '+40' || $result['phoneCountryCode'] === '+401',
-            'Country code should be +40 or +401 (current implementation matches up to 3 digits)'
-        );
-    }
-    
-    /**
      * Test Romanian diacritics removal
      */
     public function test_remove_romanian_diacritics() {

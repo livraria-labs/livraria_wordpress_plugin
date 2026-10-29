@@ -11,19 +11,121 @@ class Livraria_Order_Handler {
     
     private $api_client;
     private $last_validation_errors = array();
+    /** @var array|false|null Sender profile of this run (false = none), see get_sender_profile_from_api() */
+    private $sender_profile_memo = null;
     
     public function __construct($api_client) {
         $this->api_client = $api_client;
     }
     
+    /** Order meta holding the unattended run's claim: a Unix timestamp */
+    const AUTO_CLAIM_META = '_livraria_auto_create_claim';
+    /** How long a claim holds before another run may take the order over */
+    const AUTO_CLAIM_TTL = 600;
+
     /**
      * Get quotes for WooCommerce order (creates quote request)
+     *
+     * With $auto (the unattended run on a status change), the order is
+     * claimed first (claim_order_for_auto_create()): a second run, or an
+     * order that already has a shipment, is refused before any API call. A
+     * run that cannot go on releases its claim and writes why on the order.
      * 
      * @param int $order_id WooCommerce order ID
      * @param array $custom_data Custom expedition data from admin interface
+     * @param bool $auto The unattended run
      * @return array Result array with success status, quotes, and quoteRequestId
      */
-    public function get_quotes_for_order($order_id, $custom_data = array()) {
+    public function get_quotes_for_order($order_id, $custom_data = array(), $auto = false) {
+        if (!$auto) {
+            return $this->quote_order($order_id, $custom_data);
+        }
+
+        $claim = self::claim_order_for_auto_create($order_id);
+        if (!$claim['claimed']) {
+            return array('success' => false, 'message' => $claim['message'], 'claimRefused' => true);
+        }
+
+        $result = $this->quote_order($order_id, $custom_data);
+        if ($result['success'] && empty($result['autoQuoteId'])) {
+            $result = array(
+                'success' => false,
+                'message' => 'No courier can take this order automatically: ' . ($result['unusableSummary'] !== '' ? $result['unusableSummary'] : 'no usable quote.'),
+            );
+        }
+        if (!$result['success']) {
+            $this->auto_create_failed($order_id, $result['message'], true);
+        }
+        return $result;
+    }
+
+    /**
+     * Claim the order for one unattended run. Refused when the order already
+     * has a shipment, or another run claimed it less than AUTO_CLAIM_TTL
+     * seconds ago. Fails safe: a claim whose timestamp cannot be read holds.
+     *
+     * @param mixed $order_or_id WC_Order or order id
+     * @param int|null $now Unix time (tests)
+     * @return array claimed (bool), message (why not)
+     */
+    public static function claim_order_for_auto_create($order_or_id, $now = null) {
+        $now = $now === null ? time() : (int) $now;
+        $order = self::order_object($order_or_id);
+        if (!$order) {
+            return array('claimed' => false, 'message' => 'Order not found');
+        }
+        if (self::get_order_meta($order, '_courier_expedition_id')) {
+            return array('claimed' => false, 'message' => 'This order already has a shipment; no second one was created.');
+        }
+        $claim = self::get_order_meta($order, self::AUTO_CLAIM_META);
+        if ($claim !== '') {
+            $claimed_at = (is_numeric($claim) && (int) $claim > 0) ? (int) $claim : null;
+            if ($claimed_at === null) {
+                return array('claimed' => false, 'message' => 'An automatic shipment for this order is already marked as in progress. Create the shipment from the order panel.');
+            }
+            if ($now - $claimed_at < self::AUTO_CLAIM_TTL) {
+                return array('claimed' => false, 'message' => 'An automatic shipment for this order started ' . max(0, $now - $claimed_at) . ' seconds ago and is still running; no second one was started.');
+            }
+        }
+        self::set_order_meta($order, array(self::AUTO_CLAIM_META => (string) $now));
+        return array('claimed' => true, 'message' => '');
+    }
+
+    /**
+     * End the unattended run's claim
+     *
+     * @param mixed $order_or_id
+     */
+    public static function release_auto_create_claim($order_or_id) {
+        self::delete_order_meta($order_or_id, array(self::AUTO_CLAIM_META));
+    }
+
+    /**
+     * The unattended run stopped: say why on the order and, when nothing can
+     * have been bought, release the claim so a later run may try again
+     *
+     * @param int $order_id
+     * @param string $message
+     * @param bool $release False when the outcome is unknown (no response to /expedition)
+     */
+    public function auto_create_failed($order_id, $message, $release) {
+        $order = self::order_object($order_id);
+        if ($order && method_exists($order, 'add_order_note')) {
+            $order->add_order_note('Livraria: the automatic shipment was not created. ' . $message);
+        }
+        if ($release) {
+            self::release_auto_create_claim($order_id);
+        }
+    }
+
+    /**
+     * Quote the order: validation, recipient, couriers, POST /public/awb/quotes
+     *
+     * @param int $order_id
+     * @param array $custom_data
+     * @return array
+     */
+    private function quote_order($order_id, $custom_data = array()) {
         if (!class_exists('WooCommerce') || !function_exists('wc_get_order')) {
             return array('success' => false, 'message' => 'WooCommerce not found');
         }
@@ -33,12 +135,35 @@ class Livraria_Order_Handler {
             return array('success' => false, 'message' => 'Order not found');
         }
         
-        // Validate order has shipping address
         if (!$this->validate_order_for_shipping($order)) {
             $missing_fields_text = implode(', ', $this->last_validation_errors);
             return array(
                 'success' => false, 
                 'message' => 'Order is missing required information: ' . $missing_fields_text . '. Please complete these fields in the order (shipping address for delivery details, billing for contact info).'
+            );
+        }
+        
+        // The recipient first: an unusable phone stops here, before any API call
+        $recipient = $this->build_recipient($order);
+        if (isset($recipient['error'])) {
+            return array('success' => false, 'message' => $recipient['error'], 'fix' => $recipient['fix'] ?? '');
+        }
+
+        // Which ends are lockers: the buyer's pick, the merchant's Route choices
+        $plan = $this->route_plan($order, isset($custom_data['route']) && is_array($custom_data['route']) ? $custom_data['route'] : array());
+        if ($plan['blocked'] !== '') {
+            // An unusable pick is named, never guessed: no quote until the merchant decides
+            return array(
+                'success' => true,
+                'quotes' => array(),
+                'tabs' => self::quote_tabs(array()),
+                'quoteRequestId' => null,
+                'autoQuoteId' => null,
+                'unusableSummary' => $plan['blocked'],
+                'blocked' => $plan['blocked'],
+                'banner' => $plan['banner'],
+                'destinationMode' => $plan['destinationMode'],
+                'message' => $plan['blocked'],
             );
         }
         
@@ -46,66 +171,56 @@ class Livraria_Order_Handler {
             // Get available couriers first (with caching)
             $courier_ids = $this->get_available_courier_ids();
             if (empty($courier_ids)) {
-                return array('success' => false, 'message' => 'No couriers available');
+                $why = $this->api_client->last_error_message();
+                return array('success' => false, 'message' => $why !== '' ? 'Could not load the courier list: ' . $why : 'No couriers available');
             }
-            
-            // Create quote request and get courier quotes
-            $quote_request_data = $this->prepare_quote_request_data($order, $custom_data, $courier_ids);
-            
-            // Debug: Log the data being sent (only in development mode)
-            if (Livraria_API_Client::is_dev_mode()) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-                error_log('Livraria Debug: Quote request data structure: ' . print_r($quote_request_data, true));
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                error_log('Livraria Debug: Has sender: ' . (isset($quote_request_data['sender']) ? 'yes' : 'no'));
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                error_log('Livraria Debug: Has recipient: ' . (isset($quote_request_data['recipient']) ? 'yes' : 'no'));
+
+            $quotes = array();
+            $request_ids = array();
+            $failures = array();
+            foreach ($plan['routes'] as $route => $ends) {
+                $result = $this->quote_route($order, $custom_data, $courier_ids, $recipient, $route, $ends);
+                if (isset($result['failed'])) {
+                    $failures[] = $result['failed'];
+                }
+                if (!empty($result['quoteRequestId'])) {
+                    $request_ids[$route] = $result['quoteRequestId'];
+                }
+                $quotes = array_merge($quotes, $result['quotes']);
             }
-            
-            $quotes_response = $this->api_client->create_quote_request($quote_request_data);
-            
-            if (!$quotes_response) {
-                return array('success' => false, 'message' => 'Failed to create quote request');
+
+            if (count($failures) === count($plan['routes'])) {
+                return array('success' => false, 'message' => $failures[0]);
             }
-            
-            // Extract quotes and quoteRequestId from response
-            $quote_request_id = null;
-            $courier_quotes = array();
-            
-            if (isset($quotes_response['quoteRequest']['id'])) {
-                $quote_request_id = $quotes_response['quoteRequest']['id'];
-            } elseif (isset($quotes_response['quoteRequestId'])) {
-                $quote_request_id = $quotes_response['quoteRequestId'];
-            }
-            
-            if (isset($quotes_response['courierQuotes'])) {
-                $courier_quotes = $quotes_response['courierQuotes'];
-            } elseif (isset($quotes_response['data'])) {
-                $courier_quotes = is_array($quotes_response['data']) ? $quotes_response['data'] : array($quotes_response['data']);
-            } elseif (isset($quotes_response['quotes'])) {
-                $courier_quotes = is_array($quotes_response['quotes']) ? $quotes_response['quotes'] : array($quotes_response['quotes']);
-            }
-            
-            // Filter out locker quotes
-            $filtered_quotes = array_filter($courier_quotes, function($quote) {
-                return !isset($quote['isLockerQuote']) || !$quote['isLockerQuote'];
-            });
-            
-            if (empty($filtered_quotes)) {
+
+            $quotes = self::normalize_quotes($quotes);
+            if (empty($quotes)) {
                 return array('success' => false, 'message' => 'No courier quotes available');
             }
-            
-            if (!$quote_request_id) {
+            if (empty($request_ids)) {
                 return array('success' => false, 'message' => 'Quote request ID not found in response');
             }
-            
-            // Store quote request ID in order meta temporarily
-            update_post_meta($order_id, '_courier_quote_request_id', $quote_request_id);
+
+            // The unattended pick ships where the destination is: to the locker when there is one
+            $to_locker = $plan['destination'] !== null;
+            $best_quote = self::select_best_quote(array_values(array_filter($quotes, function($q) use ($to_locker) {
+                return self::ends_at_locker($q['deliveryType']) === $to_locker;
+            })));
+            $quote_request_id = $best_quote ? $best_quote['quoteRequestId'] : reset($request_ids);
+            self::set_order_meta($order_id, array('_courier_quote_request_id' => $quote_request_id));
             
             return array(
                 'success' => true,
-                'quotes' => array_values($filtered_quotes), // Re-index array
+                'quotes' => $quotes,
+                'tabs' => self::quote_tabs($quotes),
                 'quoteRequestId' => $quote_request_id,
+                'quoteRequestIds' => $request_ids,
+                // What an unattended run ships with: the cheapest usable quote, or null
+                'autoQuoteId' => $best_quote ? $best_quote['id'] : null,
+                'unusableSummary' => self::summarise_unusable_quotes($quotes),
+                'blocked' => '',
+                'banner' => $plan['banner'],
+                'destinationMode' => $plan['destinationMode'],
                 'message' => 'Quotes retrieved successfully'
             );
             
@@ -113,107 +228,542 @@ class Livraria_Order_Handler {
             return array('success' => false, 'message' => 'Exception: ' . $e->getMessage());
         }
     }
-    
+
     /**
-     * Create expedition for WooCommerce order
-     * 
-     * @param int $order_id WooCommerce order ID
-     * @param array $custom_data Custom expedition data from admin interface
-     * @return array Result array with success status and message
+     * Quote one route: its own POST /public/awb/quotes (its own quote
+     * request), the lockers of its ends, the recipient address of its
+     * destination. A route that cannot be asked comes back as one disabled
+     * row saying why, without an API call.
+     *
+     * @return array quotes (each tagged with quoteRequestId and deliveryType), quoteRequestId, failed (message) on an API error
      */
-    public function create_expedition_for_order($order_id, $custom_data = array()) {
-        if (!class_exists('WooCommerce') || !function_exists('wc_get_order')) {
-            return array('success' => false, 'message' => 'WooCommerce not found');
+    private function quote_route($order, $custom_data, $courier_ids, $recipient, $route, $ends) {
+        if ($ends['problem'] !== null) {
+            return array('quotes' => array(self::route_problem_row($route, $ends['problem'])), 'quoteRequestId' => null);
         }
-        
-        $order = wc_get_order($order_id);
+
+        $route_recipient = $recipient;
+        if ($ends['destination'] !== null) {
+            $route_recipient['address'] = self::locker_recipient_address($ends['destination']);
+        }
+
+        $data = $this->prepare_quote_request_data($order, $custom_data, $courier_ids, $route_recipient);
+        if ($ends['origin'] !== null) {
+            $data['originLockerId'] = (string) $ends['origin']['id'];
+            $data['originCourierId'] = $ends['origin']['courierId'];
+            unset($data['sender']['clientId']); // the locker is the first mile
+        }
+        if ($ends['destination'] !== null) {
+            $data['destinationLockerId'] = (string) $ends['destination']['id'];
+            $data['destinationCourierId'] = $ends['destination']['courierId'];
+        }
+
+        if (Livraria_API_Client::is_dev_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode, ids and counts only
+            error_log('Livraria Debug: ' . $route . ' ' . self::describe_quote_request($order->get_id(), $data, count($courier_ids)));
+        }
+
+        $response = $this->api_client->create_quote_request($data);
+        if (!$response) {
+            $message = $this->api_error_message('Could not get quotes');
+            return array(
+                'quotes' => array(self::route_problem_row($route, array('code' => 'ROUTE_FAILED', 'message' => $message))),
+                'quoteRequestId' => null,
+                'failed' => $message,
+            );
+        }
+
+        $quote_request_id = $response['quoteRequest']['id'] ?? ($response['quoteRequestId'] ?? null);
+        $raw = array();
+        if (isset($response['courierQuotes'])) {
+            $raw = $response['courierQuotes'];
+        } elseif (isset($response['data'])) {
+            $raw = is_array($response['data']) ? $response['data'] : array($response['data']);
+        } elseif (isset($response['quotes'])) {
+            $raw = is_array($response['quotes']) ? $response['quotes'] : array($response['quotes']);
+        }
+
+        $quotes = array();
+        foreach ((array) $raw as $quote) {
+            if (!is_array($quote)) {
+                continue;
+            }
+            if (empty($quote['deliveryType'])) {
+                // An older backend: the route this request asked, unless the quote says locker and the route does not
+                if (!empty($quote['isLockerQuote']) && !self::ends_at_locker($route)) {
+                    continue;
+                }
+                $quote['deliveryType'] = $route;
+            } elseif ($quote['deliveryType'] !== $route) {
+                continue; // another route's quote: that route's own request prices it
+            }
+            $quote['quoteRequestId'] = $quote_request_id;
+            $quotes[] = $quote;
+        }
+        return array('quotes' => $quotes, 'quoteRequestId' => $quote_request_id);
+    }
+
+    /**
+     * A disabled row for a route that could not be quoted
+     *
+     * @param string $route
+     * @param array $problem code, message, missingFields?
+     * @return array
+     */
+    private static function route_problem_row($route, $problem) {
+        return array(
+            'id' => '',
+            'courierName' => self::ROUTE_LABELS[$route],
+            'amount' => 0,
+            'currency' => 'RON',
+            'isDisabled' => true,
+            'deliveryType' => $route,
+            'quoteRequestId' => null,
+            'error' => $problem,
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Routes and lockers (order panel)
+    // -------------------------------------------------------------------------
+
+    /** The four routes, in tab order */
+    const ROUTES = array('DOOR_TO_DOOR', 'DOOR_TO_LOCKER', 'LOCKER_TO_DOOR', 'LOCKER_TO_LOCKER');
+
+    const ROUTE_LABELS = array(
+        'DOOR_TO_DOOR' => 'Door to door',
+        'DOOR_TO_LOCKER' => 'To a locker',
+        'LOCKER_TO_DOOR' => 'From a locker',
+        'LOCKER_TO_LOCKER' => 'Locker to locker',
+    );
+
+    /**
+     * A quote's route: deliveryType, else by isLockerQuote (older backend)
+     *
+     * @param array $quote
+     * @return string
+     */
+    public static function quote_delivery_type($quote) {
+        if (!empty($quote['deliveryType'])) {
+            return (string) $quote['deliveryType'];
+        }
+        return !empty($quote['isLockerQuote']) ? 'DOOR_TO_LOCKER' : 'DOOR_TO_DOOR';
+    }
+
+    public static function ends_at_locker($type) {
+        return substr((string) $type, -strlen('_LOCKER')) === '_LOCKER';
+    }
+
+    public static function starts_at_locker($type) {
+        return strpos((string) $type, 'LOCKER_') === 0;
+    }
+
+    /**
+     * The tab row: ALL plus one tab per route with its count, and cheapest on
+     * the one route tab holding the lowest USABLE quote (ties: the first
+     * route in order; ALL never)
+     *
+     * @param array $quotes normalize_quotes() result
+     * @return array[] key, label, count, cheapest
+     */
+    public static function quote_tabs($quotes) {
+        $tabs = array(array('key' => 'ALL', 'label' => 'All', 'count' => count($quotes), 'cheapest' => false));
+        $cheapest_key = null;
+        $cheapest_amount = INF;
+        foreach (self::ROUTES as $route) {
+            $count = 0;
+            foreach ($quotes as $quote) {
+                if ($quote['deliveryType'] !== $route) {
+                    continue;
+                }
+                $count++;
+                if (!empty($quote['usable']) && (float) $quote['amount'] < $cheapest_amount) {
+                    $cheapest_amount = (float) $quote['amount'];
+                    $cheapest_key = $route;
+                }
+            }
+            $tabs[] = array('key' => $route, 'label' => self::ROUTE_LABELS[$route], 'count' => $count, 'cheapest' => false);
+        }
+        foreach ($tabs as $index => $tab) {
+            $tabs[$index]['cheapest'] = $tab['key'] === $cheapest_key;
+        }
+        return $tabs;
+    }
+
+    /**
+     * The buyer's locker pick on the order, or null (none, or home delivery).
+     * A pick that cannot be used comes back with supported false and a
+     * reason, never guessed: unsupported_courier (named as written) or
+     * missing_courier (a locker id with no courier).
+     *
+     * @param WC_Order $order
+     * @return array|null id, name, courier, rawCourier, supported, reason
+     */
+    public static function read_buyer_pick($order) {
+        $id = trim((string) self::get_order_meta($order, Livraria_Lockers::META_ID));
+        if ($id === '') {
+            return null;
+        }
+        if (strtolower(trim((string) self::get_order_meta($order, Livraria_Lockers::META_MODE))) === 'home') {
+            return null;
+        }
+        $raw = trim((string) self::get_order_meta($order, Livraria_Lockers::META_COURIER));
+        $courier = strtolower($raw);
+        $known = isset(Livraria_Lockers::COURIERS[$courier]);
+        $name = trim((string) self::get_order_meta($order, Livraria_Lockers::META_NAME));
+        return array(
+            'id' => $id,
+            'name' => $name !== '' ? $name : 'locker ' . $id,
+            'courier' => $courier,
+            'rawCourier' => $raw,
+            'supported' => $known,
+            'reason' => $known ? null : ($raw !== '' ? 'unsupported_courier' : 'missing_courier'),
+        );
+    }
+
+    /**
+     * What the merchant reads when the pick cannot be used, '' for a usable one
+     *
+     * @param array|null $pick read_buyer_pick()
+     * @return string
+     */
+    public static function unusable_pick_message($pick) {
+        if (!$pick || $pick['supported']) {
+            return '';
+        }
+        if ($pick['reason'] === 'missing_courier') {
+            return 'The order carries a locker pick (' . $pick['name'] . ') with no courier recorded, so it cannot be used. No quote is asked until you decide: ship to the order address instead, or choose a locker.';
+        }
+        return 'The buyer chose locker ' . $pick['name'] . ' of courier \'' . $pick['rawCourier'] . '\', which this plugin cannot ship to (unsupported courier). No quote is asked until you decide: ship to the order address instead, or choose a locker.';
+    }
+
+    /**
+     * The banner over the quotes for the buyer's pick and the destination in use
+     *
+     * @param array|null $pick read_buyer_pick()
+     * @param string $destination_mode 'buyer', 'order' or 'locker'
+     * @param array|null $destination_locker The locker the shipment goes to (merchant's choice)
+     * @return array|null type ('unusable', 'changed', 'buyer'), message
+     */
+    public static function route_banner($pick, $destination_mode, $destination_locker = null) {
+        if (!$pick) {
+            return null;
+        }
+        if (!$pick['supported']) {
+            return $destination_mode === 'buyer' ? array('type' => 'unusable', 'message' => self::unusable_pick_message($pick)) : null;
+        }
+        $buyer = Livraria_Lockers::display($pick);
+        if ($destination_mode === 'buyer') {
+            return array('type' => 'buyer', 'message' => 'The buyer chose delivery to a locker (livrare la locker): ' . $buyer . '. Quotes to it are under "To a locker".');
+        }
+        $to = $destination_mode === 'locker'
+            ? ($destination_locker ? Livraria_Lockers::display($destination_locker) : 'a locker you have not chosen yet')
+            : 'the order\'s shipping address';
+        return array('type' => 'changed', 'message' => 'You changed the destination. The buyer chose ' . $buyer . ' at checkout; this shipment goes to ' . $to . '.');
+    }
+
+    /**
+     * The courier's id from GET /public/couriers: slug (lowercased), then name
+     *
+     * @param array $couriers
+     * @param string $slug
+     * @return string|null
+     */
+    public static function resolve_courier_id($couriers, $slug) {
+        $wanted = strtolower(trim((string) $slug));
+        if ($wanted === '' || !is_array($couriers)) {
+            return null;
+        }
+        foreach (array('slug', 'name') as $field) {
+            foreach ($couriers as $courier) {
+                if (is_array($courier) && isset($courier[$field]) && strtolower((string) $courier[$field]) === $wanted) {
+                    $id = !empty($courier['id']) ? $courier['id'] : (!empty($courier['_id']) ? $courier['_id'] : '');
+                    return $id !== '' ? (string) $id : null;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The recipient address of a LOCKER destination: the locker's own
+     * address. Null when the locker has no city: the caller stops, nothing is guessed.
+     *
+     * @param array $locker Livraria_Lockers record
+     * @return array|null
+     */
+    public static function locker_recipient_address($locker) {
+        if (!is_array($locker) || empty($locker['city'])) {
+            return null;
+        }
+        return array(
+            'country' => 'Romania',
+            'county' => isset($locker['county']) ? (string) $locker['county'] : '',
+            'city' => (string) $locker['city'],
+            'postcode' => isset($locker['postalCode']) ? (string) $locker['postalCode'] : '',
+            // DPD sends no street: its locker name carries it ("BUCURESTI - TIMISOARA 51 (OUTDOOR LOCKER)")
+            'street' => !empty($locker['street']) ? (string) $locker['street'] : (isset($locker['name']) ? (string) $locker['name'] : ''),
+            'streetNumber' => isset($locker['streetNo']) ? (string) $locker['streetNo'] : '',
+            'block' => '',
+            'staircase' => '',
+            'floor' => '',
+            'apartment' => '',
+        );
+    }
+
+    /**
+     * The order-address fields a DOOR destination needs and the order lacks,
+     * postcode first (the panel offers "Add <first>")
+     *
+     * @param WC_Order $order
+     * @return string[] of 'postcode', 'street', 'city'
+     */
+    public function missing_door_fields($order) {
+        $missing = array();
+        foreach (array('postcode' => 'postcode', 'street' => 'address_1', 'city' => 'city') as $field => $wc_field) {
+            if (trim((string) $this->get_shipping_or_billing($order, $wc_field)) === '') {
+                $missing[] = $field;
+            }
+        }
+        return $missing;
+    }
+
+    /**
+     * GET /public/couriers, cached for an hour
+     *
+     * @return array
+     */
+    private function couriers() {
+        $cached = get_transient('livraria_couriers');
+        if (is_array($cached)) {
+            return $cached;
+        }
+        $couriers = $this->api_client->get_available_couriers();
+        if (!is_array($couriers)) {
+            return array();
+        }
+        if (isset($couriers['data']) && is_array($couriers['data'])) {
+            $couriers = $couriers['data'];
+        }
+        set_transient('livraria_couriers', $couriers, HOUR_IN_SECONDS);
+        return $couriers;
+    }
+
+    /**
+     * A locker end of the route, from the panel's choice or the buyer's pick:
+     * the cached record (for its address) with the courier id resolved.
+     *
+     * @return array locker (or null) and problem (or null): why it cannot be used
+     */
+    private function route_end($courier, $id, $name) {
+        $courier = strtolower((string) $courier);
+        $stub = array('id' => (string) $id, 'name' => (string) $name, 'courier' => $courier);
+        if (!isset(Livraria_Lockers::COURIERS[$courier]) || (string) $id === '') {
+            return array('locker' => null, 'problem' => array('code' => 'LOCKER_UNKNOWN', 'message' => 'The locker has no courier this plugin can ship with.'));
+        }
+        $courier_id = self::resolve_courier_id($this->couriers(), $courier);
+        if ($courier_id === null) {
+            return array('locker' => $stub, 'problem' => array('code' => 'COURIER_NOT_RESOLVED', 'message' => Livraria_Lockers::COURIERS[$courier]['name'] . ' is not available in Livraria right now, so ' . Livraria_Lockers::display($stub) . ' cannot be used.'));
+        }
+        $locker = Livraria_Lockers::find_locker($this->api_client, $courier, $id);
+        if ($locker === null) {
+            $locker = $stub;
+        } elseif ((string) $name !== '') {
+            $locker['name'] = (string) $name;
+        }
+        $locker['courierId'] = $courier_id;
+        return array('locker' => $locker, 'problem' => null);
+    }
+
+    /**
+     * Which routes to quote and with which lockers.
+     *
+     * $route (from the panel): origin.mode 'pickup' | 'locker' (+ origin.locker
+     * {id, courier, name}); destination.mode 'buyer' | 'order' | 'locker'
+     * (+ destination.locker). Defaults: courier pickup; the buyer's pick when
+     * the order has one, else the order address. Every route the chosen ends
+     * allow is quoted: DOOR_TO_DOOR always, *_TO_LOCKER with a destination
+     * locker, LOCKER_TO_* with an origin locker.
+     *
+     * @param WC_Order $order
+     * @param array $route
+     * @return array routes (route => origin, destination, problem), destination, blocked, banner, destinationMode
+     */
+    public function route_plan($order, $route) {
+        $pick = self::read_buyer_pick($order);
+        $origin_spec = isset($route['origin']) && is_array($route['origin']) ? $route['origin'] : array();
+        $dest_spec = isset($route['destination']) && is_array($route['destination']) ? $route['destination'] : array();
+        $dest_mode = isset($dest_spec['mode']) && in_array($dest_spec['mode'], array('buyer', 'order', 'locker'), true)
+            ? $dest_spec['mode']
+            : ($pick ? 'buyer' : 'order');
+        if ($dest_mode === 'buyer' && !$pick) {
+            $dest_mode = 'order';
+        }
+
+        $plan = array('routes' => array(), 'destination' => null, 'blocked' => '', 'banner' => null, 'destinationMode' => $dest_mode);
+
+        $destination = null;
+        $dest_problem = null;
+        if ($dest_mode === 'buyer') {
+            if (!$pick['supported']) {
+                $plan['blocked'] = self::unusable_pick_message($pick);
+                $plan['banner'] = self::route_banner($pick, 'buyer');
+                return $plan;
+            }
+            $end = $this->route_end($pick['courier'], $pick['id'], $pick['name']);
+            $destination = $end['locker'];
+            $dest_problem = $end['problem'];
+        } elseif ($dest_mode === 'locker') {
+            $locker = isset($dest_spec['locker']) && is_array($dest_spec['locker']) ? $dest_spec['locker'] : array();
+            if (empty($locker['id'])) {
+                $dest_problem = array('code' => 'LOCKER_NOT_CHOSEN', 'message' => 'Choose the destination locker under Route.');
+                $destination = array('id' => '', 'name' => '', 'courier' => '');
+            } else {
+                $end = $this->route_end($locker['courier'] ?? '', $locker['id'], $locker['name'] ?? '');
+                $destination = $end['locker'];
+                $dest_problem = $end['problem'];
+            }
+        }
+        if ($destination !== null && $dest_problem === null && self::locker_recipient_address($destination) === null) {
+            $dest_problem = array('code' => 'LOCKER_ADDRESS_UNKNOWN', 'message' => 'The address of ' . Livraria_Lockers::display($destination) . ' is not known (it has no city in the locker list), so it cannot be quoted. Choose another locker.');
+        }
+        $plan['destination'] = $destination;
+        $plan['banner'] = self::route_banner($pick, $dest_mode, $destination);
+
+        $origin = null;
+        $origin_problem = null;
+        if (isset($origin_spec['mode']) && $origin_spec['mode'] === 'locker') {
+            $locker = isset($origin_spec['locker']) && is_array($origin_spec['locker']) ? $origin_spec['locker'] : array();
+            if (empty($locker['id'])) {
+                $origin = array('id' => '', 'name' => '', 'courier' => '');
+                $origin_problem = array('code' => 'LOCKER_NOT_CHOSEN', 'message' => 'Choose the drop-off locker under Route.');
+            } else {
+                $end = $this->route_end($locker['courier'] ?? '', $locker['id'], $locker['name'] ?? '');
+                $origin = $end['locker'];
+                $origin_problem = $end['problem'];
+            }
+        }
+
+        $missing = $this->missing_door_fields($order);
+        $door_problem = empty($missing) ? null : array(
+            'code' => 'ORDER_ADDRESS_INCOMPLETE',
+            'message' => 'The order address has no ' . implode(', no ', $missing) . ', so door delivery cannot be quoted. Add it to the order.',
+            'missingFields' => $missing,
+        );
+
+        $first = function() {
+            foreach (func_get_args() as $problem) {
+                if ($problem !== null) {
+                    return $problem;
+                }
+            }
+            return null;
+        };
+        $plan['routes']['DOOR_TO_DOOR'] = array('origin' => null, 'destination' => null, 'problem' => $door_problem);
+        if ($destination !== null) {
+            $plan['routes']['DOOR_TO_LOCKER'] = array('origin' => null, 'destination' => $destination, 'problem' => $dest_problem);
+        }
+        if ($origin !== null) {
+            $plan['routes']['LOCKER_TO_DOOR'] = array('origin' => $origin, 'destination' => null, 'problem' => $first($origin_problem, $door_problem));
+        }
+        if ($origin !== null && $destination !== null) {
+            $plan['routes']['LOCKER_TO_LOCKER'] = array('origin' => $origin, 'destination' => $destination, 'problem' => $first($origin_problem, $dest_problem));
+        }
+        return $plan;
+    }
+
+    /**
+     * The first supported locker in a GET /pudo-points/closest answer (mixed
+     * couriers, nearest first; the courier is the entry's provider)
+     *
+     * @param mixed $payload
+     * @return array|null Livraria_Lockers record
+     */
+    public static function nearest_supported_locker($payload) {
+        $raw = (is_array($payload) && isset($payload['data']) && is_array($payload['data'])) ? $payload['data'] : $payload;
+        if (!is_array($raw)) {
+            return null;
+        }
+        foreach ($raw as $entry) {
+            $courier = is_array($entry) && isset($entry['provider']) ? strtolower((string) $entry['provider']) : '';
+            if (!isset(Livraria_Lockers::COURIERS[$courier])) {
+                continue;
+            }
+            $lockers = Livraria_Lockers::trim_lockers(array($entry), $courier);
+            if (!empty($lockers)) {
+                return $lockers[0];
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The nearest supported locker to the sender (origin) or to the order's
+     * address (destination), for the panel's suggestion; null when none
+     *
+     * @param int $order_id
+     * @param string $end 'origin' or 'destination'
+     * @return array|null locker, nearTo
+     */
+    public function suggest_locker($order_id, $end) {
+        $order = function_exists('wc_get_order') ? wc_get_order($order_id) : false;
         if (!$order) {
-            return array('success' => false, 'message' => 'Order not found');
+            return null;
         }
-        
-        // Check if expedition already exists
-        if (get_post_meta($order_id, '_courier_expedition_id', true)) {
-            return array('success' => false, 'message' => 'Expedition already exists for this order');
-        }
-        
-        // Validate order has shipping address
-        if (!$this->validate_order_for_shipping($order)) {
-            $missing_fields_text = implode(', ', $this->last_validation_errors);
-            return array(
-                'success' => false, 
-                'message' => 'Order is missing required information: ' . $missing_fields_text . '. Please complete these fields in the order (shipping address for delivery details, billing for contact info).'
+        if ($end === 'origin') {
+            $profile = $this->get_sender_profile_from_api();
+            $profile = is_array($profile) ? $profile : array();
+            $address = isset($profile['address']) && is_array($profile['address']) ? array_merge($profile, $profile['address']) : $profile;
+            $parts = array($address['street'] ?? '', $address['streetNumber'] ?? '', $address['city'] ?? '', $address['county'] ?? '', $address['postcode'] ?? '');
+        } else {
+            $parts = array(
+                self::fold_street($this->get_shipping_or_billing($order, 'address_1'), $this->get_shipping_or_billing($order, 'address_2')),
+                '',
+                $this->get_shipping_or_billing($order, 'city'),
+                $this->get_shipping_or_billing($order, 'state'),
+                $this->get_shipping_or_billing($order, 'postcode'),
             );
         }
-        
-        try {
-            // Step 1: Get available couriers first (with caching)
-            $courier_ids = $this->get_available_courier_ids();
-            if (empty($courier_ids)) {
-                return array('success' => false, 'message' => 'No couriers available');
-            }
-            
-            // Step 2: Create quote request and get courier quotes in one call
-            $quote_request_data = $this->prepare_quote_request_data($order, $custom_data, $courier_ids);
-            
-            // Debug: Log the data being sent (only in development mode)
-            if (Livraria_API_Client::is_dev_mode()) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-                error_log('Livraria Debug: Quote request data: ' . print_r($quote_request_data, true));
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-                error_log('Livraria Debug: Available courier IDs: ' . print_r($courier_ids, true));
-            }
-            
-            $quotes_response = $this->api_client->create_quote_request($quote_request_data);
-            
-            if (!$quotes_response || !isset($quotes_response['courierQuotes'])) {
-                return array('success' => false, 'message' => 'Failed to create quote request or get courier quotes');
-            }
-            
-            // The new API returns courierQuotes directly, we'll need to create a quote request separately
-            // For now, we'll use a placeholder ID
-            $quote_request_id = 'placeholder-' . time();
-            $courier_quotes = $quotes_response['courierQuotes'];
-            
-            if (empty($courier_quotes)) {
-                return array('success' => false, 'message' => 'No courier quotes available');
-            }
-            
-            // Step 2: Select best quote
-            $selected_quote = $this->select_best_quote($courier_quotes);
-            
-            // Step 3: Create expedition
-            $expedition_data = array(
-                'quoteRequestId' => $quote_request_id,
-                'courierQuoteId' => $selected_quote['id'],
-                'billingInfo' => $this->prepare_billing_info($order),
-                'notes' => 'WooCommerce Order #' . $order->get_order_number(),
-                'pickupDate' => $this->calculate_pickup_date()
-            );
-            
-            $expedition_response = $this->api_client->create_expedition($expedition_data);
-            
-            if (!$expedition_response || !isset($expedition_response['id'])) {
-                return array('success' => false, 'message' => 'Failed to create expedition');
-            }
-            
-            // Step 5: Save expedition data
-            $this->save_expedition_data($order_id, $expedition_response, $selected_quote);
-            
-            // Step 6: Add order note
-            $this->add_expedition_order_note($order, $expedition_response);
-            
-            return array(
-                'success' => true, 
-                'message' => 'Expedition created successfully',
-                'expedition_id' => $expedition_response['id'],
-                'awb_number' => $expedition_response['awbNumber'] ?? null
-            );
-            
-        } catch (Exception $e) {
-            return array('success' => false, 'message' => 'Exception: ' . $e->getMessage());
+        $line = implode(', ', array_filter(array_map('trim', array_map('strval', $parts)), 'strlen'));
+        if ($line === '') {
+            return null;
         }
+        $locker = self::nearest_supported_locker($this->api_client->get_closest_pudo_points($line));
+        return $locker ? array('locker' => $locker, 'nearTo' => $line) : null;
     }
     
+    /**
+     * One debug line for a quote request: ids and counts only (order id,
+     * external reference, packages, couriers asked, COD yes/no), never a
+     * name, phone, email or address of the recipient or the sender
+     *
+     * @param int $order_id
+     * @param array $data Quote request body
+     * @param int $courier_count
+     * @return string
+     */
+    public static function describe_quote_request($order_id, $data, $courier_count) {
+        $packages = isset($data['content']['packages']) && is_array($data['content']['packages']) ? count($data['content']['packages']) : 0;
+        return 'quote request for order ' . (int) $order_id
+            . ' (externalRef ' . ($data['externalRef'] ?? '-') . '): '
+            . $packages . ' package(s), ' . (int) $courier_count . ' courier(s) available, COD '
+            . (isset($data['service']['cod']) ? 'yes' : 'no');
+    }
+
+    /**
+     * "<what failed>: <the backend's words>" for the last failed API call
+     *
+     * @param string $what What the plugin was trying to do
+     * @return string
+     */
+    public function api_error_message($what) {
+        $message = $this->api_client->last_error_message();
+        if ($message === '') {
+            $message = 'the Livraria API did not say why';
+        }
+        return $what . ': ' . $message;
+    }
+
     /**
      * Validate order has required shipping information
      * 
@@ -221,16 +771,16 @@ class Livraria_Order_Handler {
      * @return bool
      */
     private function validate_order_for_shipping($order) {
+        // The address is checked per route (missing_door_fields()): a locker
+        // destination does not need the order's street, city or postcode.
         $required_fields = array(
             'shipping_first_name' => 'Shipping First Name',
             'shipping_last_name' => 'Shipping Last Name',
-            'shipping_address_1' => 'Shipping Address',
-            'shipping_city' => 'Shipping City',
-            'shipping_postcode' => 'Shipping Postal Code',
-            'shipping_country' => 'Shipping Country',
             // Keep email and phone from billing since they're not typically in shipping
-            'billing_email' => 'Email Address',
-            'billing_phone' => 'Phone Number'
+            // The phone is checked by build_recipient() (shipping, then billing).
+            // The email is optional: a courier that needs it answers with a
+            // disabled quote (RECIPIENT_FIELDS_REQUIRED) and the panel offers
+            // "Add email".
         );
         
         $missing_fields = array();
@@ -264,6 +814,55 @@ class Livraria_Order_Handler {
         return true;
     }
     
+    /** Payment method titles that mean the courier collects the money (lowercase) */
+    const COD_TITLE_INDICATORS = array('cash on delivery', 'payment on delivery', 'pay on delivery', 'ramburs', 'numerar');
+
+    /**
+     * Whether the buyer pays the courier: WooCommerce's own COD gateway (id
+     * "cod"), or a payment method title naming cash / payment on delivery,
+     * ramburs or numerar
+     *
+     * @param WC_Order $order
+     * @return bool
+     */
+    public static function is_cod_order($order) {
+        if (!$order || !method_exists($order, 'get_payment_method')) {
+            return false;
+        }
+        if ((string) $order->get_payment_method() === 'cod') {
+            return true;
+        }
+        $title = (string) $order->get_payment_method_title();
+        $title = function_exists('mb_strtolower') ? mb_strtolower($title, 'UTF-8') : strtolower($title);
+        foreach (self::COD_TITLE_INDICATORS as $indicator) {
+            if (strpos($title, $indicator) !== false) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The quote request's service block. "cod" is there only when there is
+     * something to collect (a COD order, or an amount typed in the panel):
+     * the backend reads its presence as "this is a COD shipment".
+     *
+     * @param array $service_options get_service_options() result
+     * @param mixed $sender_profile For the COD IBAN
+     * @return array
+     */
+    private function build_service($service_options, $sender_profile) {
+        $service = array(
+            'saturdayDelivery' => $service_options['saturday_delivery'],
+            'openOnDelivery' => $service_options['open_on_delivery'],
+        );
+        if ($service_options['cod_amount'] > 0) {
+            $service['cod'] = $this->build_cod_object($service_options['cod_amount'], $sender_profile);
+        }
+        $service['insurance'] = array('amount' => $service_options['insurance_amount']);
+        return $service;
+    }
+
     /**
      * Build COD object for quote request
      * Includes bankAccount if COD amount > 0 and sender profile has codIban
@@ -314,33 +913,419 @@ class Livraria_Order_Handler {
     }
     
     /**
-     * Parse phone number into country code and NSN
-     * 
-     * @param string $phone Phone number (e.g., +40123456789)
-     * @return array Array with phoneCountryCode and phoneNSN
+     * Split a phone number into a country code and a national significant
+     * number (NSN), as the Livraria API wants it: phoneCountryCode "+40" and
+     * a 9-digit phoneNSN starting 7, 2 or 3 for Romania.
+     *
+     * Romanian numbers turn up in every shape: 0700 000 001, 0700.000.001,
+     * +40700000001, 0040700000001, 40700000001, 700000001, +40 0700 000 001.
+     * A number with another country code is accepted when it is written with
+     * "+" (or "00"). Anything else comes back with an empty country code, and
+     * phone_problem() turns that into a stop. Ported from the PrestaShop
+     * module (OrderHandler::normalizePhone).
+     *
+     * @param string $phone As typed
+     * @return array phoneCountryCode, phoneNSN
      */
-    private function parse_phone_number($phone) {
-        $phone = trim($phone);
-        $phone = preg_replace('/\s+/', '', $phone); // Remove spaces
-        
-        if (empty($phone)) {
+    public static function normalize_phone($phone) {
+        $raw = preg_replace('/[^\d+]/', '', (string) $phone);
+        if ($raw === '' || $raw === null) {
             return array('phoneCountryCode' => '', 'phoneNSN' => '');
         }
-        
-        if (preg_match('/^(\+\d{1,3})(.+)$/', $phone, $matches)) {
-            return array(
-                'phoneCountryCode' => $matches[1],
-                'phoneNSN' => $matches[2]
-            );
+
+        // 00 as the international prefix
+        if (strpos($raw, '00') === 0) {
+            $raw = '+' . substr($raw, 2);
         }
-        
-        // If no country code, return as-is (no fallback)
-        return array(
-            'phoneCountryCode' => '',
-            'phoneNSN' => $phone
-        );
+        $digits = preg_replace('/\D/', '', $raw);
+
+        if (strpos($raw, '+40') === 0
+            || (strpos($raw, '+') !== 0 && (strpos($digits, '40') === 0 || strpos($digits, '0') === 0 || preg_match('/^[723]\d{8}$/', $digits)))) {
+            $national = $digits;
+            if (strpos($national, '40') === 0 && strlen($national) > 9) {
+                $national = substr($national, 2);
+            }
+            // Trunk zero, including the "+40 07..." double prefix
+            while (strpos($national, '0') === 0 && strlen($national) > 9) {
+                $national = substr($national, 1);
+            }
+            return array('phoneCountryCode' => '+40', 'phoneNSN' => $national);
+        }
+
+        if (strpos($raw, '+') === 0) {
+            // Longest match first, so "+36" is never read as "+367"
+            $known = array(
+                '+373', '+359', '+355', '+356', '+357', '+358', '+350', '+351', '+352', '+353', '+354',
+                '+380', '+381', '+382', '+383', '+385', '+386', '+387', '+389',
+                '+420', '+421', '+423', '+370', '+371', '+372', '+374', '+375', '+376', '+377', '+378',
+                '+30', '+31', '+32', '+33', '+34', '+36', '+39', '+41', '+43', '+44', '+45',
+                '+46', '+47', '+48', '+49', '+90', '+20', '+27', '+7', '+1',
+            );
+            foreach ($known as $code) {
+                $bare = substr($code, 1);
+                if (strpos($digits, $bare) === 0) {
+                    return array('phoneCountryCode' => $code, 'phoneNSN' => ltrim(substr($digits, strlen($bare)), '0'));
+                }
+            }
+            // Unknown code: two digits is the commonest length in Europe
+            return array('phoneCountryCode' => '+' . substr($digits, 0, 2), 'phoneNSN' => substr($digits, 2));
+        }
+
+        return array('phoneCountryCode' => '', 'phoneNSN' => $digits);
     }
-    
+
+    /**
+     * Why a normalised phone cannot be sent, '' when it can
+     *
+     * @param array $parsed normalize_phone() result
+     * @return string '', 'missing', 'unplaceable' or 'invalid_ro'
+     */
+    public static function phone_problem($parsed) {
+        if ($parsed['phoneNSN'] === '' && $parsed['phoneCountryCode'] === '') {
+            return 'missing';
+        }
+        if ($parsed['phoneCountryCode'] === '' || $parsed['phoneNSN'] === '' || strlen($parsed['phoneNSN']) < 4) {
+            return 'unplaceable';
+        }
+        if ($parsed['phoneCountryCode'] === '+40' && !preg_match('/^[723]\d{8}$/', $parsed['phoneNSN'])) {
+            return 'invalid_ro';
+        }
+        return '';
+    }
+
+    /**
+     * The recipient phone as typed: the shipping phone (WooCommerce 5.6+),
+     * else the billing phone
+     *
+     * @param WC_Order $order
+     * @return array phone (trimmed, '' if none), source ('shipping', 'billing' or '')
+     */
+    public static function recipient_phone($order) {
+        $candidates = array(
+            'shipping' => method_exists($order, 'get_shipping_phone') ? $order->get_shipping_phone() : '',
+            'billing' => method_exists($order, 'get_billing_phone') ? $order->get_billing_phone() : '',
+        );
+        foreach ($candidates as $source => $value) {
+            $value = trim((string) $value);
+            if ($value !== '') {
+                return array('phone' => $value, 'source' => $source);
+            }
+        }
+        return array('phone' => '', 'source' => '');
+    }
+
+    /**
+     * County spellings the catalogue does not use, as they reach us from a
+     * shop's state list, keyed by their normalised form
+     */
+    const COUNTY_ALIASES = array(
+        'DIMBOVITA' => 'DAMBOVITA',
+        'SATU-MARE' => 'SATU MARE',
+        'VALCEA' => 'VILCEA',
+    );
+
+    /** How long a resolved locality is cached (a shop re-quotes the same towns) */
+    const LOCALITY_CACHE_TTL = 604800; // 7 days
+
+    /**
+     * Uppercase, trimmed, Romanian diacritics stripped: how localities reach the couriers
+     *
+     * @param string $value
+     * @return string
+     */
+    public static function normalize_locality($value) {
+        $map = array(
+            'ă' => 'a', 'Ă' => 'A', 'â' => 'a', 'Â' => 'A', 'î' => 'i', 'Î' => 'I',
+            'ș' => 's', 'Ș' => 'S', 'ş' => 's', 'Ş' => 'S', 'ț' => 't', 'Ț' => 'T', 'ţ' => 't', 'Ţ' => 'T',
+        );
+        return strtoupper(trim(preg_replace('/\s+/u', ' ', strtr((string) $value, $map))));
+    }
+
+    /**
+     * A county name normalised, with COUNTY_ALIASES applied
+     *
+     * @param string $county
+     * @return string
+     */
+    public static function county_alias($county) {
+        $county = self::normalize_locality($county);
+        return isset(self::COUNTY_ALIASES[$county]) ? self::COUNTY_ALIASES[$county] : $county;
+    }
+
+    /**
+     * Comparison key for two county spellings (aliases applied, letters only)
+     */
+    private static function county_key($county) {
+        return preg_replace('/[^A-Z]/', '', self::county_alias($county));
+    }
+
+    /**
+     * The recipient's county and city as the courier catalogue spells them.
+     *
+     * The WooCommerce state (code -> name) is only a hint. In order:
+     * GET /public/location/cities by the city name, exact name matches,
+     * narrowed by the hint, then by postcode; else GET
+     * /public/location/postcodes by postcode. A result is cached in a
+     * transient. When the lookup fails or finds nothing, the hint is used as
+     * before (uppercase, diacritics stripped, aliases applied), with a debug
+     * line saying so.
+     *
+     * @param string $state WooCommerce state code (e.g. "CJ") or name
+     * @param string $city City as typed on the order
+     * @param string $postcode
+     * @return array county, city, source ('catalogue', 'postcodes' or 'state')
+     */
+    public function resolve_locality($state, $city, $postcode) {
+        $hint = $state;
+        if ($state !== '' && function_exists('WC') && WC() && isset(WC()->countries) && WC()->countries) {
+            $states = WC()->countries->get_states('RO');
+            if (is_array($states) && isset($states[$state])) {
+                $hint = $states[$state];
+            }
+        }
+        $hint = self::county_alias(html_entity_decode((string) $hint, ENT_QUOTES, 'UTF-8'));
+        $city_n = self::normalize_locality($city);
+        $postcode = trim((string) $postcode);
+        $fallback = array('county' => $hint, 'city' => $city_n, 'source' => 'state');
+
+        if ($city_n === '' && $postcode === '') {
+            return $fallback;
+        }
+
+        $cache_key = 'livraria_loc_' . md5($hint . '|' . $city_n . '|' . $postcode);
+        $cached = get_transient($cache_key);
+        if (is_array($cached) && isset($cached['county'], $cached['city'])) {
+            return $cached;
+        }
+
+        $resolved = null;
+        $failed = false;
+
+        if ($city_n !== '') {
+            $cities = $this->api_client->find_cities($city);
+            if ($cities === false) {
+                $failed = true;
+            } else {
+                $resolved = self::pick_city($cities, $city_n, $hint, $postcode);
+            }
+        }
+
+        if ($resolved === null && $postcode !== '') {
+            $matches = $this->api_client->find_postcodes(array('postcode' => $postcode));
+            if ($matches === false) {
+                $failed = true;
+            } elseif (!empty($matches[0]['county'])) {
+                $resolved = array('county' => self::normalize_locality($matches[0]['county']), 'city' => $city_n, 'source' => 'postcodes');
+            }
+        }
+
+        if ($resolved !== null) {
+            set_transient($cache_key, $resolved, self::LOCALITY_CACHE_TTL);
+            return $resolved;
+        }
+
+        if (Livraria_API_Client::is_dev_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode, no order data
+            error_log('Livraria Debug: county ' . ($failed ? 'lookup failed (HTTP ' . $this->api_client->last_error_status() . ')' : 'not found in the catalogue') . '; using the order\'s state as the county');
+        }
+        return $fallback;
+    }
+
+    /**
+     * The one catalogue locality that fits, or null
+     *
+     * @param array $cities find_cities() result
+     * @param string $city_n Normalised city
+     * @param string $hint Normalised county hint ('' for none)
+     * @param string $postcode
+     * @return array|null county, city, source
+     */
+    private static function pick_city($cities, $city_n, $hint, $postcode) {
+        $exact = array_values(array_filter($cities, function($c) use ($city_n) {
+            return is_array($c) && isset($c['name'], $c['county']) && self::normalize_locality($c['name']) === $city_n;
+        }));
+        if ($hint !== '') {
+            $hint_key = self::county_key($hint);
+            $by_hint = array_values(array_filter($exact, function($c) use ($hint_key) {
+                return self::county_key($c['county']) === $hint_key;
+            }));
+            if (!empty($by_hint)) {
+                $exact = $by_hint;
+            }
+        }
+        if (count($exact) > 1 && $postcode !== '') {
+            $by_postcode = array_values(array_filter($exact, function($c) use ($postcode) {
+                return isset($c['postcode']) && (string) $c['postcode'] === $postcode;
+            }));
+            if (!empty($by_postcode)) {
+                $exact = $by_postcode;
+            }
+        }
+        $counties = array_unique(array_map(function($c) {
+            return self::normalize_locality($c['county']);
+        }, $exact));
+        if (count($counties) !== 1) {
+            return null;
+        }
+        return array('county' => reset($counties), 'city' => self::normalize_locality($exact[0]['name']), 'source' => 'catalogue');
+    }
+
+    /** The API's limit on address.street */
+    const MAX_STREET_LENGTH = 100;
+
+    /**
+     * Address line 1 and line 2 as one street line, at most 100 characters
+     *
+     * @param string $line1
+     * @param string $line2
+     * @return string
+     */
+    public static function fold_street($line1, $line2) {
+        $street = trim(preg_replace('/\s+/u', ' ', trim((string) $line1) . ' ' . trim((string) $line2)));
+        return function_exists('mb_substr') ? mb_substr($street, 0, self::MAX_STREET_LENGTH, 'UTF-8') : substr($street, 0, self::MAX_STREET_LENGTH);
+    }
+
+    /**
+     * The recipient of the quote request, or array('error' => message,
+     * 'fix' => order field the merchant can fill in) when the order cannot be
+     * shipped as it is. Runs before any API call.
+     *
+     * @param WC_Order $order
+     * @return array
+     */
+    public function build_recipient($order) {
+        $phone = self::recipient_phone($order);
+        $parsed = self::normalize_phone($phone['phone']);
+        $problem = self::phone_problem($parsed);
+        if ($problem === 'missing' && $phone['phone'] !== '') {
+            $problem = 'unplaceable'; // typed, but no digits in it
+        }
+        switch ($problem) {
+            case 'missing':
+                return array(
+                    'error' => 'The order has no recipient phone number (shipping or billing phone). Couriers refuse a shipment without one; add it to the order.',
+                    'fix' => 'phone',
+                );
+            case 'unplaceable':
+                return array(
+                    'error' => 'The recipient phone "' . $phone['phone'] . '" (' . $phone['source'] . ' phone) cannot be used: it is neither a Romanian number (07XX XXX XXX) nor an international number starting with + and its country code. Correct it on the order.',
+                    'fix' => 'phone',
+                );
+            case 'invalid_ro':
+                return array(
+                    'error' => 'The recipient phone "' . $phone['phone'] . '" (' . $phone['source'] . ' phone) is not a valid Romanian number: couriers need 10 digits starting 07, 02 or 03. Correct it on the order.',
+                    'fix' => 'phone',
+                );
+        }
+
+        $recipient_name = trim($this->get_shipping_or_billing($order, 'first_name') . ' ' . $this->get_shipping_or_billing($order, 'last_name'));
+
+        // County and city from the courier catalogue; the shop's state is a hint
+        $locality = $this->resolve_locality(
+            trim((string) $this->get_shipping_or_billing($order, 'state')),
+            (string) $this->get_shipping_or_billing($order, 'city'),
+            trim((string) $this->get_shipping_or_billing($order, 'postcode'))
+        );
+        $recipient_county = $locality['county'];
+        $recipient_city = $locality['city'];
+
+        $recipient = array(
+            'name' => $recipient_name,
+            'phoneCountryCode' => $parsed['phoneCountryCode'],
+            'phoneNSN' => $parsed['phoneNSN'],
+            'isCompany' => false,
+            'address' => array(
+                'country' => 'Romania',
+                'county' => $recipient_county,
+                'city' => $recipient_city,
+                'postcode' => $this->get_shipping_or_billing($order, 'postcode'),
+                // Both address lines in street: couriers print streetNumber as
+                // the house number, and line 2 is "Bl. D6, sc. A, ap. 5"
+                'street' => self::fold_street($this->get_shipping_or_billing($order, 'address_1'), $this->get_shipping_or_billing($order, 'address_2')),
+                'streetNumber' => '',
+                'block' => '',
+                'staircase' => '',
+                'floor' => '',
+                'apartment' => '',
+            )
+        );
+
+        // Optional: sent only when the order has one (a blank email fails the API's email check)
+        $email = trim((string) $order->get_billing_email());
+        if ($email !== '') {
+            $recipient['email'] = $email;
+        }
+        return $recipient;
+    }
+
+    /**
+     * Fill in a recipient contact field on the WooCommerce ORDER (never on
+     * the Livraria side), from the order panel's "Add email" / "Add phone":
+     * - email: the billing email;
+     * - phone: the field build_recipient() reads first (the shipping phone
+     *   when it has one, else the billing phone).
+     * The value is checked first; a note on the order records the change.
+     *
+     * @param int $order_id
+     * @param string $field 'email', 'phone', 'postcode', 'street' or 'city'
+     * @param string $value
+     * @return array success, message
+     */
+    public function update_order_contact($order_id, $field, $value) {
+        $order = function_exists('wc_get_order') ? wc_get_order($order_id) : false;
+        if (!$order) {
+            return array('success' => false, 'message' => 'Order not found');
+        }
+        $value = trim((string) $value);
+
+        if ($field === 'email') {
+            if ($value === '' || !is_email($value)) {
+                return array('success' => false, 'message' => 'Enter a valid email address.');
+            }
+            $order->set_billing_email($value);
+            $order->add_order_note('Livraria: recipient email added to the order (billing email) from the shipping panel.');
+            $order->save();
+            return array('success' => true, 'message' => 'Email saved on the order.');
+        }
+
+        if ($field === 'phone') {
+            if (self::phone_problem(self::normalize_phone($value)) !== '') {
+                return array('success' => false, 'message' => 'Enter a phone number couriers can use: a Romanian number (07XX XXX XXX) or an international one starting with + and its country code.');
+            }
+            $current = self::recipient_phone($order);
+            if ($current['source'] === 'shipping' && method_exists($order, 'set_shipping_phone')) {
+                $order->set_shipping_phone($value);
+                $where = 'shipping phone';
+            } else {
+                $order->set_billing_phone($value);
+                $where = 'billing phone';
+            }
+            $order->add_order_note('Livraria: recipient phone set on the order (' . $where . ') from the shipping panel.');
+            $order->save();
+            return array('success' => true, 'message' => 'Phone saved on the order.');
+        }
+
+        // A door destination's missing address field ("Add postcode" first)
+        $address_fields = array('postcode' => 'postcode', 'street' => 'address_1', 'city' => 'city');
+        if (isset($address_fields[$field])) {
+            if ($value === '' || ($field === 'postcode' && !preg_match('/^\d{6}$/', $value))) {
+                return array('success' => false, 'message' => $field === 'postcode' ? 'Enter the 6-digit Romanian postcode.' : 'Enter the ' . $field . '.');
+            }
+            // Where the plugin reads it: the shipping address when the order has one, else billing
+            $has_shipping = trim((string) $order->get_shipping_address_1() . (string) $order->get_shipping_city() . (string) $order->get_shipping_postcode()) !== '';
+            $setter = ($has_shipping ? 'set_shipping_' : 'set_billing_') . $address_fields[$field];
+            if (!method_exists($order, $setter)) {
+                return array('success' => false, 'message' => 'This field cannot be filled in from the shipping panel.');
+            }
+            $order->$setter($value);
+            $order->add_order_note('Livraria: ' . $field . ' set on the order (' . ($has_shipping ? 'shipping' : 'billing') . ' address) from the shipping panel.');
+            $order->save();
+            return array('success' => true, 'message' => ucfirst($field) . ' saved on the order.');
+        }
+
+        return array('success' => false, 'message' => 'This field cannot be filled in from the shipping panel.');
+    }
+
     /**
      * Sanitize shop name for use in externalRef
      * 
@@ -381,9 +1366,10 @@ class Livraria_Order_Handler {
      * @param WC_Order $order
      * @param array $custom_data Custom expedition data
      * @param array $courier_ids Available courier IDs
+     * @param array|null $recipient build_recipient() result, built here when null
      * @return array
      */
-    private function prepare_quote_request_data($order, $custom_data = array(), $courier_ids = array()) {
+    private function prepare_quote_request_data($order, $custom_data = array(), $courier_ids = array(), $recipient = null) {
         $sender_profile = $this->get_sender_profile_from_api();
         $sender_info = $this->get_sender_info();
         $packages = $this->calculate_packages_from_order($order, $custom_data);
@@ -397,7 +1383,7 @@ class Livraria_Order_Handler {
                 'phoneNSN' => $sender_profile['phoneNSN']
             );
         } else {
-            $sender_phone_parsed = $this->parse_phone_number($sender_phone);
+            $sender_phone_parsed = self::normalize_phone($sender_phone);
         }
         
         // Get sender address - use profile directly if available
@@ -484,10 +1470,6 @@ class Livraria_Order_Handler {
         
         $sender_address['localityPostcode'] = $sender_address['postcode'] ?? '';
         
-        // Parse recipient phone number
-        $recipient_phone = trim($order->get_billing_phone());
-        $recipient_phone_parsed = $this->parse_phone_number($recipient_phone);
-        
         // Build sender object - ensure proper data types
         $sender_is_company = isset($sender_info['isCompany']) ? (bool)$sender_info['isCompany'] : false;
         
@@ -521,61 +1503,10 @@ class Livraria_Order_Handler {
             'cui' => $sender_info['cui'] ?? '',
         );
         
-        // Build recipient object
-        $recipient_name = trim($this->get_shipping_or_billing($order, 'first_name') . ' ' . $this->get_shipping_or_billing($order, 'last_name'));
-        
-        // Get state and convert code to full name if needed
-        $recipient_state = trim($this->get_shipping_or_billing($order, 'state'));
-        $recipient_county = $recipient_state;
-        
-        // Try to convert state code to full name using WooCommerce state mapping
-        if (!empty($recipient_state) && function_exists('WC') && WC()->countries) {
-            $romanian_states = WC()->countries->get_states('RO');
-            if ($romanian_states && isset($romanian_states[$recipient_state])) {
-                $recipient_county = $romanian_states[$recipient_state];
-            }
-        }
-        
-        // Remove diacritics from county and uppercase
-        $recipient_county = strtoupper($this->remove_romanian_diacritics($recipient_county));
-        
-        // Uppercase and remove diacritics from recipient city
-        $recipient_city = $this->get_shipping_or_billing($order, 'city');
-        $recipient_city = !empty($recipient_city) 
-            ? strtoupper($this->remove_romanian_diacritics($recipient_city)) 
-            : '';
-        
-        // Default phoneCountryCode to +40 if empty
-        $recipient_phone_country_code = !empty($recipient_phone_parsed['phoneCountryCode']) 
-            ? $recipient_phone_parsed['phoneCountryCode'] 
-            : '+40';
-        
-        $recipient_obj = array(
-            'name' => $recipient_name,
-            'phoneCountryCode' => $recipient_phone_country_code,
-            'phoneNSN' => $recipient_phone_parsed['phoneNSN'],
-            'email' => trim($order->get_billing_email()),
-            'isCompany' => false,
-            'address' => array(
-                'country' => 'Romania',
-                'county' => $recipient_county,
-                'city' => $recipient_city,
-                'postcode' => $this->get_shipping_or_billing($order, 'postcode'),
-                'street' => $this->get_shipping_or_billing($order, 'address_1'),
-                'streetNumber' => $this->get_shipping_or_billing($order, 'address_2'),
-                'block' => '',
-                'staircase' => '',
-                'floor' => '',
-                'apartment' => '',
-            )
-        );
-        
-        // Debug: Log sender and recipient data (only in development mode)
-        if (Livraria_API_Client::is_dev_mode()) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-            error_log('Livraria Debug: Sender object: ' . PHP_EOL . json_encode($sender_obj, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-            error_log('Livraria Debug: Recipient object: ' . PHP_EOL . json_encode($recipient_obj, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        // Build recipient object (build_recipient() stops on an unusable phone)
+        $recipient_obj = $recipient !== null ? $recipient : $this->build_recipient($order);
+        if (isset($recipient_obj['error'])) {
+            throw new Exception($recipient_obj['error']);
         }
         
         return array(
@@ -589,14 +1520,7 @@ class Livraria_Order_Handler {
                     $this->generate_package_description($order),
                 'shipmentNote' => 'Order from ' . get_bloginfo('name') . ' - Order #' . $order->get_order_number(),
                 'externalRef' => 'WP-' . $this->sanitize_shop_name() . '-' . $order->get_id(),
-                'service' => array(
-                    'saturdayDelivery' => $service_options['saturday_delivery'],
-                    'openOnDelivery' => $service_options['open_on_delivery'],
-                    'cod' => $this->build_cod_object($service_options['cod_amount'], $sender_profile),
-                    'insurance' => array(
-                        'amount' => $service_options['insurance_amount']
-                    )
-                ),
+                'service' => $this->build_service($service_options, $sender_profile),
                 'paymentInfo' => array(
                     'courierServicePayer' => 'THIRD_PARTY'
                 )
@@ -610,7 +1534,15 @@ class Livraria_Order_Handler {
      * @return array|null Sender profile data or null if not available
      */
     private function get_sender_profile_from_api() {
+        // One request per run: every route quoted at once uses the same sender
+        if ($this->sender_profile_memo !== null) {
+            return $this->sender_profile_memo === false ? null : $this->sender_profile_memo;
+        }
         $sender_profile = $this->api_client->get_sender_profile();
+        $this->sender_profile_memo = false;
+        if ($sender_profile !== false && !is_wp_error($sender_profile)) {
+            $this->sender_profile_memo = (is_array($sender_profile) && isset($sender_profile[0])) ? $sender_profile[0] : (is_array($sender_profile) ? $sender_profile : false);
+        }
         
         if ($sender_profile === false || is_wp_error($sender_profile)) {
             return null;
@@ -704,21 +1636,13 @@ class Livraria_Order_Handler {
                     // Log what we got for debugging (only in development mode)
                     if (Livraria_API_Client::is_dev_mode()) {
                         // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                        error_log('Livraria: Sender profile address incomplete. Missing: ' . implode(', ', $missing_fields));
-                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-                        error_log('Livraria: Full sender profile: ' . print_r($sender_profile, true));
-                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-                        error_log('Livraria: Address data found: ' . print_r($address_data, true));
-                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-                        error_log('Livraria: Extracted address: ' . print_r($address, true));
+                        error_log('Livraria: Sender profile address incomplete. Missing: ' . implode(', ', $missing_fields) . '; fields present: ' . implode(', ', array_keys($sender_profile)));
                     }
                 }
             } else {
                 if (Livraria_API_Client::is_dev_mode()) {
                     // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                    error_log('Livraria: No address data found in sender profile');
-                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-                    error_log('Livraria: Full sender profile structure: ' . print_r($sender_profile, true));
+                    error_log('Livraria: No address data found in sender profile; fields present: ' . implode(', ', array_keys($sender_profile)));
                 }
             }
         } else {
@@ -805,15 +1729,82 @@ class Livraria_Order_Handler {
         );
     }
     
+    /** The order panel's minimums: a parcel the plugin works out is never below them */
+    const MIN_WEIGHT_KG = 1.0;
+    const MIN_DIMENSION_CM = 10.0;
+
     /**
-     * Calculate packages from order items
-     * 
+     * $value in kilograms, from WooCommerce's weight unit
+     * (woocommerce_weight_unit: kg, g, lbs, oz). 0 for an empty value.
+     *
+     * @param mixed $value
+     * @param string|null $unit Defaults to the shop's setting
+     * @return float
+     */
+    public static function to_kilograms($value, $unit = null) {
+        $value = (float) $value;
+        if ($value <= 0) {
+            return 0.0;
+        }
+        $unit = strtolower(trim((string) ($unit === null ? get_option('woocommerce_weight_unit', 'kg') : $unit)));
+        switch ($unit) {
+            case 'g':
+                return $value / 1000;
+            case 'lbs':
+            case 'lb':
+                return $value * 0.45359237;
+            case 'oz':
+                return $value * 0.0283495231;
+            default: // kg and anything unrecognised
+                return $value;
+        }
+    }
+
+    /**
+     * $value in centimetres, from WooCommerce's dimension unit
+     * (woocommerce_dimension_unit: m, cm, mm, in, yd). 0 for an empty value.
+     *
+     * @param mixed $value
+     * @param string|null $unit Defaults to the shop's setting
+     * @return float
+     */
+    public static function to_centimetres($value, $unit = null) {
+        $value = (float) $value;
+        if ($value <= 0) {
+            return 0.0;
+        }
+        $unit = strtolower(trim((string) ($unit === null ? get_option('woocommerce_dimension_unit', 'cm') : $unit)));
+        switch ($unit) {
+            case 'm':
+                return $value * 100;
+            case 'mm':
+                return $value / 10;
+            case 'in':
+                return $value * 2.54;
+            case 'yd':
+                return $value * 91.44;
+            default: // cm and anything unrecognised
+                return $value;
+        }
+    }
+
+    /**
+     * The parcels to quote.
+     *
+     * - Packages typed in the order panel are sent as typed.
+     * - Otherwise ONE parcel for the whole order (couriers price per parcel):
+     *   the summed weight of the lines, the largest line's length and width,
+     *   the summed height; a line without a weight or a dimension counts with
+     *   the default package's value. Never below MIN_WEIGHT_KG / MIN_DIMENSION_CM.
+     * - The option livraria_package_mode = "per_line" keeps one parcel per
+     *   order line (the 1.1.0 behaviour, now in kg and cm).
+     * Weights and dimensions are converted from the shop's units.
+     *
      * @param WC_Order $order
      * @param array $custom_data Custom expedition data
      * @return array
      */
-    private function calculate_packages_from_order($order, $custom_data = array()) {
-        // If custom packages are provided, use them
+    public function calculate_packages_from_order($order, $custom_data = array()) {
         if (!empty($custom_data['packages'])) {
             $packages = array();
             foreach ($custom_data['packages'] as $package) {
@@ -827,55 +1818,71 @@ class Livraria_Order_Handler {
             }
             return $packages;
         }
-        
-        // Otherwise, calculate from order items
-        $total_weight = 0;
-        $packages = array();
-        $default_weight = floatval(get_option('courier_default_package_weight', 1));
-        $default_dimensions = array(
-            'width' => floatval(get_option('courier_default_package_width', 10)),
-            'height' => floatval(get_option('courier_default_package_height', 10)),
-            'length' => floatval(get_option('courier_default_package_length', 10))
+
+        $defaults = array(
+            'weight' => floatval(get_option('courier_default_package_weight', 1)) ?: 1.0,
+            'width' => floatval(get_option('courier_default_package_width', 10)) ?: 10.0,
+            'height' => floatval(get_option('courier_default_package_height', 10)) ?: 10.0,
+            'length' => floatval(get_option('courier_default_package_length', 10)) ?: 10.0,
         );
-        
+
+        $lines = array();
         foreach ($order->get_items() as $item) {
             $product = $item->get_product();
-            if (!$product) continue;
-            
-            $weight = $product->get_weight() ? floatval($product->get_weight()) : $default_weight;
-            $quantity = $item->get_quantity();
-            
-            // Get product dimensions or use defaults
-            $width = $product->get_width() ? floatval($product->get_width()) : $default_dimensions['width'];
-            $height = $product->get_height() ? floatval($product->get_height()) : $default_dimensions['height'];
-            $length = $product->get_length() ? floatval($product->get_length()) : $default_dimensions['length'];
-            
-            $total_weight += $weight * $quantity;
-            
-            // For now, create one package per product type
-            $packages[] = array(
-                'weight' => round(floatval($weight * $quantity), 2),
-                'width' => round(floatval($width), 2),
-                'height' => round(floatval($height), 2),
-                'length' => round(floatval($length), 2),
-                'packageType' => 'package'
+            if (!$product) {
+                continue;
+            }
+            $weight = self::to_kilograms($product->get_weight());
+            $length = self::to_centimetres($product->get_length());
+            $width = self::to_centimetres($product->get_width());
+            $height = self::to_centimetres($product->get_height());
+            $lines[] = array(
+                'quantity' => max(1, (int) $item->get_quantity()),
+                'weight' => $weight > 0 ? $weight : $defaults['weight'],
+                'length' => $length > 0 ? $length : $defaults['length'],
+                'width' => $width > 0 ? $width : $defaults['width'],
+                'height' => $height > 0 ? $height : $defaults['height'],
             );
         }
-        
-        // If no packages calculated, create a default one
-        if (empty($packages)) {
-            $packages[] = array(
-                'weight' => round(max(floatval($default_weight), 0.1), 2),
-                'width' => round(floatval($default_dimensions['width']), 2),
-                'height' => round(floatval($default_dimensions['height']), 2),
-                'length' => round(floatval($default_dimensions['length']), 2),
-                'packageType' => 'package'
-            );
+
+        if (empty($lines)) {
+            return array(self::parcel($defaults['weight'], $defaults['width'], $defaults['height'], $defaults['length']));
         }
-        
-        return $packages;
+
+        if (get_option('livraria_package_mode', 'order') === 'per_line') {
+            $packages = array();
+            foreach ($lines as $line) {
+                $packages[] = self::parcel($line['weight'] * $line['quantity'], $line['width'], $line['height'], $line['length']);
+            }
+            return $packages;
+        }
+
+        $weight = 0.0;
+        $length = 0.0;
+        $width = 0.0;
+        $height = 0.0;
+        foreach ($lines as $line) {
+            $weight += $line['weight'] * $line['quantity'];
+            $length = max($length, $line['length']);
+            $width = max($width, $line['width']);
+            $height += $line['height'] * $line['quantity'];
+        }
+        return array(self::parcel($weight, $width, $height, $length));
     }
-    
+
+    /**
+     * One parcel the plugin worked out, rounded to 0.01 and never below the minimums
+     */
+    private static function parcel($weight, $width, $height, $length) {
+        return array(
+            'weight' => round(max(self::MIN_WEIGHT_KG, $weight), 2),
+            'width' => round(max(self::MIN_DIMENSION_CM, $width), 2),
+            'height' => round(max(self::MIN_DIMENSION_CM, $height), 2),
+            'length' => round(max(self::MIN_DIMENSION_CM, $length), 2),
+            'packageType' => 'package'
+        );
+    }
+
     /**
      * Get service options for the order
      * 
@@ -892,36 +1899,14 @@ class Livraria_Order_Handler {
         $insurance_amount = isset($custom_data['insurance_amount']) ? 
             floatval($custom_data['insurance_amount']) : floatval(get_option('courier_default_insurance_amount', 0));
         
-        // Check if payment method is Cash on Delivery
-        $payment_method = $order->get_payment_method();
-        $payment_method_title = $order->get_payment_method_title();
-        $is_cod = false;
-        
-        // Primary check: WooCommerce COD payment gateway ID is 'cod'
-        if ($payment_method === 'cod') {
-            $is_cod = true;
+        // Amount to collect: what the merchant typed in the panel, else the
+        // order total on a COD order, else nothing
+        if (isset($custom_data['cod_amount'])) {
+            $cod_amount = max(0, floatval($custom_data['cod_amount']));
+        } elseif (self::is_cod_order($order)) {
+            $cod_amount = max(0, floatval($order->get_total()));
         } else {
-            // Fallback: check payment method title for COD indicators (case-insensitive)
-            $payment_method_title_lower = strtolower($payment_method_title);
-            $cod_indicators = array('cash on delivery', 'payment on delivery', 'pay on delivery', 'cod');
-            
-            foreach ($cod_indicators as $indicator) {
-                if (strpos($payment_method_title_lower, strtolower($indicator)) !== false) {
-                    $is_cod = true;
-                    break;
-                }
-            }
-        }
-        
-        // Set COD amount based on payment method or custom data
-        $cod_amount = 0;
-        if ($is_cod) {
-            // If COD payment method, use order total (or custom amount if provided)
-            $cod_amount = isset($custom_data['cod_amount']) ? 
-                floatval($custom_data['cod_amount']) : floatval($order->get_total());
-        } else if (isset($custom_data['cod_amount'])) {
-            // If custom data has COD amount but payment method is not COD, use custom amount
-            $cod_amount = floatval($custom_data['cod_amount']);
+            $cod_amount = 0;
         }
 
         return array(
@@ -930,26 +1915,6 @@ class Livraria_Order_Handler {
             'insurance_amount' => round($insurance_amount, 2),
             'cod_amount' => round($cod_amount, 2)
         );
-    }
-    
-    /**
-     * Calculate pickup date (next business day)
-     * 
-     * @return string ISO 8601 formatted date
-     */
-    private function calculate_pickup_date() {
-        $pickup_days_offset = intval(get_option('courier_pickup_days_offset', 1));
-        $pickup_date = new DateTime();
-        $pickup_date->add(new DateInterval('P' . $pickup_days_offset . 'D'));
-        
-        // Skip weekends if configured
-        if (get_option('courier_skip_weekends', true)) {
-            while ($pickup_date->format('N') >= 6) { // 6 = Saturday, 7 = Sunday
-                $pickup_date->add(new DateInterval('P1D'));
-            }
-        }
-        
-        return $pickup_date->format('Y-m-d\TH:i:s.v\Z');
     }
     
     /**
@@ -979,47 +1944,104 @@ class Livraria_Order_Handler {
     }
     
     /**
-     * Select the best quote from available quotes
-     * 
-     * @param array $quotes
+     * The quotes the order panel shows: every door-to-door quote, disabled
+     * ones included. Each keeps the API's fields and gains:
+     * - usable: false when the API disabled it (isDisabled), it has no price
+     *   (amount <= 0) or no id; such a quote is shown greyed, without a price,
+     *   and can never be selected or auto-picked;
+     * - disabledReason: the API's error.message (or why it is unusable);
+     * - errorCode, missingRecipientFields, needsEmail (RECIPIENT_FIELDS_REQUIRED
+     *   naming "email": the panel offers "Add email").
+     * Usable quotes keep the API's order; unusable ones go last. Every
+     * route is kept (deliveryType filled in: quote_delivery_type()).
+     *
+     * @param mixed $quotes courierQuotes from the API
      * @return array
      */
-    private function select_best_quote($quotes) {
-        $selection_method = get_option('courier_quote_selection', 'first');
-        
-        switch ($selection_method) {
-            case 'cheapest':
-                return array_reduce($quotes, function($carry, $quote) {
-                    return (!$carry || $quote['amount'] < $carry['amount']) ? $quote : $carry;
-                });
-                
-            case 'fastest':
-                // Assuming quotes have a 'deliveryDays' field
-                return array_reduce($quotes, function($carry, $quote) {
-                    $carry_days = isset($carry['deliveryDays']) ? $carry['deliveryDays'] : 999;
-                    $quote_days = isset($quote['deliveryDays']) ? $quote['deliveryDays'] : 999;
-                    return (!$carry || $quote_days < $carry_days) ? $quote : $carry;
-                });
-                
-            default: // 'first'
-                return $quotes[0];
+    public static function normalize_quotes($quotes) {
+        if (!is_array($quotes)) {
+            return array();
         }
+        $usable = array();
+        $unusable = array();
+        foreach ($quotes as $quote) {
+            if (!is_array($quote)) {
+                continue;
+            }
+            $error = (isset($quote['error']) && is_array($quote['error'])) ? $quote['error'] : array();
+            $fields = array();
+            if (isset($error['missingRecipientFields']) && is_array($error['missingRecipientFields'])) {
+                $fields = $error['missingRecipientFields'];
+            } elseif (isset($quote['missingRecipientFields']) && is_array($quote['missingRecipientFields'])) {
+                $fields = $quote['missingRecipientFields'];
+            }
+            $id = isset($quote['id']) ? (string) $quote['id'] : '';
+            $amount = (isset($quote['amount']) && is_numeric($quote['amount'])) ? (float) $quote['amount'] : 0.0;
+            $disabled = !empty($quote['isDisabled']);
+
+            $quote['isDisabled'] = $disabled;
+            $quote['usable'] = !$disabled && $amount > 0 && $id !== '';
+            $quote['errorCode'] = isset($error['code']) ? (string) $error['code'] : '';
+            $quote['missingRecipientFields'] = array_values(array_filter($fields, 'is_string'));
+            $quote['needsEmail'] = $disabled && $quote['errorCode'] === 'RECIPIENT_FIELDS_REQUIRED' && in_array('email', $quote['missingRecipientFields'], true);
+            // A door route the order's address cannot serve: "Add <first missing field>"
+            $quote['needsField'] = ($disabled && $quote['errorCode'] === 'ORDER_ADDRESS_INCOMPLETE' && !empty($error['missingFields']) && is_array($error['missingFields']))
+                ? (string) reset($error['missingFields'])
+                : '';
+            $quote['deliveryType'] = self::quote_delivery_type($quote);
+            $quote['disabledReason'] = '';
+            if (!$quote['usable']) {
+                $message = isset($error['message']) && is_string($error['message']) ? trim($error['message']) : '';
+                if ($message === '') {
+                    $message = $disabled ? 'Unavailable for this shipment.' : 'No price was returned for this courier.';
+                }
+                $quote['disabledReason'] = $message;
+            }
+
+            if ($quote['usable']) {
+                $usable[] = $quote;
+            } else {
+                $unusable[] = $quote;
+            }
+        }
+        return array_merge($usable, $unusable);
     }
-    
+
     /**
-     * Prepare billing info for expedition
-     * 
-     * @param WC_Order $order
-     * @return array
+     * The quote an unattended run ships with: the cheapest usable one
+     * (normalize_quotes()), never a disabled, unpriced or id-less quote
+     *
+     * @param array $quotes normalize_quotes() result
+     * @return array|null
      */
-    private function prepare_billing_info($order) {
-        return array(
-            'name' => trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()),
-            'email' => $order->get_billing_email(),
-            'street' => $order->get_billing_address_1(),
-            'city' => $order->get_billing_city(),
-            'county' => $order->get_billing_state()
-        );
+    public static function select_best_quote($quotes) {
+        $best = null;
+        foreach ((array) $quotes as $quote) {
+            if (empty($quote['usable'])) {
+                continue;
+            }
+            if ($best === null || (float) $quote['amount'] < (float) $best['amount']) {
+                $best = $quote;
+            }
+        }
+        return $best;
+    }
+
+    /**
+     * "Courier: reason · Courier: reason" for the unusable quotes, '' if none
+     *
+     * @param array $quotes normalize_quotes() result
+     * @return string
+     */
+    public static function summarise_unusable_quotes($quotes) {
+        $reasons = array();
+        foreach ((array) $quotes as $quote) {
+            if (!empty($quote['usable'])) {
+                continue;
+            }
+            $reasons[] = (isset($quote['courierName']) && $quote['courierName'] !== '' ? $quote['courierName'] : 'A courier') . ': ' . $quote['disabledReason'];
+        }
+        return implode(' · ', $reasons);
     }
     
     /**
@@ -1032,14 +2054,14 @@ class Livraria_Order_Handler {
     public function save_expedition_data($order_id, $expedition_response, $selected_quote) {
         // Debug: Log the full response structure (only in development mode)
         if (Livraria_API_Client::is_dev_mode()) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-            error_log('Livraria Debug Save: Full expedition_response: ' . print_r($expedition_response, true));
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-            error_log('Livraria Debug Save: Full selected_quote: ' . print_r($selected_quote, true));
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode, ids only
+            error_log('Livraria Debug Save: order ' . $order_id . ', expedition ' . ($expedition_response['id'] ?? '?') . ', AWB ' . ($expedition_response['awbNumber'] ?? '-') . ', quote ' . ($selected_quote['id'] ?? '?') . ', response fields: ' . implode(', ', array_keys((array) $expedition_response)));
         }
 
-        update_post_meta($order_id, '_courier_expedition_id', $expedition_response['id']);
-        update_post_meta($order_id, '_courier_quote_id', $selected_quote['id']);
+        $values = array(
+            '_courier_expedition_id' => $expedition_response['id'],
+            '_courier_quote_id' => $selected_quote['id'],
+        );
 
         // Get courier name from expedition response (multiple possible locations)
         // Priority: expedition response > selected quote (since expedition response is authoritative)
@@ -1085,19 +2107,20 @@ class Livraria_Order_Handler {
             // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
             error_log('Livraria Debug: Saving courier name: "' . $courier_name . '" for order ' . $order_id);
         }
-        update_post_meta($order_id, '_courier_name', $courier_name);
-        update_post_meta($order_id, '_courier_price', $selected_quote['amount'] ?? 0);
+        $values['_courier_name'] = $courier_name;
+        $values['_courier_price'] = $selected_quote['amount'] ?? 0;
 
         if (isset($expedition_response['awbNumber'])) {
-            update_post_meta($order_id, '_courier_awb_number', $expedition_response['awbNumber']);
+            $values['_courier_awb_number'] = $expedition_response['awbNumber'];
         }
         
         if (isset($expedition_response['status'])) {
-            update_post_meta($order_id, '_courier_status', $expedition_response['status']['name'] ?? 'Created');
+            $values['_courier_status'] = $expedition_response['status']['name'] ?? 'Created';
         }
         
         // Save creation timestamp
-        update_post_meta($order_id, '_courier_expedition_created', current_time('mysql'));
+        $values['_courier_expedition_created'] = current_time('mysql');
+        self::set_order_meta($order_id, $values);
     }
     
     /**
@@ -1130,7 +2153,7 @@ class Livraria_Order_Handler {
      * @return array|null
      */
     public function get_order_expedition_data($order_id) {
-        $expedition_id = get_post_meta($order_id, '_courier_expedition_id', true);
+        $expedition_id = self::get_order_meta($order_id, '_courier_expedition_id');
         
         if (!$expedition_id) {
             return null;
@@ -1138,11 +2161,11 @@ class Livraria_Order_Handler {
         
         return array(
             'expedition_id' => $expedition_id,
-            'awb_number' => get_post_meta($order_id, '_courier_awb_number', true),
-            'courier_name' => get_post_meta($order_id, '_courier_name', true),
-            'price' => get_post_meta($order_id, '_courier_price', true),
-            'status' => get_post_meta($order_id, '_courier_status', true),
-            'created' => get_post_meta($order_id, '_courier_expedition_created', true)
+            'awb_number' => self::get_order_meta($order_id, '_courier_awb_number'),
+            'courier_name' => self::get_order_meta($order_id, '_courier_name'),
+            'price' => self::get_order_meta($order_id, '_courier_price'),
+            'status' => self::get_order_meta($order_id, '_courier_status'),
+            'created' => self::get_order_meta($order_id, '_courier_expedition_created')
         );
     }
     
@@ -1155,7 +2178,7 @@ class Livraria_Order_Handler {
      */
     public function update_expedition_status($order_id, $awb_number = null) {
         if (!$awb_number) {
-            $awb_number = get_post_meta($order_id, '_courier_awb_number', true);
+            $awb_number = self::get_order_meta($order_id, '_courier_awb_number');
         }
         
         if (!$awb_number) {
@@ -1170,7 +2193,7 @@ class Livraria_Order_Handler {
         
         // Update stored status
         if (isset($expedition_data['status']['name'])) {
-            update_post_meta($order_id, '_courier_status', $expedition_data['status']['name']);
+            self::set_order_meta($order_id, array('_courier_status' => $expedition_data['status']['name']));
         }
         
         return array(
@@ -1180,6 +2203,91 @@ class Livraria_Order_Handler {
         );
     }
     
+    // -------------------------------------------------------------------------
+    // Order meta, HPOS-safe
+    // -------------------------------------------------------------------------
+
+    /**
+     * The order behind $order_or_id (a WC_Order-like object is used as is)
+     *
+     * @param mixed $order_or_id
+     * @return object|null
+     */
+    private static function order_object($order_or_id) {
+        if (is_object($order_or_id)) {
+            return $order_or_id;
+        }
+        if (!function_exists('wc_get_order')) {
+            return null;
+        }
+        $order = wc_get_order((int) $order_or_id);
+        return $order ? $order : null;
+    }
+
+    /**
+     * One order meta value through the order object ($order->get_meta()), so
+     * it works with High-Performance Order Storage. A value 1.1.0 or earlier
+     * wrote with update_post_meta() on an HPOS store lives in wp_postmeta: when
+     * the order has nothing under $key, that legacy row is read (never written).
+     *
+     * @param mixed $order_or_id WC_Order or order id
+     * @param string $key Meta key
+     * @return mixed '' when unset
+     */
+    public static function get_order_meta($order_or_id, $key) {
+        $order = self::order_object($order_or_id);
+        $value = ($order && method_exists($order, 'get_meta')) ? $order->get_meta($key, true) : '';
+        if (($value === '' || $value === null || $value === false) && function_exists('get_post_meta')) {
+            $id = $order ? (int) $order->get_id() : (int) $order_or_id;
+            if ($id > 0) {
+                $value = get_post_meta($id, $key, true);
+            }
+        }
+        return ($value === null || $value === false) ? '' : $value;
+    }
+
+    /**
+     * Write order meta through the order object and save once
+     *
+     * @param mixed $order_or_id WC_Order or order id
+     * @param array $values key => value
+     * @return bool False when the order cannot be loaded
+     */
+    public static function set_order_meta($order_or_id, array $values) {
+        $order = self::order_object($order_or_id);
+        if (!$order) {
+            return false;
+        }
+        foreach ($values as $key => $value) {
+            $order->update_meta_data($key, $value);
+        }
+        $order->save();
+        return true;
+    }
+
+    /**
+     * Delete order meta through the order object and save once; the legacy
+     * wp_postmeta copy (see get_order_meta()) goes too
+     *
+     * @param mixed $order_or_id WC_Order or order id
+     * @param string[] $keys
+     */
+    public static function delete_order_meta($order_or_id, array $keys) {
+        $order = self::order_object($order_or_id);
+        $id = $order ? (int) $order->get_id() : (int) $order_or_id;
+        if ($order) {
+            foreach ($keys as $key) {
+                $order->delete_meta_data($key);
+            }
+            $order->save();
+        }
+        if ($id > 0 && function_exists('delete_post_meta')) {
+            foreach ($keys as $key) {
+                delete_post_meta($id, $key);
+            }
+        }
+    }
+
     /**
      * Get shipping address field, fallback to billing if shipping is empty
      * 

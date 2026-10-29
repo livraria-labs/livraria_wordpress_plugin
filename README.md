@@ -53,6 +53,51 @@ The sender address should be provided as JSON:
 }
 ```
 
+## Lockers (1.2.0)
+
+Buyers can have the parcel delivered to a Sameday easybox or a DPD locker.
+
+### Settings
+
+Under **Settings > Livraria**, "Lockers at checkout":
+
+- **Offer easybox Sameday lockers** and **Offer locker DPD lockers**: both on by default.
+- **Require locker**: hides home delivery at checkout. It does not decide the gate: a buyer who chose locker delivery without picking a locker cannot place the order either way.
+- **Show the locker choice for these shipping methods**: one checkbox per shipping method of your shop (zone and method title, e.g. `free_shipping:1`). The locker choice appears at checkout only while the buyer's chosen shipping rate is one ticked here. **None ticked = no locker choice at checkout**, and nothing is loaded on the checkout.
+
+### Your step
+
+The plugin creates no shipping method. Create a shipping method for locker delivery in **WooCommerce > Settings > Shipping** (for example a flat rate named "Livrare la locker") and tick it in the list above.
+
+### What the buyer sees
+
+On the block checkout under the shipping options, and on the classic (shortcode) checkout after the customer details, in Romanian whatever the shop's language: "Livrare la adresă" or "Livrare la locker"; with locker delivery, the county (județ) first, then the lockers of both couriers in that county in one list, with courier chips, a city filter and a search. The chosen locker shows as "Locker ales: …" with „Schimbă” to change it.
+
+### Locker list refresh
+
+The locker list refreshes in the background through WP-cron; shops that disable WP-cron (`DISABLE_WP_CRON`) should run `wp-cron.php` from a system cron, as WordPress recommends.
+
+### What the order carries
+
+Four order meta keys (HPOS-safe): `_livraria_delivery_mode` (`locker` or `home`), `_livraria_locker_id`, `_livraria_locker_name`, `_livraria_locker_courier` (`sameday` or `dpd`).
+
+### The order box
+
+The **Deliver with Livraria** box on the order screen (main column):
+
+- **Route**: From (courier pickup at the sender address, or drop-off at a locker, the nearest suggested) and To (the buyer's locker, the order's shipping address, or a locker chosen in the box).
+- **Get quotes** asks every route the chosen ends allow at once; the quotes show under tabs (All, Door to door, To a locker, From a locker, Locker to locker) with "· Cheapest" on the route of the lowest usable quote. Unavailable quotes stay visible, greyed, with the reason. The cheapest usable quote is preselected; the action reads "Create AWB · courier · price".
+- A **UAT** badge shows when the plugin is connected to the Livraria test API.
+- A locker pick the plugin cannot use (no courier recorded, or a courier other than Sameday and DPD) is named in a banner; nothing is quoted until you choose **Ship to the order address instead** (undo brings the buyer's pick back).
+- When a quote needs a detail the order lacks, **Add email**, **Add phone**, **Add postcode**, **Add street** or **Add city** saves it on the WooCommerce **order** (never on the Livraria side) and asks the quotes again.
+
+### Upgrading from 1.1.0
+
+- Quotes are for **one parcel per order** now (summed weight, largest length and width, summed height, in kg and cm, never below 1 kg and 10 x 10 x 10 cm). Edit or add parcels in the box before quoting; the option `livraria_package_mode = per_line` keeps one parcel per order line.
+- The old one-click create request (`livraria_create_expedition`) and the `courier_quote_selection` option are gone.
+- The box moved from the sidebar to the main column (new box id `livraria-shipping`).
+- Nothing changes at checkout until a shipping method is ticked under "Show the locker choice for these shipping methods".
+
 ## API Integration
 
 The plugin integrates with your courier API through the following endpoints:
@@ -83,7 +128,7 @@ Creates the actual expedition with selected quote and billing information.
 1. **Order Completion**: When a WooCommerce order is marked as completed (and auto-create is enabled)
 2. **Quote Request**: Plugin creates a quote request with order details
 3. **Get Quotes**: Retrieves available courier quotes
-4. **Select Quote**: Automatically selects the first available quote
+4. **Select Quote**: Automatically selects the cheapest usable quote (to the buyer's locker when the order has one)
 5. **Create Expedition**: Creates the expedition with billing information
 6. **Store Data**: Saves expedition ID and AWB number to order meta
 7. **Order Note**: Adds a note to the order with expedition details
@@ -94,8 +139,8 @@ For manual expedition creation:
 
 1. Go to **WooCommerce > Orders**
 2. Edit an order
-3. Find the **Courier Expedition** metabox in the sidebar
-4. Click **Create Expedition** button
+3. Find the **Deliver with Livraria** box under the order items
+4. Click **Get quotes**, choose a quote, then **Create AWB**
 
 ## Order Meta Fields
 
@@ -116,27 +161,13 @@ The plugin includes comprehensive error handling:
 
 ## Customization
 
-### Selecting Different Courier Quotes
+### Quote selection
 
-By default, the plugin selects the first available quote. To customize this behavior, modify the `create_expedition_for_order()` method:
-
-```php
-// Instead of using the first quote:
-$selected_quote = $quotes_response[0];
-
-// Add custom logic, e.g., cheapest quote:
-$selected_quote = array_reduce($quotes_response, function($carry, $quote) {
-    return (!$carry || $quote['amount'] < $carry['amount']) ? $quote : $carry;
-});
-```
+The order box shows every quote and preselects the cheapest usable one; the merchant can select another. Automatic creation ships with the cheapest usable quote.
 
 ### Package Dimensions
 
-Default package dimensions can be customized in the `prepare_quote_request_data()` method. Currently uses:
-- Width: 10cm
-- Height: 10cm  
-- Length: 10cm
-- Weight: From product data or 1kg default
+By default an order is one parcel worked out from the products (see "Upgrading from 1.1.0"). Products without a weight or a dimension count with the defaults: 1 kg, 10 x 10 x 10 cm.
 
 ## Troubleshooting
 

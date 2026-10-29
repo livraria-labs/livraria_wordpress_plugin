@@ -145,7 +145,9 @@ This plugin integrates with your Livraria expedition API to automatically create
 
 This plugin connects to the Livraria API to create and manage shipping expeditions for WooCommerce orders.
 
-When an admin creates or manages a shipment from the WooCommerce order screen, the following data is sent to the Livraria API (https://www.api.livraria.ro/): recipient name, shipping address, package dimensions, weight, and order number.
+When an admin creates or manages a shipment from the WooCommerce order screen, the following data is sent to the Livraria API (https://www.api.livraria.ro/): recipient name, phone, email (when the order has one), shipping address or chosen locker, package dimensions, weight, and order number.
+
+When the checkout offers locker delivery, the shop's own server fetches the Sameday and DPD locker lists from the Livraria API (cached for 15 minutes); the buyer's browser talks only to the shop. No buyer data is sent to fetch the list.
 
 Every request to the Livraria API also carries the plugin version and the WordPress, WooCommerce and PHP versions of this site, so that Livraria support can tell which plugin version a shop runs. No other site data is sent.
 
@@ -154,6 +156,20 @@ Service provider: Livraria Hub S.R.L.
 - Privacy Policy: https://www.livraria.ro/en/privacy-policy
 
 == Changelog ==
+
+= 1.2.0 =
+* Quotes are now for ONE parcel per order (summed weight, largest length and width, summed height), in kg and cm from the shop's units; a computed parcel is at least 1 kg and 10 x 10 x 10 cm. Edit or add parcels on the order screen before quoting
+* Lockers: for the shipping methods you tick under Settings > Livraria, buyers choose home or locker delivery at checkout (classic and block checkout), pick the county, then one Sameday easybox or DPD locker from one list
+* Order screen: choose the route (courier pickup or drop-off at a locker; the buyer's locker, the order address or another locker), every route is quoted at once under tabs, the cheapest marked
+* "Add email", "Add phone", "Add postcode", "Add street", "Add city" save the missing detail on the order and quote again
+* Every failed request shows the Livraria API's own reason
+* Phone numbers are sent in the format couriers need; a number that cannot be used stops the quote with a clear message
+* Address line 2 goes into the street; the county and city come from Livraria's locality list
+* Cash on delivery is requested only for cash-on-delivery orders or a typed amount
+* Unavailable courier quotes are shown greyed with their reason and can never be selected
+* Automatic creation can no longer create a second shipment for the same order
+* Works with WooCommerce High-Performance Order Storage
+* The order box is redesigned and sits in the main column; the old one-click create request and the quote-selection option are removed
 
 = 1.1.0 =
 * The password is no longer stored: the plugin keeps an encrypted session token and renews it automatically
