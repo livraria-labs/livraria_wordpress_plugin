@@ -483,3 +483,4 @@ require_once dirname(dirname(__FILE__)) . '/courier-expedition-wp-plugin.php';
 require_once dirname(dirname(__FILE__)) . '/includes/class-api-client.php';
 require_once dirname(dirname(__FILE__)) . '/includes/class-order-handler.php';
 require_once dirname(dirname(__FILE__)) . '/includes/class-admin-page.php';
+require_once dirname(dirname(__FILE__)) . '/includes/class-lockers.php';

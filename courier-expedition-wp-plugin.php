@@ -23,6 +23,7 @@ define('LIVRARIA_WC_PLUGIN_VERSION', '1.1.0');
 require_once plugin_dir_path(__FILE__) . 'includes/class-api-client.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-order-handler.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-admin-page.php';
+require_once plugin_dir_path(__FILE__) . 'includes/class-lockers.php';
 
 /**
  * Tell WooCommerce the plugin works with High-Performance Order Storage:
@@ -94,6 +95,10 @@ class LivrariaPlugin {
         add_action('wp_ajax_livraria_delete_expedition', array($this, 'ajax_delete_expedition'));
         add_action('wp_ajax_livraria_update_order_contact', array($this, 'ajax_update_order_contact'));
         add_action('wp_ajax_livraria_reload_sender_profiles', array($this, 'ajax_reload_sender_profiles'));
+        // Locker list: the order panel (merchant) and the checkout (buyer, logged in or not)
+        add_action('wp_ajax_livraria_lockers', array($this, 'ajax_admin_lockers'));
+        add_action('wp_ajax_livraria_checkout_lockers', array($this, 'ajax_checkout_lockers'));
+        add_action('wp_ajax_nopriv_livraria_checkout_lockers', array($this, 'ajax_checkout_lockers'));
         add_action('updated_option', array($this, 'forget_sender_profiles_on_settings_save'), 10, 1);
 
         // A stored API URL off the Livraria allow-list stops all API calls
@@ -546,13 +551,49 @@ class LivrariaPlugin {
     }
 
     /**
+     * AJAX (order panel): the merged locker list with addresses, for the
+     * Route pickers. ?courier=sameday|dpd narrows it.
+     */
+    public function ajax_admin_lockers() {
+        check_ajax_referer('courier_expedition_nonce', 'nonce');
+        $this->require_capability('edit_shop_orders');
+        $this->send_locker_proxy(false);
+    }
+
+    /**
+     * AJAX (checkout, nonce livraria_checkout): the merged locker list the
+     * buyer picks from, trimmed to id, name, county, city, street, courier.
+     * The Livraria session stays on the server.
+     */
+    public function ajax_checkout_lockers() {
+        check_ajax_referer('livraria_checkout', 'nonce');
+        $this->send_locker_proxy(true);
+    }
+
+    /**
+     * @param bool $storefront
+     */
+    private function send_locker_proxy($storefront) {
+        $courier = isset($_REQUEST['courier']) ? sanitize_text_field(wp_unslash($_REQUEST['courier'])) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Callers check the nonce first
+        $answer = Livraria_Lockers::proxy_response($this->api_client, $courier, $storefront);
+        if ($answer['cache'] !== '' && !headers_sent()) {
+            header('X-Livraria-Lockers: ' . $answer['cache']);
+        }
+        if ($answer['code'] === 200) {
+            wp_send_json_success($answer['body']);
+        }
+        wp_send_json_error($answer['body'], $answer['code']);
+    }
+
+    /**
      * A plugin setting changed (Settings > Livraria, options.php): the cached
      * sender profiles may no longer fit
      *
      * @param string $option
      */
     public function forget_sender_profiles_on_settings_save($option) {
-        if (strpos((string) $option, 'courier_') === 0 || $option === 'livraria_default_sender_profile_id') {
+        if (strpos((string) $option, 'courier_') === 0 || $option === 'livraria_default_sender_profile_id'
+            || in_array($option, Livraria_Lockers::setting_names(), true)) {
             Livraria_API_Client::forget_sender_profiles();
         }
     }

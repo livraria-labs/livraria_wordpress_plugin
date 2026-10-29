@@ -863,6 +863,31 @@ class Livraria_API_Client {
      */
     public static function forget_sender_profiles() {
         delete_transient(self::SENDER_PROFILES_TRANSIENT);
+        if (class_exists('Livraria_Lockers')) {
+            Livraria_Lockers::forget_cache(); // the locker lists are the account's too
+        }
+    }
+
+    /**
+     * One courier's lockers (GET /pudo-points/by-courier), with the merchant's session
+     *
+     * @param string $courier "sameday" or "dpd"
+     * @return array|false
+     */
+    public function get_pudo_points_by_courier($courier) {
+        return $this->api_request('GET', '/pudo-points/by-courier?' . http_build_query(array('courier' => (string) $courier)));
+    }
+
+    /**
+     * Lockers nearest to an address line, mixed couriers, nearest first
+     * (GET /pudo-points/closest)
+     *
+     * @param string $address "street, number, city, county, postcode"
+     * @param int $limit
+     * @return array|false
+     */
+    public function get_closest_pudo_points($address, $limit = 10) {
+        return $this->api_request('GET', '/pudo-points/closest?' . http_build_query(array('address' => (string) $address, 'limit' => (int) $limit)));
     }
 
     /**
