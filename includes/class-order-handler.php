@@ -255,8 +255,10 @@ class Livraria_Order_Handler {
             'shipping_postcode' => 'Shipping Postal Code',
             'shipping_country' => 'Shipping Country',
             // Keep email and phone from billing since they're not typically in shipping
-            'billing_email' => 'Email Address',
-            // The phone is checked by build_recipient() (shipping, then billing)
+            // The phone is checked by build_recipient() (shipping, then billing).
+            // The email is optional: a courier that needs it answers with a
+            // disabled quote (RECIPIENT_FIELDS_REQUIRED) and the panel offers
+            // "Add email".
         );
         
         $missing_fields = array();
@@ -656,11 +658,10 @@ class Livraria_Order_Handler {
         $recipient_county = $locality['county'];
         $recipient_city = $locality['city'];
 
-        return array(
+        $recipient = array(
             'name' => $recipient_name,
             'phoneCountryCode' => $parsed['phoneCountryCode'],
             'phoneNSN' => $parsed['phoneNSN'],
-            'email' => trim($order->get_billing_email()),
             'isCompany' => false,
             'address' => array(
                 'country' => 'Romania',
@@ -677,6 +678,63 @@ class Livraria_Order_Handler {
                 'apartment' => '',
             )
         );
+
+        // Optional: sent only when the order has one (a blank email fails the API's email check)
+        $email = trim((string) $order->get_billing_email());
+        if ($email !== '') {
+            $recipient['email'] = $email;
+        }
+        return $recipient;
+    }
+
+    /**
+     * Fill in a recipient contact field on the WooCommerce ORDER (never on
+     * the Livraria side), from the order panel's "Add email" / "Add phone":
+     * - email: the billing email;
+     * - phone: the field build_recipient() reads first (the shipping phone
+     *   when it has one, else the billing phone).
+     * The value is checked first; a note on the order records the change.
+     *
+     * @param int $order_id
+     * @param string $field 'email' or 'phone'
+     * @param string $value
+     * @return array success, message
+     */
+    public function update_order_contact($order_id, $field, $value) {
+        $order = function_exists('wc_get_order') ? wc_get_order($order_id) : false;
+        if (!$order) {
+            return array('success' => false, 'message' => 'Order not found');
+        }
+        $value = trim((string) $value);
+
+        if ($field === 'email') {
+            if ($value === '' || !is_email($value)) {
+                return array('success' => false, 'message' => 'Enter a valid email address.');
+            }
+            $order->set_billing_email($value);
+            $order->add_order_note('Livraria: recipient email added to the order (billing email) from the shipping panel.');
+            $order->save();
+            return array('success' => true, 'message' => 'Email saved on the order.');
+        }
+
+        if ($field === 'phone') {
+            if (self::phone_problem(self::normalize_phone($value)) !== '') {
+                return array('success' => false, 'message' => 'Enter a phone number couriers can use: a Romanian number (07XX XXX XXX) or an international one starting with + and its country code.');
+            }
+            $current = self::recipient_phone($order);
+            if ($current['source'] === 'shipping' && method_exists($order, 'set_shipping_phone')) {
+                $order->set_shipping_phone($value);
+                $where = 'shipping phone';
+            } else {
+                $order->set_billing_phone($value);
+                $where = 'billing phone';
+            }
+            $order->add_order_note('Livraria: recipient phone set on the order (' . $where . ') from the shipping panel.');
+            $order->save();
+            return array('success' => true, 'message' => 'Phone saved on the order.');
+        }
+
+        return array('success' => false, 'message' => 'This field cannot be filled in from the shipping panel.');
     }
 
     /**

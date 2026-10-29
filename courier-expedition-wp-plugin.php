@@ -91,6 +91,7 @@ class LivrariaPlugin {
         add_action('wp_ajax_livraria_update_option', array($this, 'ajax_update_option'));
         add_action('wp_ajax_livraria_download_awb_pdf', array($this, 'ajax_download_awb_pdf'));
         add_action('wp_ajax_livraria_delete_expedition', array($this, 'ajax_delete_expedition'));
+        add_action('wp_ajax_livraria_update_order_contact', array($this, 'ajax_update_order_contact'));
 
         // A stored API URL off the Livraria allow-list stops all API calls
         Livraria_API_Client::check_stored_api_url();
@@ -815,9 +816,35 @@ class LivrariaPlugin {
         
         if ($result['success']) {
             wp_send_json_success($result);
+        } elseif (!empty($result['fix'])) {
+            // The panel offers "Add <fix>" next to the message
+            wp_send_json_error(array('message' => $result['message'], 'fix' => $result['fix']));
         } else {
             wp_send_json_error($result['message']);
         }
+    }
+
+    /**
+     * AJAX: fill in the recipient email or phone on the WooCommerce order
+     * ("Add email" / "Add phone" in the order panel). The panel then quotes
+     * again.
+     */
+    public function ajax_update_order_contact() {
+        check_ajax_referer('courier_expedition_nonce', 'nonce');
+        $this->require_capability('edit_shop_orders');
+
+        $order_id = isset($_POST['order_id']) ? absint(wp_unslash($_POST['order_id'])) : 0;
+        $field = isset($_POST['field']) ? sanitize_text_field(wp_unslash($_POST['field'])) : '';
+        $value = isset($_POST['value']) ? sanitize_text_field(wp_unslash($_POST['value'])) : '';
+        if (!$order_id || !in_array($field, array('email', 'phone'), true)) {
+            wp_send_json_error('Missing required parameters');
+        }
+
+        $result = $this->order_handler->update_order_contact($order_id, $field, $value);
+        if ($result['success']) {
+            wp_send_json_success(array('message' => $result['message']));
+        }
+        wp_send_json_error($result['message']);
     }
     
     /**
@@ -946,7 +973,12 @@ class LivrariaPlugin {
                 'awb_number' => $expedition_response['awbNumber'] ?? null
             ));
         } elseif ($expedition_response === false) {
-            wp_send_json_error($this->order_handler->api_error_message('Could not create the shipment'));
+            $error = $this->api_client->get_last_error();
+            $message = $this->order_handler->api_error_message('Could not create the shipment');
+            if (is_array($error) && $error['code'] === 'RECIPIENT_FIELDS_REQUIRED' && in_array('email', $error['missingRecipientFields'], true)) {
+                wp_send_json_error(array('message' => $message, 'fix' => 'email'));
+            }
+            wp_send_json_error($message);
         } else {
             wp_send_json_error('Could not create the shipment: the Livraria API answered without a shipment id.');
         }

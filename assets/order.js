@@ -19,6 +19,26 @@ jQuery(document).ready(function($) {
         return null;
     }
 
+    // "Add email" / "Add phone": a value written onto the WooCommerce order
+    // (billing email; the phone field the plugin reads first), then a new quote
+    function fillInControl(field) {
+        var isEmail = field === 'email';
+        return '<div class="livraria-fill-in" data-field="' + (isEmail ? 'email' : 'phone') + '" style="margin-top: 6px;">' +
+            '<input type="' + (isEmail ? 'email' : 'tel') + '" class="livraria-fill-in-value" placeholder="' + (isEmail ? 'name@example.com' : '07XX XXX XXX') + '" style="width: 60%;"> ' +
+            '<button type="button" class="button livraria-fill-in-save">' + (isEmail ? 'Add email' : 'Add phone') + '</button>' +
+            '<span class="livraria-fill-in-result" style="display: block; font-size: 12px;"></span>' +
+            '</div>';
+    }
+
+    // An error line, with the fill-in the server named (data.fix) under it
+    function errorHtml(data, fallback) {
+        var html = '<p style="color:red;">Error: ' + esc(errorText(data, fallback)) + '</p>';
+        if (data && (data.fix === 'email' || data.fix === 'phone')) {
+            html += fillInControl(data.fix);
+        }
+        return html;
+    }
+
     // The message of a wp_send_json_error() payload: a string, or { message }
     function errorText(data, fallback) {
         if (typeof data === 'string' && data !== '') { return data; }
@@ -506,7 +526,7 @@ jQuery(document).ready(function($) {
                     if (response.data) {
                         errorMsg = errorText(response.data, errorMsg);
                     }
-                    $('#expedition-result').html('<p style="color:red;">Error: ' + esc(errorMsg) + '</p>');
+                    $('#expedition-result').html(errorHtml(response.data, 'Failed to get quotes'));
                     btn.prop('disabled', false);
                 }
             },
@@ -531,6 +551,9 @@ jQuery(document).ready(function($) {
                 quotesHtml += '<div class="quote-item quote-disabled" data-quote-id="' + esc(quote.id) + '" aria-disabled="true" style="border: 1px solid #e0e0e0; padding: 10px; margin-bottom: 10px; border-radius: 4px; background-color: #f6f7f7; color: #8c8f94;">';
                 quotesHtml += '<strong style="color: #8c8f94;">' + name + '</strong> <span style="font-size: 11px;">(unavailable)</span>';
                 quotesHtml += '<br><span class="quote-disabled-reason">' + esc(quote.disabledReason) + '</span>';
+                if (quote.needsEmail) {
+                    quotesHtml += fillInControl('email');
+                }
                 quotesHtml += '</div>';
                 return;
             }
@@ -545,6 +568,45 @@ jQuery(document).ready(function($) {
         });
         $('#quotes-container').html(quotesHtml);
     }
+
+    $(document).on('click', '.livraria-fill-in-save', function() {
+        var btn = $(this);
+        var $box = btn.closest('.livraria-fill-in');
+        var field = $box.attr('data-field');
+        var value = $.trim($box.find('.livraria-fill-in-value').val() || '');
+        var $result = $box.find('.livraria-fill-in-result');
+        if (!value) {
+            $result.css('color', 'red').text(field === 'email' ? 'Enter an email address.' : 'Enter a phone number.');
+            return;
+        }
+        btn.prop('disabled', true);
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: {
+                action: 'livraria_update_order_contact',
+                order_id: orderId,
+                field: field,
+                value: value,
+                nonce: $('#courier_expedition_nonce_field').val()
+            },
+            success: function(response) {
+                if (response.success) {
+                    $result.css('color', 'green').text(errorText(response.data, 'Saved on the order.') + ' Getting quotes again...');
+                    selectedQuoteId = null;
+                    $('#generate-label-section').hide();
+                    $('#create-expedition-btn').trigger('click');
+                } else {
+                    $result.css('color', 'red').text(errorText(response.data, 'Could not save it on the order.'));
+                    btn.prop('disabled', false);
+                }
+            },
+            error: function(xhr) {
+                $result.css('color', 'red').text(errorText(xhr.responseJSON && xhr.responseJSON.data, 'Could not save it on the order.'));
+                btn.prop('disabled', false);
+            }
+        });
+    });
 
     // Select quote
     $(document).on('click', '.select-quote-btn', function() {
@@ -639,7 +701,7 @@ jQuery(document).ready(function($) {
                     if (response.data) {
                         errorMsg = errorText(response.data, errorMsg);
                     }
-                    $('#label-result').html('<p style="color:red;">Error: ' + esc(errorMsg) + '</p>');
+                    $('#label-result').html(errorHtml(response.data, 'Failed to generate label'));
                     btn.prop('disabled', false);
                 }
             },
