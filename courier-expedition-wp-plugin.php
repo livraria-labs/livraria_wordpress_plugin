@@ -645,8 +645,15 @@ class LivrariaPlugin {
         $quote_request_id = $quotes_result['quoteRequestId'];
         $quotes = $quotes_result['quotes'];
         
-        // Step 2: Automatically select the first quote (or best quote)
-        $selected_quote = $quotes[0]; // Select first quote
+        // Step 2: the cheapest usable quote, never a disabled one
+        $selected_quote = Livraria_Order_Handler::select_best_quote($quotes);
+        if ($selected_quote === null) {
+            if (self::is_development_mode()) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
+                error_log('Livraria Debug: No usable quote for order ID: ' . $order_id);
+            }
+            return;
+        }
         $selected_quote_id = $selected_quote['id'];
         
         if (self::is_development_mode()) {

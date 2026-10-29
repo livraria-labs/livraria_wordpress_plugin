@@ -93,14 +93,13 @@ class Livraria_Order_Handler {
                 $courier_quotes = is_array($quotes_response['quotes']) ? $quotes_response['quotes'] : array($quotes_response['quotes']);
             }
             
-            // Filter out locker quotes
-            $filtered_quotes = array_filter($courier_quotes, function($quote) {
-                return !isset($quote['isLockerQuote']) || !$quote['isLockerQuote'];
-            });
+            // Every door-to-door quote, disabled ones included (greyed, last)
+            $filtered_quotes = self::normalize_quotes($courier_quotes);
             
             if (empty($filtered_quotes)) {
                 return array('success' => false, 'message' => 'No courier quotes available');
             }
+            $best_quote = self::select_best_quote($filtered_quotes);
             
             if (!$quote_request_id) {
                 return array('success' => false, 'message' => 'Quote request ID not found in response');
@@ -111,8 +110,11 @@ class Livraria_Order_Handler {
             
             return array(
                 'success' => true,
-                'quotes' => array_values($filtered_quotes), // Re-index array
+                'quotes' => $filtered_quotes,
                 'quoteRequestId' => $quote_request_id,
+                // What an unattended run ships with: the cheapest usable quote, or null
+                'autoQuoteId' => $best_quote ? $best_quote['id'] : null,
+                'unusableSummary' => self::summarise_unusable_quotes($filtered_quotes),
                 'message' => 'Quotes retrieved successfully'
             );
             
@@ -186,7 +188,10 @@ class Livraria_Order_Handler {
             }
             
             // Step 2: Select best quote
-            $selected_quote = $this->select_best_quote($courier_quotes);
+            $selected_quote = self::select_best_quote(self::normalize_quotes($courier_quotes));
+            if ($selected_quote === null) {
+                return array('success' => false, 'message' => 'No usable courier quote: ' . self::summarise_unusable_quotes(self::normalize_quotes($courier_quotes)));
+            }
             
             // Step 3: Create expedition
             $expedition_data = array(
@@ -1266,31 +1271,99 @@ class Livraria_Order_Handler {
     }
     
     /**
-     * Select the best quote from available quotes
-     * 
-     * @param array $quotes
+     * The quotes the order panel shows: every door-to-door quote, disabled
+     * ones included. Each keeps the API's fields and gains:
+     * - usable: false when the API disabled it (isDisabled), it has no price
+     *   (amount <= 0) or no id; such a quote is shown greyed, without a price,
+     *   and can never be selected or auto-picked;
+     * - disabledReason: the API's error.message (or why it is unusable);
+     * - errorCode, missingRecipientFields, needsEmail (RECIPIENT_FIELDS_REQUIRED
+     *   naming "email": the panel offers "Add email").
+     * Usable quotes keep the API's order; unusable ones go last. Locker
+     * quotes are left out: this version ships door-to-door only.
+     *
+     * @param mixed $quotes courierQuotes from the API
      * @return array
      */
-    private function select_best_quote($quotes) {
-        $selection_method = get_option('courier_quote_selection', 'first');
-        
-        switch ($selection_method) {
-            case 'cheapest':
-                return array_reduce($quotes, function($carry, $quote) {
-                    return (!$carry || $quote['amount'] < $carry['amount']) ? $quote : $carry;
-                });
-                
-            case 'fastest':
-                // Assuming quotes have a 'deliveryDays' field
-                return array_reduce($quotes, function($carry, $quote) {
-                    $carry_days = isset($carry['deliveryDays']) ? $carry['deliveryDays'] : 999;
-                    $quote_days = isset($quote['deliveryDays']) ? $quote['deliveryDays'] : 999;
-                    return (!$carry || $quote_days < $carry_days) ? $quote : $carry;
-                });
-                
-            default: // 'first'
-                return $quotes[0];
+    public static function normalize_quotes($quotes) {
+        if (!is_array($quotes)) {
+            return array();
         }
+        $usable = array();
+        $unusable = array();
+        foreach ($quotes as $quote) {
+            if (!is_array($quote) || !empty($quote['isLockerQuote'])) {
+                continue;
+            }
+            $error = (isset($quote['error']) && is_array($quote['error'])) ? $quote['error'] : array();
+            $fields = array();
+            if (isset($error['missingRecipientFields']) && is_array($error['missingRecipientFields'])) {
+                $fields = $error['missingRecipientFields'];
+            } elseif (isset($quote['missingRecipientFields']) && is_array($quote['missingRecipientFields'])) {
+                $fields = $quote['missingRecipientFields'];
+            }
+            $id = isset($quote['id']) ? (string) $quote['id'] : '';
+            $amount = (isset($quote['amount']) && is_numeric($quote['amount'])) ? (float) $quote['amount'] : 0.0;
+            $disabled = !empty($quote['isDisabled']);
+
+            $quote['isDisabled'] = $disabled;
+            $quote['usable'] = !$disabled && $amount > 0 && $id !== '';
+            $quote['errorCode'] = isset($error['code']) ? (string) $error['code'] : '';
+            $quote['missingRecipientFields'] = array_values(array_filter($fields, 'is_string'));
+            $quote['needsEmail'] = $disabled && $quote['errorCode'] === 'RECIPIENT_FIELDS_REQUIRED' && in_array('email', $quote['missingRecipientFields'], true);
+            $quote['disabledReason'] = '';
+            if (!$quote['usable']) {
+                $message = isset($error['message']) && is_string($error['message']) ? trim($error['message']) : '';
+                if ($message === '') {
+                    $message = $disabled ? 'Unavailable for this shipment.' : 'No price was returned for this courier.';
+                }
+                $quote['disabledReason'] = $message;
+            }
+
+            if ($quote['usable']) {
+                $usable[] = $quote;
+            } else {
+                $unusable[] = $quote;
+            }
+        }
+        return array_merge($usable, $unusable);
+    }
+
+    /**
+     * The quote an unattended run ships with: the cheapest usable one
+     * (normalize_quotes()), never a disabled, unpriced or id-less quote
+     *
+     * @param array $quotes normalize_quotes() result
+     * @return array|null
+     */
+    public static function select_best_quote($quotes) {
+        $best = null;
+        foreach ((array) $quotes as $quote) {
+            if (empty($quote['usable'])) {
+                continue;
+            }
+            if ($best === null || (float) $quote['amount'] < (float) $best['amount']) {
+                $best = $quote;
+            }
+        }
+        return $best;
+    }
+
+    /**
+     * "Courier: reason · Courier: reason" for the unusable quotes, '' if none
+     *
+     * @param array $quotes normalize_quotes() result
+     * @return string
+     */
+    public static function summarise_unusable_quotes($quotes) {
+        $reasons = array();
+        foreach ((array) $quotes as $quote) {
+            if (!empty($quote['usable'])) {
+                continue;
+            }
+            $reasons[] = (isset($quote['courierName']) && $quote['courierName'] !== '' ? $quote['courierName'] : 'A courier') . ': ' . $quote['disabledReason'];
+        }
+        return implode(' · ', $reasons);
     }
     
     /**

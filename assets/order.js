@@ -7,6 +7,18 @@ jQuery(document).ready(function($) {
         return $('<div>').text(value === undefined || value === null ? '' : String(value)).html();
     }
 
+    var RELOAD_BUTTON = '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>';
+
+    // The quote an unattended run ships with: the server's pick (cheapest
+    // usable), never a disabled one; null when there is none
+    function autoQuote(data) {
+        if (!data || !data.autoQuoteId || !data.quotes) { return null; }
+        for (var i = 0; i < data.quotes.length; i++) {
+            if (data.quotes[i].id === data.autoQuoteId && data.quotes[i].usable) { return data.quotes[i]; }
+        }
+        return null;
+    }
+
     // The message of a wp_send_json_error() payload: a string, or { message }
     function errorText(data, fallback) {
         if (typeof data === 'string' && data !== '') { return data; }
@@ -113,7 +125,14 @@ jQuery(document).ready(function($) {
 
                 var quoteRequestId = response.data.quoteRequestId;
                 var quotes = response.data.quotes;
-                var selectedQuote = quotes[0];
+                var selectedQuote = autoQuote(response.data);
+                if (!selectedQuote) {
+                    $overlay.find('h3').text('Error');
+                    $overlay.find('p').html(esc('No courier can take this order automatically: ' + (response.data.unusableSummary || 'no usable quote.')) + RELOAD_BUTTON);
+                    autoCreateInProgress = false;
+                    window.livrariaPreventUnload = false;
+                    return;
+                }
 
                 updateProgress(40, 'Selecting quote...');
 
@@ -259,7 +278,14 @@ jQuery(document).ready(function($) {
 
                             var quoteRequestId = response.data.quoteRequestId;
                             var quotes = response.data.quotes;
-                            var selectedQuote = quotes[0];
+                            var selectedQuote = autoQuote(response.data);
+                            if (!selectedQuote) {
+                                $overlay.find('h3').text('Error');
+                                $overlay.find('p').html(esc('No courier can take this order automatically: ' + (response.data.unusableSummary || 'no usable quote.')) + RELOAD_BUTTON);
+                                autoCreateInProgress = false;
+                                window.livrariaPreventUnload = false;
+                                return;
+                            }
 
                             updateProgress(40, 'Selecting quote...');
 
@@ -494,16 +520,26 @@ jQuery(document).ready(function($) {
         });
     });
 
+    // Usable quotes first with a price and "Select"; disabled ones greyed,
+    // last, with the API's reason, no price and no way to select them
     function displayQuotes(quotes) {
         quotesData = quotes;
         var quotesHtml = '';
         quotes.forEach(function(quote, index) {
+            var name = esc(quote.courierName || ('Courier ' + (index + 1)));
+            if (!quote.usable) {
+                quotesHtml += '<div class="quote-item quote-disabled" data-quote-id="' + esc(quote.id) + '" aria-disabled="true" style="border: 1px solid #e0e0e0; padding: 10px; margin-bottom: 10px; border-radius: 4px; background-color: #f6f7f7; color: #8c8f94;">';
+                quotesHtml += '<strong style="color: #8c8f94;">' + name + '</strong> <span style="font-size: 11px;">(unavailable)</span>';
+                quotesHtml += '<br><span class="quote-disabled-reason">' + esc(quote.disabledReason) + '</span>';
+                quotesHtml += '</div>';
+                return;
+            }
             var isSelected = selectedQuoteId === quote.id;
-            quotesHtml += '<div class="quote-item" data-quote-id="' + quote.id + '" style="border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 4px; ' + (isSelected ? 'border-color: #0073aa; background-color: #f0f8ff;' : '') + '">';
-            quotesHtml += '<strong>' + (quote.courierName || 'Courier ' + (index + 1)) + '</strong>';
-            if (quote.amount !== undefined)       { quotesHtml += '<br>Price: <strong>' + quote.amount + ' ' + (quote.currency || 'RON') + '</strong>'; }
-            if (quote.deliveryDays !== undefined) { quotesHtml += '<br>Estimated delivery: ' + quote.deliveryDays + ' day(s)'; }
-            quotesHtml += '<br><button type="button" class="button select-quote-btn" data-quote-id="' + quote.id + '" ' + (isSelected ? 'disabled style="background-color: #46b450; color: white;"' : '') + '>';
+            quotesHtml += '<div class="quote-item" data-quote-id="' + esc(quote.id) + '" style="border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 4px; ' + (isSelected ? 'border-color: #0073aa; background-color: #f0f8ff;' : '') + '">';
+            quotesHtml += '<strong>' + name + '</strong>';
+            if (quote.amount !== undefined)       { quotesHtml += '<br>Price: <strong>' + esc(quote.amount) + ' ' + esc(quote.currency || 'RON') + '</strong>'; }
+            if (quote.deliveryDays !== undefined) { quotesHtml += '<br>Estimated delivery: ' + esc(quote.deliveryDays) + ' day(s)'; }
+            quotesHtml += '<br><button type="button" class="button select-quote-btn" data-quote-id="' + esc(quote.id) + '" ' + (isSelected ? 'disabled style="background-color: #46b450; color: white;"' : '') + '>';
             quotesHtml += isSelected ? '✓ Selected' : 'Select This Quote';
             quotesHtml += '</button></div>';
         });
@@ -512,7 +548,7 @@ jQuery(document).ready(function($) {
 
     // Select quote
     $(document).on('click', '.select-quote-btn', function() {
-        var quoteId = $(this).data('quote-id');
+        var quoteId = String($(this).attr('data-quote-id'));
         var btn = $(this);
 
         if (!quoteRequestId) {
@@ -521,7 +557,10 @@ jQuery(document).ready(function($) {
         }
 
         var selectedQuote = quotesData.find(function(q) { return q.id === quoteId; });
-        var courierName = selectedQuote ? selectedQuote.courierName : '';
+        if (!selectedQuote || !selectedQuote.usable) {
+            return; // a disabled quote is never selected
+        }
+        var courierName = selectedQuote.courierName || '';
 
         btn.prop('disabled', true);
         $('#expedition-loading').show();
