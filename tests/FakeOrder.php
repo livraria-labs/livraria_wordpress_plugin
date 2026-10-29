@@ -91,3 +91,28 @@ class Livraria_Fake_Order {
     public function set_billing_phone($value) { $this->fields['billing_phone'] = $value; }
     public function set_shipping_phone($value) { $this->fields['shipping_phone'] = $value; }
 }
+
+/** A stand-in product: weight and dimensions in the shop's units ('' = not set) */
+class Livraria_Fake_Product {
+    private $data;
+    public function __construct($weight = '', $length = '', $width = '', $height = '', $name = 'Produs exemplu') {
+        $this->data = compact('weight', 'length', 'width', 'height', 'name');
+    }
+    public function get_weight() { return $this->data['weight']; }
+    public function get_length() { return $this->data['length']; }
+    public function get_width() { return $this->data['width']; }
+    public function get_height() { return $this->data['height']; }
+    public function get_name() { return $this->data['name']; }
+}
+
+/** A stand-in order line */
+class Livraria_Fake_Item {
+    private $product;
+    private $quantity;
+    public function __construct($product, $quantity = 1) {
+        $this->product = $product;
+        $this->quantity = $quantity;
+    }
+    public function get_product() { return $this->product; }
+    public function get_quantity() { return $this->quantity; }
+}

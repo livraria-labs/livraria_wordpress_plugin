@@ -1297,15 +1297,82 @@ class Livraria_Order_Handler {
         );
     }
     
+    /** The order panel's minimums: a parcel the plugin works out is never below them */
+    const MIN_WEIGHT_KG = 1.0;
+    const MIN_DIMENSION_CM = 10.0;
+
     /**
-     * Calculate packages from order items
-     * 
+     * $value in kilograms, from WooCommerce's weight unit
+     * (woocommerce_weight_unit: kg, g, lbs, oz). 0 for an empty value.
+     *
+     * @param mixed $value
+     * @param string|null $unit Defaults to the shop's setting
+     * @return float
+     */
+    public static function to_kilograms($value, $unit = null) {
+        $value = (float) $value;
+        if ($value <= 0) {
+            return 0.0;
+        }
+        $unit = strtolower(trim((string) ($unit === null ? get_option('woocommerce_weight_unit', 'kg') : $unit)));
+        switch ($unit) {
+            case 'g':
+                return $value / 1000;
+            case 'lbs':
+            case 'lb':
+                return $value * 0.45359237;
+            case 'oz':
+                return $value * 0.0283495231;
+            default: // kg and anything unrecognised
+                return $value;
+        }
+    }
+
+    /**
+     * $value in centimetres, from WooCommerce's dimension unit
+     * (woocommerce_dimension_unit: m, cm, mm, in, yd). 0 for an empty value.
+     *
+     * @param mixed $value
+     * @param string|null $unit Defaults to the shop's setting
+     * @return float
+     */
+    public static function to_centimetres($value, $unit = null) {
+        $value = (float) $value;
+        if ($value <= 0) {
+            return 0.0;
+        }
+        $unit = strtolower(trim((string) ($unit === null ? get_option('woocommerce_dimension_unit', 'cm') : $unit)));
+        switch ($unit) {
+            case 'm':
+                return $value * 100;
+            case 'mm':
+                return $value / 10;
+            case 'in':
+                return $value * 2.54;
+            case 'yd':
+                return $value * 91.44;
+            default: // cm and anything unrecognised
+                return $value;
+        }
+    }
+
+    /**
+     * The parcels to quote.
+     *
+     * - Packages typed in the order panel are sent as typed.
+     * - Otherwise ONE parcel for the whole order (couriers price per parcel):
+     *   the summed weight of the lines, the largest line's length and width,
+     *   the summed height; a line without a weight or a dimension counts with
+     *   the default package's value. Never below MIN_WEIGHT_KG / MIN_DIMENSION_CM.
+     * - The option livraria_package_mode = "per_line" keeps one parcel per
+     *   order line (the 1.1.0 behaviour, now in kg and cm).
+     * Weights and dimensions are converted from the shop's units.
+     *
      * @param WC_Order $order
      * @param array $custom_data Custom expedition data
      * @return array
      */
-    private function calculate_packages_from_order($order, $custom_data = array()) {
-        // If custom packages are provided, use them
+    public function calculate_packages_from_order($order, $custom_data = array()) {
         if (!empty($custom_data['packages'])) {
             $packages = array();
             foreach ($custom_data['packages'] as $package) {
@@ -1319,55 +1386,71 @@ class Livraria_Order_Handler {
             }
             return $packages;
         }
-        
-        // Otherwise, calculate from order items
-        $total_weight = 0;
-        $packages = array();
-        $default_weight = floatval(get_option('courier_default_package_weight', 1));
-        $default_dimensions = array(
-            'width' => floatval(get_option('courier_default_package_width', 10)),
-            'height' => floatval(get_option('courier_default_package_height', 10)),
-            'length' => floatval(get_option('courier_default_package_length', 10))
+
+        $defaults = array(
+            'weight' => floatval(get_option('courier_default_package_weight', 1)) ?: 1.0,
+            'width' => floatval(get_option('courier_default_package_width', 10)) ?: 10.0,
+            'height' => floatval(get_option('courier_default_package_height', 10)) ?: 10.0,
+            'length' => floatval(get_option('courier_default_package_length', 10)) ?: 10.0,
         );
-        
+
+        $lines = array();
         foreach ($order->get_items() as $item) {
             $product = $item->get_product();
-            if (!$product) continue;
-            
-            $weight = $product->get_weight() ? floatval($product->get_weight()) : $default_weight;
-            $quantity = $item->get_quantity();
-            
-            // Get product dimensions or use defaults
-            $width = $product->get_width() ? floatval($product->get_width()) : $default_dimensions['width'];
-            $height = $product->get_height() ? floatval($product->get_height()) : $default_dimensions['height'];
-            $length = $product->get_length() ? floatval($product->get_length()) : $default_dimensions['length'];
-            
-            $total_weight += $weight * $quantity;
-            
-            // For now, create one package per product type
-            $packages[] = array(
-                'weight' => round(floatval($weight * $quantity), 2),
-                'width' => round(floatval($width), 2),
-                'height' => round(floatval($height), 2),
-                'length' => round(floatval($length), 2),
-                'packageType' => 'package'
+            if (!$product) {
+                continue;
+            }
+            $weight = self::to_kilograms($product->get_weight());
+            $length = self::to_centimetres($product->get_length());
+            $width = self::to_centimetres($product->get_width());
+            $height = self::to_centimetres($product->get_height());
+            $lines[] = array(
+                'quantity' => max(1, (int) $item->get_quantity()),
+                'weight' => $weight > 0 ? $weight : $defaults['weight'],
+                'length' => $length > 0 ? $length : $defaults['length'],
+                'width' => $width > 0 ? $width : $defaults['width'],
+                'height' => $height > 0 ? $height : $defaults['height'],
             );
         }
-        
-        // If no packages calculated, create a default one
-        if (empty($packages)) {
-            $packages[] = array(
-                'weight' => round(max(floatval($default_weight), 0.1), 2),
-                'width' => round(floatval($default_dimensions['width']), 2),
-                'height' => round(floatval($default_dimensions['height']), 2),
-                'length' => round(floatval($default_dimensions['length']), 2),
-                'packageType' => 'package'
-            );
+
+        if (empty($lines)) {
+            return array(self::parcel($defaults['weight'], $defaults['width'], $defaults['height'], $defaults['length']));
         }
-        
-        return $packages;
+
+        if (get_option('livraria_package_mode', 'order') === 'per_line') {
+            $packages = array();
+            foreach ($lines as $line) {
+                $packages[] = self::parcel($line['weight'] * $line['quantity'], $line['width'], $line['height'], $line['length']);
+            }
+            return $packages;
+        }
+
+        $weight = 0.0;
+        $length = 0.0;
+        $width = 0.0;
+        $height = 0.0;
+        foreach ($lines as $line) {
+            $weight += $line['weight'] * $line['quantity'];
+            $length = max($length, $line['length']);
+            $width = max($width, $line['width']);
+            $height += $line['height'] * $line['quantity'];
+        }
+        return array(self::parcel($weight, $width, $height, $length));
     }
-    
+
+    /**
+     * One parcel the plugin worked out, rounded to 0.01 and never below the minimums
+     */
+    private static function parcel($weight, $width, $height, $length) {
+        return array(
+            'weight' => round(max(self::MIN_WEIGHT_KG, $weight), 2),
+            'width' => round(max(self::MIN_DIMENSION_CM, $width), 2),
+            'height' => round(max(self::MIN_DIMENSION_CM, $height), 2),
+            'length' => round(max(self::MIN_DIMENSION_CM, $length), 2),
+            'packageType' => 'package'
+        );
+    }
+
     /**
      * Get service options for the order
      * 

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**Read first, it changes what shipments cost:** an order is now quoted as ONE
+parcel (the summed weight of its products, the largest product's length and
+width, the summed height), no longer one parcel per order line. Couriers price
+per parcel, so multi-line orders quote lower. The order screen shows the parcel
+before quoting; add rows there to send several parcels. Setting the option
+`livraria_package_mode` to `per_line` keeps the old one-parcel-per-line rule.
+Weights are now converted to kg and dimensions to cm from the shop's units
+(g, lbs, oz; m, mm, in, yd): a shop set to grams was quoting 1,000 times the
+weight.
+
 ### Fixed
 - Every failed call to the Livraria API shows the API's own reason on the
   order screen as "<what failed>: <reason>" (for example "Could not create the

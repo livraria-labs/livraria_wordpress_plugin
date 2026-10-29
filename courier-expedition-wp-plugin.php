@@ -363,14 +363,20 @@ class LivrariaPlugin {
                 <!-- Package Configuration -->
                 <div class="expedition-section">
                     <h4>1. Package Information</h4>
+                    <?php
+                    // One parcel for the whole order, worked out from the products
+                    // (kg and cm); the merchant can change it or add rows
+                    $parcels = $this->order_handler->calculate_packages_from_order($order);
+                    $parcel = $parcels[0];
+                    ?>
                     <div id="packages-container">
                         <div class="package-item" data-package="1">
                             <h5>Package 1</h5>
                             <div class="package-dimensions">
-                                <label>Weight (kg): <input type="number" name="package_weight[]" step="0.01" min="1" value="1"></label>
-                                <label>Width (cm): <input type="number" name="package_width[]" step="1" min="10" value="10"></label>
-                                <label>Height (cm): <input type="number" name="package_height[]" step="1" min="10" value="10"></label>
-                                <label>Length (cm): <input type="number" name="package_length[]" step="1" min="10" value="10"></label>
+                                <label>Weight (kg): <input type="number" name="package_weight[]" step="0.01" min="1" value="<?php echo esc_attr($parcel['weight']); ?>"></label>
+                                <label>Width (cm): <input type="number" name="package_width[]" step="1" min="10" value="<?php echo esc_attr($parcel['width']); ?>"></label>
+                                <label>Height (cm): <input type="number" name="package_height[]" step="1" min="10" value="<?php echo esc_attr($parcel['height']); ?>"></label>
+                                <label>Length (cm): <input type="number" name="package_length[]" step="1" min="10" value="<?php echo esc_attr($parcel['length']); ?>"></label>
                                 <button type="button" class="button remove-package" style="display:none;">Remove</button>
                             </div>
                         </div>
