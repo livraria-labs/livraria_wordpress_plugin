@@ -160,6 +160,47 @@ class Lockers_Proxy_Test extends Livraria_Quote_Flow_TestCase {
         $this->assertFalse(Livraria_Lockers::refresh_courier('cargus', $this->client()));
     }
 
+    public function test_a_copy_over_a_day_old_is_refreshed_in_the_request() {
+        $GLOBALS['wp_test_cron'] = array();
+        Livraria_Lockers::proxy_response($this->client(), 'dpd', true);
+        delete_transient(Livraria_Lockers::CACHE_FRESH_PREFIX . 'dpd');
+        update_option(Livraria_Lockers::CACHE_STALE_AT_PREFIX . 'dpd', time() - 25 * 3600);
+        $before = $this->count_requests('courier=dpd');
+
+        $answer = Livraria_Lockers::proxy_response($this->client(), 'dpd', true);
+
+        $this->assertSame('miss', $answer['cache']);
+        $this->assertSame($before + 1, $this->count_requests('courier=dpd'), 'fetched in the request');
+        $this->assertSame(array(), $GLOBALS['wp_test_cron']);
+        $this->assertGreaterThan(time() - 60, (int) get_option(Livraria_Lockers::CACHE_STALE_AT_PREFIX . 'dpd'));
+    }
+
+    public function test_a_copy_two_hours_old_is_served_and_refreshed_in_the_background() {
+        $GLOBALS['wp_test_cron'] = array();
+        Livraria_Lockers::proxy_response($this->client(), 'dpd', true);
+        delete_transient(Livraria_Lockers::CACHE_FRESH_PREFIX . 'dpd');
+        update_option(Livraria_Lockers::CACHE_STALE_AT_PREFIX . 'dpd', time() - 2 * 3600);
+        $before = $this->count_requests('courier=dpd');
+
+        $answer = Livraria_Lockers::proxy_response($this->client(), 'dpd', true);
+
+        $this->assertSame('stale', $answer['cache']);
+        $this->assertSame($before, $this->count_requests('courier=dpd'));
+        $this->assertSame(array('livraria_refresh_lockers|["dpd"]'), array_keys($GLOBALS['wp_test_cron']));
+    }
+
+    public function test_an_old_copy_is_still_served_when_its_refresh_fails() {
+        Livraria_Lockers::proxy_response($this->client(), 'dpd', true);
+        delete_transient(Livraria_Lockers::CACHE_FRESH_PREFIX . 'dpd');
+        update_option(Livraria_Lockers::CACHE_STALE_AT_PREFIX . 'dpd', time() - 25 * 3600);
+        $this->routes['/pudo-points/by-courier?courier=dpd'] = $this->json(503, array('message' => 'down'));
+
+        $answer = Livraria_Lockers::proxy_response($this->client(), 'dpd', true);
+
+        $this->assertSame('stale', $answer['cache']);
+        $this->assertSame('DPD-2001', $answer['body']['lockers'][0]['id']);
+    }
+
     public function test_with_no_copy_at_all_the_list_is_fetched_in_the_request() {
         $GLOBALS['wp_test_cron'] = array();
         $answer = Livraria_Lockers::proxy_response($this->client(), 'dpd', true);

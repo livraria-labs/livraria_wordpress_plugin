@@ -73,6 +73,10 @@ The plugin creates no shipping method. Create a shipping method for locker deliv
 
 On the block checkout under the shipping options, and on the classic (shortcode) checkout after the customer details, in Romanian whatever the shop's language: "Livrare la adresă" or "Livrare la locker"; with locker delivery, the county (județ) first, then the lockers of both couriers in that county in one list, with courier chips, a city filter and a search. The chosen locker shows as "Locker ales: …" with „Schimbă” to change it.
 
+### Locker list refresh
+
+The locker list refreshes in the background through WP-cron; shops that disable WP-cron (`DISABLE_WP_CRON`) should run `wp-cron.php` from a system cron, as WordPress recommends.
+
 ### What the order carries
 
 Four order meta keys (HPOS-safe): `_livraria_delivery_mode` (`locker` or `home`), `_livraria_locker_id`, `_livraria_locker_name`, `_livraria_locker_courier` (`sameday` or `dpd`).

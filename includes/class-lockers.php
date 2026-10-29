@@ -254,6 +254,11 @@ class Livraria_Lockers {
 
     /** WP-cron hook that refreshes one courier's list in the background */
     const REFRESH_HOOK = 'livraria_refresh_lockers';
+    /** When the stored copy was written (Unix time) */
+    const CACHE_STALE_AT_PREFIX = 'livraria_lockers_stale_at_';
+    /** A stored copy older than this is refreshed in the request (a shop whose WP-cron never runs) */
+    const MAX_STALE_AGE = 86400;
+
     /** After a failed background refresh, wait this long before scheduling another */
     const REFRESH_BACKOFF = 300;
 
@@ -263,6 +268,8 @@ class Livraria_Lockers {
      * - fresh copy (younger than 15 minutes): "hit";
      * - only an older copy: "stale", served at once, and one background
      *   refresh is scheduled (WP-cron, refresh_courier());
+     * - a copy over 24 hours old (or of unknown age): refreshed in the
+     *   request, "miss" (served "stale" if that refresh fails);
      * - no copy at all (first use): fetched now, "miss"; null when that fails.
      *
      * @param Livraria_API_Client $api_client
@@ -275,12 +282,18 @@ class Livraria_Lockers {
             return array('lockers' => $fresh, 'status' => 'hit');
         }
         $stale = get_option(self::CACHE_STALE_PREFIX . $courier, false);
-        if (is_array($stale)) {
+        $stored_at = (int) get_option(self::CACHE_STALE_AT_PREFIX . $courier, 0);
+        if (is_array($stale) && time() - $stored_at < self::MAX_STALE_AGE) {
             self::schedule_refresh($courier);
             return array('lockers' => $stale, 'status' => 'stale');
         }
+        // No copy, or one over a day old (WP-cron does not run on this shop):
+        // refresh in the request, at worst one slow request a day
         $lockers = self::fetch_and_store($api_client, $courier);
-        return $lockers === null ? null : array('lockers' => $lockers, 'status' => 'miss');
+        if ($lockers !== null) {
+            return array('lockers' => $lockers, 'status' => 'miss');
+        }
+        return is_array($stale) ? array('lockers' => $stale, 'status' => 'stale') : null;
     }
 
     /**
@@ -296,6 +309,7 @@ class Livraria_Lockers {
         $lockers = self::resolve_missing_counties($api_client, self::trim_lockers($payload, $courier));
         set_transient(self::CACHE_FRESH_PREFIX . $courier, $lockers, self::CACHE_TTL);
         update_option(self::CACHE_STALE_PREFIX . $courier, $lockers, false);
+        update_option(self::CACHE_STALE_AT_PREFIX . $courier, time(), false);
         return $lockers;
     }
 
