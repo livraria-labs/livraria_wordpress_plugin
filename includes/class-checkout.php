@@ -46,10 +46,12 @@ class Livraria_Checkout {
      * The picker's container and the four fields it fills in
      */
     public function render_classic() {
-        if (empty(Livraria_Lockers::enabled_couriers())) {
+        if (!Livraria_Lockers::picker_active()) {
             return;
         }
-        echo '<div id="livraria-locker-picker" class="livraria-locker-picker" data-context="classic"></div>';
+        // Shown only while the chosen rate is a ticked method; the script re-checks on updated_checkout
+        $hidden = Livraria_Lockers::rate_offers_lockers(self::chosen_rate()) ? '' : ' hidden';
+        echo '<div id="livraria-locker-picker" class="livraria-locker-picker" data-context="classic"' . $hidden . '></div>';
         foreach (self::FIELDS as $field) {
             echo '<input type="hidden" name="livraria_' . esc_attr($field) . '" id="livraria_' . esc_attr($field) . '" value="" />';
         }
@@ -69,8 +71,31 @@ class Livraria_Checkout {
         return Livraria_Lockers::normalize_pick($input);
     }
 
+    /**
+     * The chosen shipping rate id: the checkout form's shipping_method[0],
+     * else the session's chosen_shipping_methods[0]
+     *
+     * @return string
+     */
+    public static function chosen_rate() {
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- WooCommerce verified the checkout nonce before these hooks
+        if (isset($_POST['shipping_method']) && is_array($_POST['shipping_method'])) {
+            $posted = reset($_POST['shipping_method']); // phpcs:ignore WordPress.Security.NonceVerification.Missing
+            if (is_scalar($posted) && (string) $posted !== '') {
+                return sanitize_text_field(wp_unslash((string) $posted));
+            }
+        }
+        if (function_exists('WC') && WC() && isset(WC()->session) && WC()->session) {
+            $chosen = WC()->session->get('chosen_shipping_methods');
+            if (is_array($chosen) && !empty($chosen)) {
+                return (string) reset($chosen);
+            }
+        }
+        return '';
+    }
+
     public function validate_classic() {
-        $error = Livraria_Lockers::validate_pick(self::posted_pick());
+        $error = Livraria_Lockers::validate_pick(self::posted_pick(), self::chosen_rate());
         if ($error !== '' && function_exists('wc_add_notice')) {
             wc_add_notice($error, 'error');
         }
@@ -81,15 +106,17 @@ class Livraria_Checkout {
      * @param array $data
      */
     public function save_classic($order, $data = array()) {
-        Livraria_Lockers::apply_pick($order, self::posted_pick());
+        if (Livraria_Lockers::rate_offers_lockers(self::chosen_rate())) {
+            Livraria_Lockers::apply_pick($order, self::posted_pick());
+        }
     }
 
     public function enqueue_classic() {
         if (!function_exists('is_checkout') || !is_checkout() || (function_exists('is_wc_endpoint_url') && is_wc_endpoint_url('order-received'))) {
             return;
         }
-        if (empty(Livraria_Lockers::enabled_couriers())) {
-            return;
+        if (!Livraria_Lockers::picker_active()) {
+            return; // no ticked shipping method: nothing on the checkout
         }
         self::register_picker_assets();
         wp_enqueue_style(self::SCRIPT);
@@ -159,13 +186,16 @@ class Livraria_Checkout {
         $extensions = isset($request['extensions']) && is_array($request['extensions']) ? $request['extensions'] : array();
         $data = isset($extensions[self::STORE_NAMESPACE]) && is_array($extensions[self::STORE_NAMESPACE]) ? $extensions[self::STORE_NAMESPACE] : array();
         $pick = Livraria_Lockers::normalize_pick($data);
-        $error = Livraria_Lockers::validate_pick($pick);
+        $rate = self::chosen_rate();
+        $error = Livraria_Lockers::validate_pick($pick, $rate);
         if ($error !== '') {
             if (class_exists('\Automattic\WooCommerce\StoreApi\Exceptions\RouteException')) {
                 throw new \Automattic\WooCommerce\StoreApi\Exceptions\RouteException('livraria_locker_required', $error, 400);
             }
             throw new Exception($error);
         }
-        Livraria_Lockers::apply_pick($order, $pick);
+        if (Livraria_Lockers::rate_offers_lockers($rate)) {
+            Livraria_Lockers::apply_pick($order, $pick);
+        }
     }
 }

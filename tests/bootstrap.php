@@ -340,8 +340,11 @@ if (!function_exists('wc_add_notice')) {
 // Admin script registry, for the order-screen enqueue test
 foreach (array('wp_enqueue_style', 'wp_enqueue_script', 'wp_register_script', 'wp_register_style', 'wp_add_inline_style') as $livraria_stub) {
     if (!function_exists($livraria_stub)) {
-        eval('function ' . $livraria_stub . '() { return true; }');
+        eval('function ' . $livraria_stub . '($handle = "") { $GLOBALS["wp_test_enqueued"][] = "' . $livraria_stub . ':" . $handle; return true; }');
     }
+}
+if (!function_exists('is_checkout')) {
+    function is_checkout() { return !empty($GLOBALS['wp_test_is_checkout']); }
 }
 if (!function_exists('wp_localize_script')) {
     function wp_localize_script($handle, $name, $data) {
@@ -427,8 +430,17 @@ if (!defined('MINUTE_IN_SECONDS')) {
 if (!class_exists('WooCommerce')) {
     class WooCommerce {
         public $countries;
+        public $session;
         public function __construct() {
             $this->countries = new Livraria_Test_Countries();
+            $this->session = new Livraria_Test_Session();
+        }
+    }
+    // WC()->session: what a test puts in $wp_test_wc_session
+    class Livraria_Test_Session {
+        public function get($key, $default = null) {
+            global $wp_test_wc_session;
+            return isset($wp_test_wc_session[$key]) ? $wp_test_wc_session[$key] : $default;
         }
     }
     class Livraria_Test_Countries {

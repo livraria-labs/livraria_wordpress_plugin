@@ -71,6 +71,97 @@ class Livraria_Lockers {
         return (string) get_option(self::OPT_REQUIRE_LOCKER, '0') === '1';
     }
 
+    /** Shipping methods that show the locker choice: "method_id:instance_id" list (PrestaShop rule) */
+    const OPT_METHODS = 'livraria_locker_methods';
+
+    /**
+     * @return string[] The ticked shipping method instances, e.g. "flat_rate:3"
+     */
+    public static function locker_methods() {
+        $methods = get_option(self::OPT_METHODS, array());
+        return is_array($methods) ? array_values(array_filter(array_map('strval', $methods))) : array();
+    }
+
+    /**
+     * A posted list of "method_id:instance_id" values, cleaned
+     *
+     * @param mixed $value Array, or a comma-separated string (the settings page posts one string)
+     * @return string[]
+     */
+    public static function sanitize_methods($value) {
+        $values = is_array($value) ? $value : explode(',', (string) $value);
+        $clean = array();
+        foreach ($values as $item) {
+            $item = sanitize_text_field((string) $item);
+            if (preg_match('/^[A-Za-z0-9_\-]+:\d+$/', $item) && !in_array($item, $clean, true)) {
+                $clean[] = $item;
+            }
+        }
+        return $clean;
+    }
+
+    /**
+     * Whether the chosen shipping rate is one the merchant ticked. A rate id
+     * is "method_id:instance_id", sometimes with more after it
+     * ("table_rate:5:2"): a ticked instance matches itself and its suffixes.
+     *
+     * @param string|null $rate_id
+     * @return bool
+     */
+    public static function rate_offers_lockers($rate_id) {
+        $rate_id = (string) $rate_id;
+        if ($rate_id === '') {
+            return false;
+        }
+        foreach (self::locker_methods() as $method) {
+            if ($rate_id === $method || strpos($rate_id, $method . ':') === 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether the checkout carries the locker choice at all: a courier on and
+     * at least one shipping method ticked. Without a ticked method nothing is
+     * shown, enqueued or checked (an untouched upgrade changes nothing).
+     *
+     * @return bool
+     */
+    public static function picker_active() {
+        return !empty(self::enabled_couriers()) && !empty(self::locker_methods());
+    }
+
+    /**
+     * The shop's shipping method instances for the settings page: zone name +
+     * method title, value "method_id:instance_id"
+     *
+     * @return array[] value, label
+     */
+    public static function shop_shipping_methods() {
+        $methods = array();
+        if (!class_exists('WC_Shipping_Zones')) {
+            return $methods;
+        }
+        $zones = WC_Shipping_Zones::get_zones();
+        if (class_exists('WC_Shipping_Zone')) {
+            $rest = new WC_Shipping_Zone(0);
+            $zones[] = array('zone_name' => $rest->get_zone_name(), 'shipping_methods' => $rest->get_shipping_methods());
+        }
+        foreach ($zones as $zone) {
+            foreach ((array) ($zone['shipping_methods'] ?? array()) as $method) {
+                if (!is_object($method) || empty($method->id) || empty($method->instance_id)) {
+                    continue;
+                }
+                $methods[] = array(
+                    'value' => $method->id . ':' . $method->instance_id,
+                    'label' => trim(($zone['zone_name'] ?? '') . ' — ' . (method_exists($method, 'get_title') ? $method->get_title() : $method->id)),
+                );
+            }
+        }
+        return $methods;
+    }
+
     /** Option names the settings page may write */
     public static function setting_names() {
         $names = array(self::OPT_REQUIRE_LOCKER);
@@ -392,11 +483,15 @@ class Livraria_Lockers {
      * "Require locker" only takes home delivery away.
      *
      * @param array $pick normalize_pick() result
+     * @param string|null $rate_id The chosen shipping rate; the gate applies only to a ticked one
      * @return string Romanian message, or ''
      */
-    public static function validate_pick($pick) {
+    public static function validate_pick($pick, $rate_id = null) {
         if (empty(self::enabled_couriers())) {
             return ''; // the picker is not shown
+        }
+        if (!self::rate_offers_lockers($rate_id)) {
+            return ''; // not a shipping method the merchant ticked: no locker choice
         }
         if ($pick['mode'] === 'locker') {
             if ($pick['id'] === '') {
@@ -452,6 +547,7 @@ class Livraria_Lockers {
             'nonce' => function_exists('wp_create_nonce') ? wp_create_nonce('livraria_checkout') : '',
             'couriers' => $couriers,
             'requireLocker' => self::require_locker(),
+            'methods' => self::locker_methods(),
             'showModeChoice' => true,
             'strings' => array(
                 'modeLabel' => 'Metodă de livrare',

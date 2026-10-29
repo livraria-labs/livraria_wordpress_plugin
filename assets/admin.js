@@ -530,6 +530,30 @@ jQuery(document).ready(function($) {
     });
 });
 
+// Shipping methods that show the locker choice: saved as one list on change
+jQuery(document).ready(function($) {
+    $('.livraria-locker-method').on('change', function() {
+        var $boxes = $('.livraria-locker-method');
+        var values = $boxes.filter(':checked').map(function() { return this.value; }).get();
+        var feedback = $('.livraria-auto-option-feedback');
+        $boxes.prop('disabled', true);
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: { action: 'livraria_update_option', option_name: 'livraria_locker_methods', option_value: values.join(','), nonce: livrariaAdmin.nonce },
+            success: function(response) {
+                feedback.text(response.success ? '✓ Saved' : 'Not saved: ' + (typeof response.data === 'string' ? response.data : 'unknown error'));
+                setTimeout(function() { feedback.text(''); }, 2500);
+                $boxes.prop('disabled', false);
+            },
+            error: function() {
+                feedback.text('Not saved: request failed');
+                $boxes.prop('disabled', false);
+            }
+        });
+    });
+});
+
 // Default sender profile dropdown auto-save
 // (moved from class-admin-page.php inline script — defaultSenderProfileId provided via wp_localize_script)
 jQuery(document).ready(function($) {

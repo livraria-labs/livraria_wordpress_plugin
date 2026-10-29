@@ -16,10 +16,14 @@ class Checkout_Lockers_Test extends Livraria_Quote_Flow_TestCase {
         $this->checkout = new Livraria_Checkout();
         $GLOBALS['wp_test_notices'] = array();
         $_POST = array();
+        // The merchant ticked flat_rate:3 for lockers and the buyer chose it
+        update_option(Livraria_Lockers::OPT_METHODS, array('flat_rate:3'));
+        $GLOBALS['wp_test_wc_session'] = array('chosen_shipping_methods' => array('flat_rate:3'));
     }
 
     public function tearDown(): void {
         $_POST = array();
+        unset($GLOBALS['wp_test_wc_session'], $GLOBALS['wp_test_is_checkout'], $GLOBALS['wp_test_enqueued']);
         parent::tearDown();
     }
 
@@ -168,6 +172,94 @@ class Checkout_Lockers_Test extends Livraria_Quote_Flow_TestCase {
         $this->assertStringContainsString('el(wc.blocksCheckout.ExperimentalOrderShippingPackages, null, el(LockerPicker))', $script);
         $this->assertStringNotContainsString('ExperimentalOrderMeta', $script, 'not in the order summary card');
         $this->assertStringContainsString('owner === null', $script, 'one picker even if the slot renders per package');
+    }
+
+    // --- which shipping methods show the locker choice (PrestaShop rule) ------------
+
+    public function test_the_picker_shows_only_for_a_ticked_rate_on_the_classic_checkout() {
+        ob_start();
+        $this->checkout->render_classic();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('<div id="livraria-locker-picker" class="livraria-locker-picker" data-context="classic"></div>', $html);
+
+        $GLOBALS['wp_test_wc_session'] = array('chosen_shipping_methods' => array('free_shipping:5'));
+        ob_start();
+        $this->checkout->render_classic();
+        $this->assertStringContainsString('data-context="classic" hidden></div>', ob_get_clean(), 'rendered hidden; the script shows it when a ticked rate is chosen');
+
+        $_POST = array('shipping_method' => array('flat_rate:3'));
+        $this->assertSame('flat_rate:3', Livraria_Checkout::chosen_rate(), 'the posted rate wins over the session');
+
+        $script = file_get_contents(dirname(dirname(__DIR__)) . '/assets/checkout-lockers.js');
+        $this->assertStringContainsString("on('updated_checkout updated_shipping_method', sync)", $script);
+        $this->assertStringContainsString("write({ mode: '', id: '', name: '', courier: '' })", $script, 'hidden = the pick is cleared');
+    }
+
+    public function test_the_picker_follows_the_selected_rate_on_the_blocks_checkout() {
+        $config = Livraria_Lockers::checkout_config();
+        $this->assertSame(array('flat_rate:3'), $config['methods']);
+
+        $script = file_get_contents(dirname(dirname(__DIR__)) . '/assets/checkout-lockers-blocks.js');
+        $this->assertStringContainsString("select('wc/store/cart').getShippingRates()", $script);
+        $this->assertStringContainsString('rates[i].selected', $script);
+        $this->assertStringContainsString("send({ mode: '', id: '', name: '', courier: '' })", $script);
+    }
+
+    public function test_a_rate_matches_its_ticked_instance_and_suffixes_only() {
+        update_option(Livraria_Lockers::OPT_METHODS, array('flat_rate:3', 'table_rate:5'));
+        $this->assertTrue(Livraria_Lockers::rate_offers_lockers('flat_rate:3'));
+        $this->assertTrue(Livraria_Lockers::rate_offers_lockers('table_rate:5:2'));
+        $this->assertFalse(Livraria_Lockers::rate_offers_lockers('flat_rate:31'));
+        $this->assertFalse(Livraria_Lockers::rate_offers_lockers('free_shipping:5'));
+        $this->assertFalse(Livraria_Lockers::rate_offers_lockers(''));
+    }
+
+    public function test_the_gate_is_inert_for_an_unticked_rate_on_both_checkouts() {
+        $GLOBALS['wp_test_wc_session'] = array('chosen_shipping_methods' => array('free_shipping:5'));
+
+        $order = $this->classic_order('locker');
+        $this->assertSame(array(), $GLOBALS['wp_test_notices']);
+        $this->assertSame(array(), $order->meta);
+
+        $order = $this->blocks_order(array('delivery_mode' => 'locker', 'locker_id' => 'SD-1001', 'locker_courier' => 'sameday'));
+        $this->assertSame(array(), $order->meta, 'no locker rides on an order whose rate offers none');
+
+        update_option(Livraria_Lockers::OPT_REQUIRE_LOCKER, '1');
+        $this->classic_order('home');
+        $this->assertSame(array(), $GLOBALS['wp_test_notices'], 'require locker applies to ticked rates only');
+    }
+
+    public function test_no_ticked_method_means_nothing_on_the_checkout() {
+        update_option(Livraria_Lockers::OPT_METHODS, array());
+        $GLOBALS['wp_test_is_checkout'] = true;
+        $GLOBALS['wp_test_enqueued'] = array();
+
+        $this->checkout->enqueue_classic();
+        $this->assertSame(array(), $GLOBALS['wp_test_enqueued']);
+        ob_start();
+        $this->checkout->render_classic();
+        $this->assertSame('', ob_get_clean());
+        $this->assertSame(array(), (new Livraria_Blocks_Integration())->get_script_handles());
+        $this->classic_order('locker');
+        $this->assertSame(array(), $GLOBALS['wp_test_notices']);
+
+        update_option(Livraria_Lockers::OPT_METHODS, array('flat_rate:3'));
+        $this->checkout->enqueue_classic();
+        $this->assertContains('wp_enqueue_script:livraria-checkout-classic', $GLOBALS['wp_test_enqueued']);
+    }
+
+    public function test_the_ticked_methods_save_as_a_clean_list() {
+        global $wp_test_user_caps;
+        $wp_test_user_caps = array('read', 'manage_options');
+        $_POST = array('option_name' => 'livraria_locker_methods', 'option_value' => 'free_shipping:5,flat_rate:3,<script>,flat_rate:3');
+        try {
+            (new LivrariaPlugin())->ajax_update_option();
+        } catch (Livraria_Test_Json_Response $response) {
+            $this->assertTrue($response->success);
+        }
+        $wp_test_user_caps = array();
+        $this->assertSame(array('free_shipping:5', 'flat_rate:3'), get_option('livraria_locker_methods'));
+        $this->assertSame(array(), Livraria_Lockers::sanitize_methods(''));
     }
 
     public function test_an_order_without_a_pick_field_is_left_alone() {

@@ -30,7 +30,7 @@ class Livraria_Blocks_Integration implements \Automattic\WooCommerce\Blocks\Inte
     }
 
     public function get_script_handles() {
-        return empty(Livraria_Lockers::enabled_couriers()) ? array() : array(self::BLOCKS_SCRIPT);
+        return Livraria_Lockers::picker_active() ? array(self::BLOCKS_SCRIPT) : array();
     }
 
     public function get_editor_script_handles() {

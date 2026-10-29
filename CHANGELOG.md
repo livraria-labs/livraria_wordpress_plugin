@@ -28,8 +28,11 @@ weight.
   `_livraria_locker_name`, `_livraria_locker_courier`). The locker list comes
   through the shop's own server, cached for 15 minutes.
 - Settings: offer Sameday lockers, offer DPD lockers (both on by default),
-  require locker (hides home delivery). The shop adds its own shipping method
-  for locker delivery; the plugin creates none.
+  require locker (hides home delivery), and "Show the locker choice for these
+  shipping methods": the locker choice appears at checkout only while the
+  buyer's chosen shipping rate is one ticked there. None ticked (the default)
+  = no locker choice and nothing loaded on the checkout. The shop adds its own
+  shipping method for locker delivery; the plugin creates none.
 - Order screen, Route: from (courier pickup, or drop-off at a locker, nearest
   suggested) and to (the buyer's locker, the order address, or a locker
   chosen there). Every route is quoted at once and shown under tabs, the

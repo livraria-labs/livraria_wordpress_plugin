@@ -153,6 +153,7 @@ class LivrariaPlugin {
         foreach (Livraria_Lockers::setting_names() as $locker_setting) {
             register_setting('courier_api_settings', $locker_setting, array('sanitize_callback' => array($this, 'sanitize_flag')));
         }
+        register_setting('courier_api_settings', Livraria_Lockers::OPT_METHODS, array('sanitize_callback' => array('Livraria_Lockers', 'sanitize_methods')));
         register_setting('courier_api_settings', 'courier_default_sender_name', array('sanitize_callback' => 'sanitize_text_field'));
         register_setting('courier_api_settings', 'courier_default_sender_email', array('sanitize_callback' => 'sanitize_email'));
         register_setting('courier_api_settings', 'courier_default_sender_phone', array('sanitize_callback' => 'sanitize_text_field'));
@@ -1448,7 +1449,7 @@ class LivrariaPlugin {
         $option_value = sanitize_text_field(wp_unslash($_POST['option_value']));
         
         // Validate that this is an allowed option
-        $allowed_options = array_merge(array('courier_auto_create', 'livraria_default_sender_profile_id'), Livraria_Lockers::setting_names());
+        $allowed_options = array_merge(array('courier_auto_create', 'livraria_default_sender_profile_id', Livraria_Lockers::OPT_METHODS), Livraria_Lockers::setting_names());
         if (!in_array($option_name, $allowed_options, true)) {
             wp_send_json_error('Option not allowed');
             return;
@@ -1456,13 +1457,16 @@ class LivrariaPlugin {
         if (in_array($option_name, Livraria_Lockers::setting_names(), true)) {
             $option_value = $this->sanitize_flag($option_value);
         }
+        if ($option_name === Livraria_Lockers::OPT_METHODS) {
+            $option_value = Livraria_Lockers::sanitize_methods($option_value); // posted as "flat_rate:3,free_shipping:5"
+        }
         
         // Update the option (same as what happens when clicking "Save changes")
         $result = update_option($option_name, $option_value);
         Livraria_API_Client::forget_sender_profiles();
         
         // update_option() answers false when the value did not change: that is saved too
-        if ($result !== false || (string) get_option($option_name, '') === (string) $option_value) {
+        if ($result !== false || get_option($option_name, '') == $option_value) {
             wp_send_json_success(array('message' => 'Option updated successfully'));
         } else {
             wp_send_json_error('Failed to update option');
