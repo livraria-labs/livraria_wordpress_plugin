@@ -436,6 +436,162 @@ class Livraria_Order_Handler {
         return array('phone' => '', 'source' => '');
     }
 
+    /**
+     * County spellings the catalogue does not use, as they reach us from a
+     * shop's state list, keyed by their normalised form
+     */
+    const COUNTY_ALIASES = array(
+        'DIMBOVITA' => 'DAMBOVITA',
+        'SATU-MARE' => 'SATU MARE',
+        'VALCEA' => 'VILCEA',
+    );
+
+    /** How long a resolved locality is cached (a shop re-quotes the same towns) */
+    const LOCALITY_CACHE_TTL = 604800; // 7 days
+
+    /**
+     * Uppercase, trimmed, Romanian diacritics stripped: how localities reach the couriers
+     *
+     * @param string $value
+     * @return string
+     */
+    public static function normalize_locality($value) {
+        $map = array(
+            'ă' => 'a', 'Ă' => 'A', 'â' => 'a', 'Â' => 'A', 'î' => 'i', 'Î' => 'I',
+            'ș' => 's', 'Ș' => 'S', 'ş' => 's', 'Ş' => 'S', 'ț' => 't', 'Ț' => 'T', 'ţ' => 't', 'Ţ' => 'T',
+        );
+        return strtoupper(trim(preg_replace('/\s+/u', ' ', strtr((string) $value, $map))));
+    }
+
+    /**
+     * A county name normalised, with COUNTY_ALIASES applied
+     *
+     * @param string $county
+     * @return string
+     */
+    public static function county_alias($county) {
+        $county = self::normalize_locality($county);
+        return isset(self::COUNTY_ALIASES[$county]) ? self::COUNTY_ALIASES[$county] : $county;
+    }
+
+    /**
+     * Comparison key for two county spellings (aliases applied, letters only)
+     */
+    private static function county_key($county) {
+        return preg_replace('/[^A-Z]/', '', self::county_alias($county));
+    }
+
+    /**
+     * The recipient's county and city as the courier catalogue spells them.
+     *
+     * The WooCommerce state (code -> name) is only a hint. In order:
+     * GET /public/location/cities by the city name, exact name matches,
+     * narrowed by the hint, then by postcode; else GET
+     * /public/location/postcodes by postcode. A result is cached in a
+     * transient. When the lookup fails or finds nothing, the hint is used as
+     * before (uppercase, diacritics stripped, aliases applied), with a debug
+     * line saying so.
+     *
+     * @param string $state WooCommerce state code (e.g. "CJ") or name
+     * @param string $city City as typed on the order
+     * @param string $postcode
+     * @return array county, city, source ('catalogue', 'postcodes' or 'state')
+     */
+    public function resolve_locality($state, $city, $postcode) {
+        $hint = $state;
+        if ($state !== '' && function_exists('WC') && WC() && isset(WC()->countries) && WC()->countries) {
+            $states = WC()->countries->get_states('RO');
+            if (is_array($states) && isset($states[$state])) {
+                $hint = $states[$state];
+            }
+        }
+        $hint = self::county_alias(html_entity_decode((string) $hint, ENT_QUOTES, 'UTF-8'));
+        $city_n = self::normalize_locality($city);
+        $postcode = trim((string) $postcode);
+        $fallback = array('county' => $hint, 'city' => $city_n, 'source' => 'state');
+
+        if ($city_n === '' && $postcode === '') {
+            return $fallback;
+        }
+
+        $cache_key = 'livraria_loc_' . md5($hint . '|' . $city_n . '|' . $postcode);
+        $cached = get_transient($cache_key);
+        if (is_array($cached) && isset($cached['county'], $cached['city'])) {
+            return $cached;
+        }
+
+        $resolved = null;
+        $failed = false;
+
+        if ($city_n !== '') {
+            $cities = $this->api_client->find_cities($city);
+            if ($cities === false) {
+                $failed = true;
+            } else {
+                $resolved = self::pick_city($cities, $city_n, $hint, $postcode);
+            }
+        }
+
+        if ($resolved === null && $postcode !== '') {
+            $matches = $this->api_client->find_postcodes(array('postcode' => $postcode));
+            if ($matches === false) {
+                $failed = true;
+            } elseif (!empty($matches[0]['county'])) {
+                $resolved = array('county' => self::normalize_locality($matches[0]['county']), 'city' => $city_n, 'source' => 'postcodes');
+            }
+        }
+
+        if ($resolved !== null) {
+            set_transient($cache_key, $resolved, self::LOCALITY_CACHE_TTL);
+            return $resolved;
+        }
+
+        if (Livraria_API_Client::is_dev_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode, no order data
+            error_log('Livraria Debug: county ' . ($failed ? 'lookup failed (' . $this->api_client->last_error_message() . ')' : 'not found in the catalogue') . '; using the order\'s state as the county');
+        }
+        return $fallback;
+    }
+
+    /**
+     * The one catalogue locality that fits, or null
+     *
+     * @param array $cities find_cities() result
+     * @param string $city_n Normalised city
+     * @param string $hint Normalised county hint ('' for none)
+     * @param string $postcode
+     * @return array|null county, city, source
+     */
+    private static function pick_city($cities, $city_n, $hint, $postcode) {
+        $exact = array_values(array_filter($cities, function($c) use ($city_n) {
+            return is_array($c) && isset($c['name'], $c['county']) && self::normalize_locality($c['name']) === $city_n;
+        }));
+        if ($hint !== '') {
+            $hint_key = self::county_key($hint);
+            $by_hint = array_values(array_filter($exact, function($c) use ($hint_key) {
+                return self::county_key($c['county']) === $hint_key;
+            }));
+            if (!empty($by_hint)) {
+                $exact = $by_hint;
+            }
+        }
+        if (count($exact) > 1 && $postcode !== '') {
+            $by_postcode = array_values(array_filter($exact, function($c) use ($postcode) {
+                return isset($c['postcode']) && (string) $c['postcode'] === $postcode;
+            }));
+            if (!empty($by_postcode)) {
+                $exact = $by_postcode;
+            }
+        }
+        $counties = array_unique(array_map(function($c) {
+            return self::normalize_locality($c['county']);
+        }, $exact));
+        if (count($counties) !== 1) {
+            return null;
+        }
+        return array('county' => reset($counties), 'city' => self::normalize_locality($exact[0]['name']), 'source' => 'catalogue');
+    }
+
     /** The API's limit on address.street */
     const MAX_STREET_LENGTH = 100;
 
@@ -486,26 +642,14 @@ class Livraria_Order_Handler {
 
         $recipient_name = trim($this->get_shipping_or_billing($order, 'first_name') . ' ' . $this->get_shipping_or_billing($order, 'last_name'));
 
-        // Get state and convert code to full name if needed
-        $recipient_state = trim($this->get_shipping_or_billing($order, 'state'));
-        $recipient_county = $recipient_state;
-
-        // Try to convert state code to full name using WooCommerce state mapping
-        if (!empty($recipient_state) && function_exists('WC') && WC()->countries) {
-            $romanian_states = WC()->countries->get_states('RO');
-            if ($romanian_states && isset($romanian_states[$recipient_state])) {
-                $recipient_county = $romanian_states[$recipient_state];
-            }
-        }
-
-        // Remove diacritics from county and uppercase
-        $recipient_county = strtoupper($this->remove_romanian_diacritics($recipient_county));
-
-        // Uppercase and remove diacritics from recipient city
-        $recipient_city = $this->get_shipping_or_billing($order, 'city');
-        $recipient_city = !empty($recipient_city)
-            ? strtoupper($this->remove_romanian_diacritics($recipient_city))
-            : '';
+        // County and city from the courier catalogue; the shop's state is a hint
+        $locality = $this->resolve_locality(
+            trim((string) $this->get_shipping_or_billing($order, 'state')),
+            (string) $this->get_shipping_or_billing($order, 'city'),
+            trim((string) $this->get_shipping_or_billing($order, 'postcode'))
+        );
+        $recipient_county = $locality['county'];
+        $recipient_city = $locality['city'];
 
         return array(
             'name' => $recipient_name,

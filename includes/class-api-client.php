@@ -1300,6 +1300,46 @@ class Livraria_API_Client {
     }
     
     /**
+     * Romanian localities whose name matches $name (the backend matches
+     * loosely: "Suceava" also returns "Poieni-Suceava"). Public endpoint.
+     *
+     * @param string $name City name as typed on the order
+     * @return array|false List of { name, county, postcode } or false on failure
+     */
+    public function find_cities($name) {
+        $response = $this->raw_api_request('GET', '/public/location/cities?' . http_build_query(array('name' => (string) $name)));
+        return $response === false ? false : self::as_list($response);
+    }
+
+    /**
+     * Postcode lookup; an empty list is a valid "no match". Public endpoint.
+     *
+     * @param array $query Any of postcode, county, city, streetName
+     * @return array|false List of { county, city, postcode, streetName } or false on failure
+     */
+    public function find_postcodes($query) {
+        $allowed = array_intersect_key((array) $query, array_flip(array('postcode', 'county', 'city', 'streetName')));
+        $response = $this->raw_api_request('GET', '/public/location/postcodes?' . http_build_query($allowed));
+        return $response === false ? false : self::as_list($response);
+    }
+
+    /**
+     * A list from a response that may wrap it in { data: [...] } or be one object
+     *
+     * @param mixed $response
+     * @return array
+     */
+    private static function as_list($response) {
+        if (is_array($response) && isset($response['data']) && is_array($response['data'])) {
+            $response = $response['data'];
+        }
+        if (!is_array($response) || $response === array()) {
+            return array();
+        }
+        return array_key_exists(0, $response) ? array_values($response) : array($response);
+    }
+
+    /**
      * Check if API is configured
      * 
      * @return bool
