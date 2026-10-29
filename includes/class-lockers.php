@@ -290,6 +290,134 @@ class Livraria_Lockers {
     }
 
     // -------------------------------------------------------------------------
+    // The buyer's pick at checkout
+    // -------------------------------------------------------------------------
+
+    /** Checkout copy is Romanian whatever the shop's language */
+    const MSG_GATE = 'Alege un locker pentru a continua la finalizarea comenzii.';
+    const MSG_HOME_OFF = 'Livrarea la adresă nu este disponibilă pentru acest magazin. Alege un locker.';
+    const MSG_LOCKER_GONE = 'Lockerul ales nu mai este disponibil. Alege alt locker.';
+
+    /**
+     * The pick as the checkout sent it (classic form fields or Store API
+     * extension data), cleaned
+     *
+     * @param array $input delivery_mode, locker_id, locker_name, locker_courier
+     * @return array mode ('home', 'locker' or '' when nothing was sent), id, name, courier
+     */
+    public static function normalize_pick($input) {
+        $input = is_array($input) ? $input : array();
+        $value = function($key) use ($input) {
+            return isset($input[$key]) && is_scalar($input[$key]) ? sanitize_text_field((string) $input[$key]) : '';
+        };
+        $mode = strtolower($value('delivery_mode'));
+        if ($mode === 'easybox') {
+            $mode = 'locker';
+        }
+        if ($mode !== 'home' && $mode !== 'locker') {
+            $mode = '';
+        }
+        return array(
+            'mode' => $mode,
+            'id' => $value('locker_id'),
+            'name' => $value('locker_name'),
+            'courier' => strtolower($value('locker_courier')),
+        );
+    }
+
+    /**
+     * Why the order cannot be placed with this pick, '' when it can.
+     * The gate: locker delivery chosen and no locker picked always blocks.
+     * "Require locker" only takes home delivery away.
+     *
+     * @param array $pick normalize_pick() result
+     * @return string Romanian message, or ''
+     */
+    public static function validate_pick($pick) {
+        if (empty(self::enabled_couriers())) {
+            return ''; // the picker is not shown
+        }
+        if ($pick['mode'] === 'locker') {
+            if ($pick['id'] === '') {
+                return self::MSG_GATE;
+            }
+            if (!self::courier_enabled($pick['courier'])) {
+                return self::MSG_LOCKER_GONE;
+            }
+            return '';
+        }
+        if (self::require_locker()) {
+            return $pick['mode'] === 'home' ? self::MSG_HOME_OFF : self::MSG_GATE;
+        }
+        return '';
+    }
+
+    /**
+     * Write the pick on the order (HPOS-safe, through the order object; the
+     * checkout saves the order). Home delivery clears any earlier locker.
+     *
+     * @param WC_Order $order
+     * @param array $pick normalize_pick() result
+     */
+    public static function apply_pick($order, $pick) {
+        if ($pick['mode'] === 'locker' && $pick['id'] !== '') {
+            $order->update_meta_data(self::META_MODE, 'locker');
+            $order->update_meta_data(self::META_ID, $pick['id']);
+            $order->update_meta_data(self::META_NAME, $pick['name']);
+            $order->update_meta_data(self::META_COURIER, $pick['courier']);
+            return;
+        }
+        if ($pick['mode'] === 'home') {
+            $order->update_meta_data(self::META_MODE, 'home');
+            foreach (array(self::META_ID, self::META_NAME, self::META_COURIER) as $key) {
+                $order->delete_meta_data($key);
+            }
+        }
+    }
+
+    /**
+     * What the checkout script needs (classic and blocks)
+     *
+     * @return array
+     */
+    public static function checkout_config() {
+        $couriers = array();
+        foreach (self::enabled_couriers() as $slug) {
+            $couriers[] = array('slug' => $slug, 'label' => self::COURIERS[$slug]['product']);
+        }
+        return array(
+            'ajaxUrl' => function_exists('admin_url') ? admin_url('admin-ajax.php') : '',
+            'action' => 'livraria_checkout_lockers',
+            'nonce' => function_exists('wp_create_nonce') ? wp_create_nonce('livraria_checkout') : '',
+            'couriers' => $couriers,
+            'requireLocker' => self::require_locker(),
+            'showModeChoice' => true,
+            'strings' => array(
+                'modeLabel' => 'Metodă de livrare',
+                'modeHome' => 'Livrare la adresă',
+                'modeLocker' => 'Livrare la locker',
+                'filterAll' => 'Toate',
+                'gate' => self::MSG_GATE,
+                'countyLabel' => 'Județ',
+                'countyAll' => 'Toate județele',
+                'cityLabel' => 'Oraș',
+                'cityAll' => 'Toate orașele',
+                'search' => 'Caută după nume sau adresă',
+                'loading' => 'Se încarcă lockerele…',
+                'error' => 'Nu am putut încărca lockerele.',
+                'retry' => 'Reîncearcă',
+                'select' => 'Alege',
+                'change' => 'Schimbă',
+                'clear' => 'Șterge',
+                'clearFilters' => 'Șterge filtrele',
+                'chosen' => 'Locker ales:',
+                'showingFirst' => 'Se afișează primele {cap} din {total} lockere — rafinează căutarea.',
+                'none' => 'Niciun locker nu corespunde căutării.',
+            ),
+        );
+    }
+
+    // -------------------------------------------------------------------------
     // Display
     // -------------------------------------------------------------------------
 

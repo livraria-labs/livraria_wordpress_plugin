@@ -326,6 +326,13 @@ if (!function_exists('selected')) {
     }
 }
 
+if (!function_exists('wc_add_notice')) {
+    function wc_add_notice($message, $type = 'success') {
+        global $wp_test_notices;
+        $wp_test_notices[] = array('message' => $message, 'type' => $type);
+    }
+}
+
 if (!function_exists('absint')) {
     function absint($value) {
         return abs((int) $value);
@@ -484,3 +491,4 @@ require_once dirname(dirname(__FILE__)) . '/includes/class-api-client.php';
 require_once dirname(dirname(__FILE__)) . '/includes/class-order-handler.php';
 require_once dirname(dirname(__FILE__)) . '/includes/class-admin-page.php';
 require_once dirname(dirname(__FILE__)) . '/includes/class-lockers.php';
+require_once dirname(dirname(__FILE__)) . '/includes/class-checkout.php';

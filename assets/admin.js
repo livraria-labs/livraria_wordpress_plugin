@@ -539,6 +539,42 @@ jQuery(document).ready(function($) {
     });
 });
 
+// Locker settings (and any other on/off option marked livraria-auto-option): saved on change
+jQuery(document).ready(function($) {
+    $('.livraria-auto-option').on('change', function() {
+        var checkbox = $(this);
+        var isChecked = checkbox.is(':checked');
+        var feedback = $('.livraria-auto-option-feedback');
+        checkbox.prop('disabled', true);
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: {
+                action: 'livraria_update_option',
+                option_name: checkbox.attr('data-option'),
+                option_value: isChecked ? '1' : '0',
+                nonce: livrariaAdmin.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    feedback.text('✓ Saved');
+                    setTimeout(function() { feedback.text(''); }, 2000);
+                } else {
+                    checkbox.prop('checked', !isChecked);
+                    feedback.text('');
+                    alert('Failed to save setting: ' + (typeof response.data === 'string' ? response.data : 'Unknown error'));
+                }
+                checkbox.prop('disabled', false);
+            },
+            error: function() {
+                checkbox.prop('checked', !isChecked);
+                alert('AJAX error while saving setting');
+                checkbox.prop('disabled', false);
+            }
+        });
+    });
+});
+
 // Default sender profile dropdown auto-save
 // (moved from class-admin-page.php inline script — defaultSenderProfileId provided via wp_localize_script)
 jQuery(document).ready(function($) {

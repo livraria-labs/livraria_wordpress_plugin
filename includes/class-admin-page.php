@@ -367,6 +367,23 @@ class Livraria_Admin_Page {
                 <p class="description" style="margin: 8px 0 0 28px; font-size: 12px; color: #646970;">When enabled, expeditions will be automatically created when orders are marked as completed. This feature uses your default sender profile and automatically selects the cheapest available quote. Best suited for orders where you have a good understanding of the expected shipping costs.</p>
             </div>
             
+            <!-- Lockers at checkout -->
+            <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #ddd;">
+                <strong style="font-size: 14px; color: #1d2327;">Lockers at checkout</strong>
+                <p class="description" style="margin: 4px 0 8px; font-size: 12px; color: #646970;">Buyers choose "Livrare la adresă" or "Livrare la locker" at checkout and pick one locker from one list. Add a shipping method for locker delivery in WooCommerce yourself; this plugin does not create shipping methods.</p>
+                <?php foreach (Livraria_Lockers::COURIERS as $locker_slug => $locker_courier): ?>
+                    <label style="display: block; margin: 4px 0;">
+                        <input type="checkbox" class="livraria-auto-option" data-option="<?php echo esc_attr(Livraria_Lockers::OPT_ENABLED_PREFIX . $locker_slug); ?>" value="1" <?php checked(true, Livraria_Lockers::courier_enabled($locker_slug), true); ?> />
+                        Offer <?php echo esc_html($locker_courier['product']); ?> lockers
+                    </label>
+                <?php endforeach; ?>
+                <label style="display: block; margin: 4px 0;">
+                    <input type="checkbox" class="livraria-auto-option" data-option="<?php echo esc_attr(Livraria_Lockers::OPT_REQUIRE_LOCKER); ?>" value="1" <?php checked(true, Livraria_Lockers::require_locker(), true); ?> />
+                    Require locker (hides home delivery at checkout)
+                </label>
+                <span class="livraria-auto-option-feedback" style="color: #00a32a; font-size: 12px;"></span>
+            </div>
+
             <?php if ($sender_profile): ?>
                 <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #ddd;">
                     <?php $this->render_default_sender_profile_selector($sender_profile); ?>

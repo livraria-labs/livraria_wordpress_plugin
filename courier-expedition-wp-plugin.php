@@ -24,6 +24,7 @@ require_once plugin_dir_path(__FILE__) . 'includes/class-api-client.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-order-handler.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-admin-page.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-lockers.php';
+require_once plugin_dir_path(__FILE__) . 'includes/class-checkout.php';
 
 /**
  * Tell WooCommerce the plugin works with High-Performance Order Storage:
@@ -109,6 +110,9 @@ class LivrariaPlugin {
         $this->api_client = new Livraria_API_Client($this->api_base_url);
         $this->order_handler = new Livraria_Order_Handler($this->api_client);
         $this->admin_page = new Livraria_Admin_Page($this->api_client);
+
+        // The buyer's locker choice on the classic and the blocks checkout
+        (new Livraria_Checkout())->register();
     }
     
     public function init() {
@@ -146,6 +150,9 @@ class LivrariaPlugin {
         // registered: options.php must not write them (another API host).
         // The login is their only writer. The password is never stored.
         register_setting('courier_api_settings', 'courier_auto_create', array('sanitize_callback' => array($this, 'sanitize_boolean')));
+        foreach (Livraria_Lockers::setting_names() as $locker_setting) {
+            register_setting('courier_api_settings', $locker_setting, array('sanitize_callback' => array($this, 'sanitize_flag')));
+        }
         register_setting('courier_api_settings', 'courier_default_sender_name', array('sanitize_callback' => 'sanitize_text_field'));
         register_setting('courier_api_settings', 'courier_default_sender_email', array('sanitize_callback' => 'sanitize_email'));
         register_setting('courier_api_settings', 'courier_default_sender_phone', array('sanitize_callback' => 'sanitize_text_field'));
@@ -171,6 +178,16 @@ class LivrariaPlugin {
      */
     public function sanitize_boolean($value) {
         return absint($value) ? 1 : 0;
+    }
+
+    /**
+     * Sanitize an on/off setting stored as '1' / '0' (locker settings: unset means on)
+     *
+     * @param mixed $value
+     * @return string
+     */
+    public function sanitize_flag($value) {
+        return absint($value) ? '1' : '0';
     }
     
     /**
@@ -1225,10 +1242,13 @@ class LivrariaPlugin {
         $option_value = sanitize_text_field(wp_unslash($_POST['option_value']));
         
         // Validate that this is an allowed option
-        $allowed_options = array('courier_auto_create', 'livraria_default_sender_profile_id');
+        $allowed_options = array_merge(array('courier_auto_create', 'livraria_default_sender_profile_id'), Livraria_Lockers::setting_names());
         if (!in_array($option_name, $allowed_options, true)) {
             wp_send_json_error('Option not allowed');
             return;
+        }
+        if (in_array($option_name, Livraria_Lockers::setting_names(), true)) {
+            $option_value = $this->sanitize_flag($option_value);
         }
         
         // Update the option (same as what happens when clicking "Save changes")
