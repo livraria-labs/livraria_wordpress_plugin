@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Livraria Shipping for WooCommerce
  * Description: Automatically create and manage shipping expeditions for WooCommerce orders via the Livraria courier API.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: Livraria S.R.L.
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
 
 // Must equal the plugin header Version line above; deploy.sh refuses to
 // build when the two differ. Sent to the Livraria API in X-Livraria-Client.
-define('LIVRARIA_WC_PLUGIN_VERSION', '1.1.0');
+define('LIVRARIA_WC_PLUGIN_VERSION', '1.2.0');
 
 // Include required classes
 require_once plugin_dir_path(__FILE__) . 'includes/class-api-client.php';
