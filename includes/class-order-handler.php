@@ -501,7 +501,8 @@ class Livraria_Order_Handler {
             'county' => isset($locker['county']) ? (string) $locker['county'] : '',
             'city' => (string) $locker['city'],
             'postcode' => isset($locker['postalCode']) ? (string) $locker['postalCode'] : '',
-            'street' => isset($locker['street']) ? (string) $locker['street'] : '',
+            // DPD sends no street: its locker name carries it ("BUCURESTI - TIMISOARA 51 (OUTDOOR LOCKER)")
+            'street' => !empty($locker['street']) ? (string) $locker['street'] : (isset($locker['name']) ? (string) $locker['name'] : ''),
             'streetNumber' => isset($locker['streetNo']) ? (string) $locker['streetNo'] : '',
             'block' => '',
             'staircase' => '',

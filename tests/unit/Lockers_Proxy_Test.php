@@ -137,7 +137,7 @@ class Lockers_Proxy_Test extends Livraria_Quote_Flow_TestCase {
         } catch (Livraria_Test_Json_Response $response) {
             $this->assertTrue($response->success);
             $this->assertArrayNotHasKey('lockers', $response->data);
-            $this->assertSame(array(array('name' => 'Brasov', 'count' => 1), array('name' => 'Cluj', 'count' => 1), array('name' => 'Iasi', 'count' => 1)), $response->data['counties']);
+            $this->assertSame(array(array('name' => 'Brasov', 'count' => 1), array('name' => 'Cluj', 'count' => 1), array('name' => 'Iasi', 'count' => 1), array('name' => Livraria_Lockers::OTHER_COUNTY, 'count' => 1)), $response->data['counties']);
         } finally {
             $_REQUEST = array();
         }
@@ -148,7 +148,7 @@ class Lockers_Proxy_Test extends Livraria_Quote_Flow_TestCase {
             array('id' => 'DPD-2002', 'name' => 'DPD Locker Brasov Exemplu', 'address' => array('city' => 'Brasov', 'county' => 'Brașov', 'postalCode' => '500002')),
         ));
         $counties = Livraria_Lockers::proxy_response($this->client(), '', true, '');
-        $this->assertSame(array(array('name' => 'Brasov', 'count' => 2), array('name' => 'Cluj', 'count' => 1)), $counties['body']['counties'], 'diacritics fold into one county');
+        $this->assertSame(array(array('name' => 'Brasov', 'count' => 2), array('name' => 'Cluj', 'count' => 1), array('name' => Livraria_Lockers::OTHER_COUNTY, 'count' => 1)), $counties['body']['counties'], 'diacritics fold into one county; the locker with no address is kept in the bucket');
 
         $brasov = Livraria_Lockers::proxy_response($this->client(), '', true, 'BRAȘOV');
         $this->assertSame(array('SD-1004', 'DPD-2002'), array_column($brasov['body']['lockers'], 'id'));
@@ -172,6 +172,63 @@ class Lockers_Proxy_Test extends Livraria_Quote_Flow_TestCase {
         $this->assertLessThan(4096, strlen(json_encode($counties['body'])));
         $this->assertCount(100, array_filter($one['body']['lockers'], function($l) { return $l['courier'] === 'sameday'; }));
         $this->assertLessThan(20000, strlen(json_encode($one['body'])));
+    }
+
+    /** DPD items as the backend sends them: city and postal code, no county, no street */
+    private function dpd_without_county() {
+        return array(
+            array('id' => 'DPD-3001', 'name' => 'BUCURESTI - STRADA EXEMPLU 51 (OUTDOOR LOCKER)', 'address' => array('city' => 'Bucuresti', 'postalCode' => '010011', 'country' => 'Romania')),
+            array('id' => 'DPD-3002', 'name' => 'BUCURESTI - BULEVARDUL EXEMPLU 2 (OUTDOOR LOCKER)', 'address' => array('city' => 'Bucuresti', 'postalCode' => '010099', 'country' => 'Romania')),
+            array('id' => 'DPD-3003', 'name' => 'NICAIERI - LOCKER EXEMPLU', 'address' => array('city' => 'Sat Inventat', 'postalCode' => '999999', 'country' => 'Romania')),
+        );
+    }
+
+    private function count_requests_like($fragment) {
+        return count(array_filter($this->requests, function($r) use ($fragment) { return strpos($r['url'], $fragment) !== false; }));
+    }
+
+    public function test_dpd_lockers_without_a_county_get_it_from_the_postcode_catalogue() {
+        $this->routes['/pudo-points/by-courier?courier=dpd'] = $this->json(200, $this->dpd_without_county());
+        $this->routes['/public/location/postcodes?postcode=010011'] = $this->json(200, array(array('county' => 'București', 'city' => 'Bucuresti', 'postcode' => '010011')));
+        $this->routes['/public/location/postcodes?postcode=999999'] = $this->json(200, array());
+        $this->routes['/public/location/cities'] = $this->json(200, array());
+
+        $counties = Livraria_Lockers::proxy_response($this->client(), 'dpd', true, '')['body']['counties'];
+        $this->assertSame(array(array('name' => 'BUCURESTI', 'count' => 2), array('name' => Livraria_Lockers::OTHER_COUNTY, 'count' => 1)), $counties);
+        $this->assertSame(1, $this->count_requests_like('postcode=0100'), 'one catalogue lookup per postcode prefix');
+
+        $bucuresti = Livraria_Lockers::proxy_response($this->client(), '', true, 'Bucuresti')['body']['lockers'];
+        $this->assertSame(array('DPD-3002', 'DPD-3001'), array_column($bucuresti, 'id'));
+
+        $other = Livraria_Lockers::proxy_response($this->client(), '', true, Livraria_Lockers::OTHER_COUNTY)['body']['lockers'];
+        $this->assertSame(array('SD-1006', 'DPD-3003'), array_column($other, 'id'), 'an unknown postcode (and a Sameday locker with no address) lands in the fallback bucket, still listed');
+
+        $locker = Livraria_Lockers::find_locker($this->client(), 'dpd', 'DPD-3001');
+        $address = Livraria_Order_Handler::locker_recipient_address($locker);
+        $this->assertSame('BUCURESTI', $address['county']);
+        $this->assertSame('Bucuresti', $address['city']);
+        $this->assertSame('010011', $address['postcode']);
+        $this->assertSame('BUCURESTI - STRADA EXEMPLU 51 (OUTDOOR LOCKER)', $address['street'], 'DPD puts the street in the name');
+    }
+
+    public function test_the_city_resolves_the_county_when_the_postcode_does_not() {
+        $this->routes['/pudo-points/by-courier?courier=dpd'] = $this->json(200, array(
+            array('id' => 'DPD-3004', 'name' => 'CLUJ - LOCKER EXEMPLU', 'address' => array('city' => 'Cluj-Napoca', 'postalCode' => '400999')),
+        ));
+        $this->routes['/public/location/postcodes'] = $this->json(200, array());
+        $this->routes['/public/location/cities'] = $this->json(200, array(array('name' => 'Cluj-Napoca', 'county' => 'Cluj', 'postcode' => '400001')));
+
+        $lockers = Livraria_Lockers::proxy_response($this->client(), 'dpd', false, null)['body']['lockers'];
+        $this->assertSame('CLUJ', $lockers[0]['county']);
+    }
+
+    public function test_a_failed_catalogue_lookup_is_not_cached() {
+        $this->routes['/pudo-points/by-courier?courier=dpd'] = $this->json(200, $this->dpd_without_county());
+        $this->routes['/public/location/postcodes'] = $this->json(503, array('message' => 'down'));
+        $this->routes['/public/location/cities'] = $this->json(503, array('message' => 'down'));
+
+        Livraria_Lockers::proxy_response($this->client(), 'dpd', true, '');
+        $this->assertFalse(get_transient(Livraria_Lockers::PREFIX_CACHE . '01'));
     }
 
     public function test_the_admin_handler_needs_edit_shop_orders_and_keeps_addresses() {

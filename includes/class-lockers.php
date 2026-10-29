@@ -268,7 +268,7 @@ class Livraria_Lockers {
         }
         $payload = $api_client->get_pudo_points_by_courier($courier);
         if ($payload !== false) {
-            $lockers = self::trim_lockers($payload, $courier);
+            $lockers = self::resolve_missing_counties($api_client, self::trim_lockers($payload, $courier));
             set_transient(self::CACHE_FRESH_PREFIX . $courier, $lockers, self::CACHE_TTL);
             update_option(self::CACHE_STALE_PREFIX . $courier, $lockers, false);
             return array('lockers' => $lockers, 'status' => 'miss');
@@ -353,6 +353,9 @@ class Livraria_Lockers {
         $lockers = $list['lockers'];
         if ($county !== null) {
             $key = self::county_key($county);
+            if ($key === self::county_key(self::OTHER_COUNTY)) {
+                $key = ''; // the bucket of lockers whose county is not known
+            }
             $lockers = array_values(array_filter($lockers, function($locker) use ($key) {
                 return self::county_key($locker['county']) === $key;
             }));
@@ -387,9 +390,11 @@ class Livraria_Lockers {
      */
     public static function counties($lockers) {
         $counties = array();
+        $other = 0;
         foreach ($lockers as $locker) {
             $key = self::county_key($locker['county']);
             if ($key === '') {
+                $other++; // kept: still findable by search in the bucket
                 continue;
             }
             if (!isset($counties[$key])) {
@@ -401,7 +406,106 @@ class Livraria_Lockers {
         usort($counties, function($a, $b) {
             return strcmp(self::county_key($a['name']), self::county_key($b['name']));
         });
+        if ($other > 0) {
+            $counties[] = array('name' => self::OTHER_COUNTY, 'count' => $other);
+        }
         return $counties;
+    }
+
+    /** The county-list entry for lockers whose county could not be worked out */
+    const OTHER_COUNTY = 'Alt județ / necunoscut';
+
+    /** Cache of postcode prefix -> county (from the Livraria catalogue) */
+    const PREFIX_CACHE = 'livraria_loc_prefix_';
+
+    /**
+     * Fill in the county of lockers that came without one (DPD sends only
+     * city and postal code). Romanian postcodes are 6 digits and their first
+     * two identify the county: for each distinct prefix the county is read
+     * once from the Livraria catalogue (GET /public/location/postcodes with a
+     * postcode of that prefix) and cached for 7 days. A prefix the catalogue
+     * does not resolve falls back to the city (GET /public/location/cities, a
+     * single county for that name). Spelled as the catalogue spells it
+     * (uppercase, no diacritics, known aliases). A locker still without a
+     * county stays in the list (counties() puts it under OTHER_COUNTY).
+     *
+     * @param Livraria_API_Client $api_client
+     * @param array $lockers trim_lockers() records
+     * @return array
+     */
+    public static function resolve_missing_counties($api_client, $lockers) {
+        $by_prefix = array();
+        foreach ($lockers as $index => $locker) {
+            if ($locker['county'] === '' && preg_match('/^(\d{2})\d{4}$/', $locker['postalCode'], $m)) {
+                $by_prefix[$m[1]][] = $locker['postalCode'];
+            }
+        }
+        $prefix_county = array();
+        foreach ($by_prefix as $prefix => $postcodes) {
+            $prefix_county[$prefix] = self::prefix_county($api_client, (string) $prefix, array_values(array_unique($postcodes)));
+        }
+        $city_county = array();
+        foreach ($lockers as $index => $locker) {
+            if ($locker['county'] !== '') {
+                continue;
+            }
+            $prefix = preg_match('/^(\d{2})\d{4}$/', $locker['postalCode'], $m) ? $m[1] : '';
+            $county = ($prefix !== '' && isset($prefix_county[$prefix])) ? $prefix_county[$prefix] : '';
+            if ($county === '' && $locker['city'] !== '') {
+                $city_key = self::county_key($locker['city']);
+                if (!array_key_exists($city_key, $city_county)) {
+                    $city_county[$city_key] = self::city_county($api_client, $locker['city']);
+                }
+                $county = $city_county[$city_key];
+            }
+            $lockers[$index]['county'] = $county;
+        }
+        return $lockers;
+    }
+
+    /**
+     * The county of a postcode prefix, from the catalogue, cached 7 days ('' when unknown)
+     */
+    private static function prefix_county($api_client, $prefix, $postcodes) {
+        $cached = get_transient(self::PREFIX_CACHE . $prefix);
+        if (is_string($cached)) {
+            return $cached;
+        }
+        $failed = false;
+        foreach (array_slice($postcodes, 0, 3) as $postcode) {
+            $matches = $api_client->find_postcodes(array('postcode' => $postcode));
+            if ($matches === false) {
+                $failed = true;
+                continue;
+            }
+            if (!empty($matches[0]['county'])) {
+                $county = Livraria_Order_Handler::county_alias($matches[0]['county']);
+                set_transient(self::PREFIX_CACHE . $prefix, $county, 7 * 86400);
+                return $county;
+            }
+        }
+        if (!$failed) {
+            set_transient(self::PREFIX_CACHE . $prefix, '', 86400); // the catalogue has none: ask again tomorrow
+        }
+        return '';
+    }
+
+    /**
+     * The county of a city name when the catalogue gives exactly one, else ''
+     */
+    private static function city_county($api_client, $city) {
+        $cities = $api_client->find_cities($city);
+        if (!is_array($cities)) {
+            return '';
+        }
+        $wanted = self::county_key($city);
+        $counties = array();
+        foreach ($cities as $c) {
+            if (is_array($c) && isset($c['name'], $c['county']) && self::county_key($c['name']) === $wanted) {
+                $counties[self::county_key($c['county'])] = Livraria_Order_Handler::county_alias($c['county']);
+            }
+        }
+        return count($counties) === 1 ? reset($counties) : '';
     }
 
     /**
