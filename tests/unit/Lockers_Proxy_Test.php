@@ -115,7 +115,7 @@ class Lockers_Proxy_Test extends Livraria_Quote_Flow_TestCase {
     public function test_the_checkout_handler_answers_without_a_login() {
         global $wp_test_user_caps;
         $wp_test_user_caps = array(); // a guest buyer
-        $_REQUEST = array('courier' => 'dpd');
+        $_REQUEST = array('courier' => 'dpd', 'county' => 'Iasi');
         try {
             (new LivrariaPlugin())->ajax_checkout_lockers();
             $this->fail('no JSON response');
@@ -127,6 +127,51 @@ class Lockers_Proxy_Test extends Livraria_Quote_Flow_TestCase {
         }
         global $wp_test_actions;
         $this->assertArrayHasKey('wp_ajax_nopriv_livraria_checkout_lockers', $wp_test_actions);
+    }
+
+    public function test_the_checkout_gets_the_counties_first_never_the_whole_list() {
+        $_REQUEST = array();
+        try {
+            (new LivrariaPlugin())->ajax_checkout_lockers();
+            $this->fail('no JSON response');
+        } catch (Livraria_Test_Json_Response $response) {
+            $this->assertTrue($response->success);
+            $this->assertArrayNotHasKey('lockers', $response->data);
+            $this->assertSame(array(array('name' => 'Brasov', 'count' => 1), array('name' => 'Cluj', 'count' => 1), array('name' => 'Iasi', 'count' => 1)), $response->data['counties']);
+        } finally {
+            $_REQUEST = array();
+        }
+    }
+
+    public function test_a_county_returns_both_couriers_lockers_of_that_county_from_the_same_cache() {
+        $this->routes['/pudo-points/by-courier?courier=dpd'] = $this->json(200, array(
+            array('id' => 'DPD-2002', 'name' => 'DPD Locker Brasov Exemplu', 'address' => array('city' => 'Brasov', 'county' => 'Brașov', 'postalCode' => '500002')),
+        ));
+        $counties = Livraria_Lockers::proxy_response($this->client(), '', true, '');
+        $this->assertSame(array(array('name' => 'Brasov', 'count' => 2), array('name' => 'Cluj', 'count' => 1)), $counties['body']['counties'], 'diacritics fold into one county');
+
+        $brasov = Livraria_Lockers::proxy_response($this->client(), '', true, 'BRAȘOV');
+        $this->assertSame(array('SD-1004', 'DPD-2002'), array_column($brasov['body']['lockers'], 'id'));
+        $this->assertSame(array('sameday', 'dpd'), array_column($brasov['body']['lockers'], 'courier'));
+        $this->assertSame('hit', $brasov['cache']);
+        $this->assertSame(1, $this->count_requests('courier=sameday'), 'the county list and the county come from one cached fetch');
+        $this->assertSame(1, $this->count_requests('courier=dpd'));
+        $this->assertSame(array(), Livraria_Lockers::proxy_response($this->client(), '', true, 'Nicaieri')['body']['lockers']);
+    }
+
+    public function test_the_county_answer_stays_small() {
+        $many = array();
+        for ($i = 0; $i < 4000; $i++) {
+            $many[] = array('id' => 'SD-' . $i, 'name' => 'easybox Exemplu ' . $i, 'address' => array('street' => 'Strada Exemplu', 'streetNo' => (string) $i, 'city' => 'Oras ' . ($i % 40), 'county' => 'Judet ' . ($i % 40), 'postalCode' => '100000'));
+        }
+        $this->routes['/pudo-points/by-courier?courier=sameday'] = $this->json(200, $many);
+
+        $counties = Livraria_Lockers::proxy_response($this->client(), '', true, '');
+        $one = Livraria_Lockers::proxy_response($this->client(), '', true, 'Judet 7');
+
+        $this->assertLessThan(4096, strlen(json_encode($counties['body'])));
+        $this->assertCount(100, array_filter($one['body']['lockers'], function($l) { return $l['courier'] === 'sameday'; }));
+        $this->assertLessThan(20000, strlen(json_encode($one['body'])));
     }
 
     public function test_the_admin_handler_needs_edit_shop_orders_and_keeps_addresses() {

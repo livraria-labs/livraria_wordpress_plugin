@@ -20,8 +20,9 @@ weight.
 ### Added
 - Lockers (Sameday easybox and DPD locker). At checkout, on the classic
   (shortcode) checkout and on the blocks checkout, the buyer chooses "Livrare
-  la adresă" or "Livrare la locker" and picks one locker from one list of
-  both couriers (filters by courier, county and city, search). Locker
+  la adresă" or "Livrare la locker", chooses the county, then picks one
+  locker of either courier in it (filters by courier and city, search within
+  the county). Only the chosen county's lockers are sent to the browser. Locker
   delivery chosen with no locker picked blocks the order. The pick is saved
   on the order (`_livraria_delivery_mode`, `_livraria_locker_id`,
   `_livraria_locker_name`, `_livraria_locker_courier`). The locker list comes

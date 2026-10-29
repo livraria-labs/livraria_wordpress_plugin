@@ -502,7 +502,7 @@ class LivrariaPlugin {
                 'couriers' => $couriers,
                 'showModeChoice' => false,
                 'strings' => array(
-                    'filterAll' => 'All', 'countyLabel' => 'County', 'countyAll' => 'All counties', 'cityLabel' => 'City', 'cityAll' => 'All cities',
+                    'filterAll' => 'All', 'countyLabel' => 'County', 'countyAll' => 'All counties', 'countyPick' => 'Choose the county', 'cityLabel' => 'City', 'cityAll' => 'All cities',
                     'search' => 'Search by name or address', 'loading' => 'Loading lockers…', 'error' => 'Could not load the lockers.', 'retry' => 'Retry',
                     'select' => 'Select', 'change' => 'Change', 'clearFilters' => 'Clear filters', 'chosen' => 'Chosen:', 'gate' => 'Choose a locker.',
                     'showingFirst' => 'Showing the first {cap} of {total} lockers: narrow the search.', 'none' => 'No locker matches.',
@@ -740,7 +740,10 @@ class LivrariaPlugin {
      */
     private function send_locker_proxy($storefront) {
         $courier = isset($_REQUEST['courier']) ? sanitize_text_field(wp_unslash($_REQUEST['courier'])) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Callers check the nonce first
-        $answer = Livraria_Lockers::proxy_response($this->api_client, $courier, $storefront);
+        // The checkout always narrows: no county = the county list, a county = its lockers.
+        // The order panel gets every locker unless it names a county too.
+        $county = isset($_REQUEST['county']) ? sanitize_text_field(wp_unslash($_REQUEST['county'])) : ($storefront ? '' : null); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Callers check the nonce first
+        $answer = Livraria_Lockers::proxy_response($this->api_client, $courier, $storefront, $county);
         if ($answer['cache'] !== '' && !headers_sent()) {
             header('X-Livraria-Lockers: ' . $answer['cache']);
         }

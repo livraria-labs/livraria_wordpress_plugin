@@ -1,7 +1,9 @@
 /*
- * Livraria locker picker: one merged Sameday + DPD list with courier chips,
- * county / city filters, a name or address search, clear buttons and one
- * chosen-locker line with "change". Used by the classic checkout, the blocks
+ * Livraria locker picker: the county first (a small list), then that
+ * county's lockers of both couriers with courier chips, a city filter, a
+ * name or address search within the county, clear buttons and one
+ * chosen-locker line with "change". The full list (over 8,000 lockers) is
+ * never sent to the browser. Used by the classic checkout, the blocks
  * checkout and the order panel's Route pickers. No dependencies.
  *
  * window.LivrariaLockerPicker.mount(element, options) -> { setPick, getPick, destroy }
@@ -43,7 +45,7 @@
         var state = {
             mode: o.requireLocker ? 'locker' : ((o.pick && o.pick.mode) || (o.showModeChoice === false ? 'locker' : 'home')),
             pick: o.pick && o.pick.id ? { id: o.pick.id, name: o.pick.name, courier: o.pick.courier } : null,
-            lockers: null, loading: false, error: '',
+            counties: null, byCounty: {}, loading: false, error: '',
             courier: '', county: '', city: '', search: ''
         };
 
@@ -58,19 +60,24 @@
             }
         }
 
-        function load() {
+        // GET the proxy: no county = the county list; a county = its lockers
+        function load(county) {
             state.loading = true;
             state.error = '';
             render();
-            var url = o.ajaxUrl + (o.ajaxUrl.indexOf('?') === -1 ? '?' : '&') + 'action=' + encodeURIComponent(o.action) + '&nonce=' + encodeURIComponent(o.nonce || '');
+            var url = o.ajaxUrl + (o.ajaxUrl.indexOf('?') === -1 ? '?' : '&') + 'action=' + encodeURIComponent(o.action) +
+                '&nonce=' + encodeURIComponent(o.nonce || '') + '&county=' + encodeURIComponent(county || '');
             var xhr = new XMLHttpRequest();
             xhr.open('GET', url);
             xhr.onload = function () {
                 state.loading = false;
                 var body = null;
                 try { body = JSON.parse(xhr.responseText); } catch (e) { body = null; }
-                if (xhr.status === 200 && body && body.success && body.data && body.data.lockers) {
-                    state.lockers = body.data.lockers.filter(function (l) { return labels[l.courier]; });
+                var data = xhr.status === 200 && body && body.success ? body.data : null;
+                if (data && !county && data.counties) {
+                    state.counties = data.counties;
+                } else if (data && county && data.lockers) {
+                    state.byCounty[county] = data.lockers.filter(function (l) { return labels[l.courier]; });
                 } else {
                     state.error = s.error || 'Could not load the lockers.';
                 }
@@ -84,11 +91,14 @@
             xhr.send();
         }
 
+        function retry() {
+            load(state.counties === null ? '' : state.county);
+        }
+
         function filtered() {
             var q = fold(state.search.trim());
-            return (state.lockers || []).filter(function (l) {
+            return (state.byCounty[state.county] || []).filter(function (l) {
                 return (!state.courier || l.courier === state.courier) &&
-                    (!state.county || l.county === state.county) &&
                     (!state.city || l.city === state.city) &&
                     (!q || fold(l.name + ' ' + l.street + ' ' + l.city).indexOf(q) !== -1);
             });
@@ -137,30 +147,38 @@
             }
 
             box.appendChild(el('p', { className: 'livraria-lp-gate', role: 'status', text: s.gate || '' }));
-            if (state.lockers === null && !state.loading && !state.error) { load(); return; }
-            if (state.loading) { box.appendChild(el('p', { text: s.loading || '…' })); return; }
+            if (state.counties === null && !state.loading && !state.error) { load(''); return; }
             if (state.error) {
                 box.appendChild(el('p', { className: 'livraria-lp-error', text: state.error }));
-                box.appendChild(el('button', { type: 'button', className: 'button', text: s.retry || 'Retry', onclick: load }));
+                box.appendChild(el('button', { type: 'button', className: 'button', text: s.retry || 'Retry', onclick: retry }));
                 return;
             }
+            if (state.counties === null) { box.appendChild(el('p', { text: s.loading || '…' })); return; }
 
+            // 1. the county
+            var county = el('select', { 'aria-label': s.countyLabel || '', onchange: function (e) {
+                state.county = e.target.value; state.city = ''; state.search = ''; state.courier = '';
+                if (state.county && !state.byCounty[state.county]) { load(state.county); } else { render(); }
+            } });
+            county.appendChild(el('option', { value: '', text: s.countyPick || s.countyAll || '' }));
+            state.counties.forEach(function (c) {
+                var opt = el('option', { value: c.name, text: c.name + ' (' + c.count + ')' }); opt.selected = c.name === state.county; county.appendChild(opt);
+            });
+            box.appendChild(el('div', { className: 'livraria-lp-filters' }, [el('label', {}, [el('span', { text: (s.countyLabel || '') + ' ' }), county])]));
+            if (!state.county) { return; }
+            if (state.loading || !state.byCounty[state.county]) { box.appendChild(el('p', { text: s.loading || '…' })); return; }
+
+            // 2. within the county: courier chips, city, search
+            var inCounty = state.byCounty[state.county];
             var chips = el('div', { className: 'livraria-lp-chips' });
             [{ slug: '', label: s.filterAll || 'All' }].concat(couriers).forEach(function (c) {
-                var chip = el('button', { type: 'button', className: 'livraria-lp-chip' + (state.courier === c.slug ? ' is-active' : ''), 'aria-pressed': state.courier === c.slug ? 'true' : 'false', text: c.label, onclick: function () { state.courier = c.slug; render(); } });
-                chips.appendChild(chip);
+                chips.appendChild(el('button', { type: 'button', className: 'livraria-lp-chip' + (state.courier === c.slug ? ' is-active' : ''), 'aria-pressed': state.courier === c.slug ? 'true' : 'false', text: c.label, onclick: function () { state.courier = c.slug; render(); } }));
             });
             box.appendChild(chips);
 
-            var inCourier = (state.lockers || []).filter(function (l) { return !state.courier || l.courier === state.courier; });
-            var county = el('select', { 'aria-label': s.countyLabel || '', onchange: function (e) { state.county = e.target.value; state.city = ''; render(); } });
-            county.appendChild(el('option', { value: '', text: s.countyAll || '' }));
-            uniqueSorted(inCourier.map(function (l) { return l.county; })).forEach(function (c) {
-                var opt = el('option', { value: c, text: c }); opt.selected = c === state.county; county.appendChild(opt);
-            });
             var city = el('select', { 'aria-label': s.cityLabel || '', onchange: function (e) { state.city = e.target.value; render(); } });
             city.appendChild(el('option', { value: '', text: s.cityAll || '' }));
-            uniqueSorted(inCourier.filter(function (l) { return !state.county || l.county === state.county; }).map(function (l) { return l.city; })).forEach(function (c) {
+            uniqueSorted(inCounty.filter(function (l) { return !state.courier || l.courier === state.courier; }).map(function (l) { return l.city; })).forEach(function (c) {
                 var opt = el('option', { value: c, text: c }); opt.selected = c === state.city; city.appendChild(opt);
             });
             var search = el('input', { type: 'search', placeholder: s.search || '', value: state.search });
@@ -172,10 +190,9 @@
                 if (again) { again.focus(); try { again.setSelectionRange(position, position); } catch (err) { /* ignore */ } }
             });
             box.appendChild(el('div', { className: 'livraria-lp-filters' }, [
-                el('label', {}, [el('span', { text: (s.countyLabel || '') + ' ' }), county]),
                 el('label', {}, [el('span', { text: (s.cityLabel || '') + ' ' }), city]),
                 search,
-                el('button', { type: 'button', className: 'button livraria-lp-clear', text: s.clearFilters || 'Clear', onclick: function () { state.courier = ''; state.county = ''; state.city = ''; state.search = ''; render(); } })
+                el('button', { type: 'button', className: 'button livraria-lp-clear', text: s.clearFilters || 'Clear', onclick: function () { state.courier = ''; state.city = ''; state.search = ''; render(); } })
             ]));
 
             var list = filtered().sort(function (a, b) { return a.name.localeCompare(b.name, 'ro'); });

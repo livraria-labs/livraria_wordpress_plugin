@@ -224,12 +224,18 @@ class Livraria_Lockers {
      * courier): 400 for a courier we do not offer or the shop switched off,
      * 502 when the backend failed and nothing is cached, else 200.
      *
+     * $county narrows the answer, from the same cached lists (no extra
+     * backend call): null = every locker; '' = only the counties (name and
+     * locker count, a few KB, what the checkout asks first); a county name =
+     * that county's lockers (diacritics and case ignored).
+     *
      * @param Livraria_API_Client $api_client
      * @param string $courier_param
      * @param bool $storefront Trim each locker to storefront_entry()
+     * @param string|null $county
      * @return array code, body, cache ('hit' | 'miss' | 'stale' | '')
      */
-    public static function proxy_response($api_client, $courier_param, $storefront) {
+    public static function proxy_response($api_client, $courier_param, $storefront, $county = null) {
         $couriers = self::enabled_couriers();
         if ((string) $courier_param !== '') {
             $courier = self::parse_courier($courier_param);
@@ -246,12 +252,65 @@ class Livraria_Lockers {
         if ($list === null) {
             return array('code' => 502, 'body' => array('error' => 'Failed to load lockers'), 'cache' => '');
         }
-        $lockers = $storefront ? array_map(array(__CLASS__, 'storefront_entry'), $list['lockers']) : $list['lockers'];
+        if ($county === '') {
+            return array(
+                'code' => 200,
+                'body' => array('couriers' => $couriers, 'counties' => self::counties($list['lockers']), 'failed' => $list['failed']),
+                'cache' => $list['status'],
+            );
+        }
+        $lockers = $list['lockers'];
+        if ($county !== null) {
+            $key = self::county_key($county);
+            $lockers = array_values(array_filter($lockers, function($locker) use ($key) {
+                return self::county_key($locker['county']) === $key;
+            }));
+        }
+        $lockers = $storefront ? array_map(array(__CLASS__, 'storefront_entry'), $lockers) : $lockers;
         return array(
             'code' => 200,
             'body' => array('couriers' => $couriers, 'lockers' => $lockers, 'failed' => $list['failed']),
             'cache' => $list['status'],
         );
+    }
+
+    /**
+     * A county name compared without case, diacritics, spaces or dashes (letters and digits kept)
+     *
+     * @param string $county
+     * @return string
+     */
+    public static function county_key($county) {
+        $map = array(
+            'ă' => 'a', 'Ă' => 'A', 'â' => 'a', 'Â' => 'A', 'î' => 'i', 'Î' => 'I',
+            'ș' => 's', 'Ș' => 'S', 'ş' => 's', 'Ş' => 'S', 'ț' => 't', 'Ț' => 'T', 'ţ' => 't', 'Ţ' => 'T',
+        );
+        return preg_replace('/[^A-Z0-9]/', '', strtoupper(strtr((string) $county, $map)));
+    }
+
+    /**
+     * The distinct counties of a locker list, sorted, with their locker counts
+     *
+     * @param array $lockers
+     * @return array[] name, count
+     */
+    public static function counties($lockers) {
+        $counties = array();
+        foreach ($lockers as $locker) {
+            $key = self::county_key($locker['county']);
+            if ($key === '') {
+                continue;
+            }
+            if (!isset($counties[$key])) {
+                $counties[$key] = array('name' => $locker['county'], 'count' => 0);
+            }
+            $counties[$key]['count']++;
+        }
+        $counties = array_values($counties);
+        usort($counties, function($a, $b) {
+            return strcmp(self::county_key($a['name']), self::county_key($b['name']));
+        });
+        return $counties;
     }
 
     /**
@@ -401,6 +460,7 @@ class Livraria_Lockers {
                 'gate' => self::MSG_GATE,
                 'countyLabel' => 'Județ',
                 'countyAll' => 'Toate județele',
+                'countyPick' => 'Alege județul',
                 'cityLabel' => 'Oraș',
                 'cityAll' => 'Toate orașele',
                 'search' => 'Caută după nume sau adresă',
