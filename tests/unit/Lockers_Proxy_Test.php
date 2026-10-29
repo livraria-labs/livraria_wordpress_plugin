@@ -101,7 +101,9 @@ class Lockers_Proxy_Test extends Livraria_Quote_Flow_TestCase {
 
     public function test_logout_login_and_settings_save_drop_the_lists() {
         Livraria_Lockers::proxy_response($this->client(), '', true);
+        set_transient('livraria_couriers', array(array('_id' => 'x')), 3600);
         Livraria_API_Client::clear_session();
+        $this->assertFalse(get_transient('livraria_couriers'));
         $this->assertFalse(get_transient(Livraria_Lockers::CACHE_FRESH_PREFIX . 'sameday'));
         $this->assertFalse(get_option(Livraria_Lockers::CACHE_STALE_PREFIX . 'sameday', false));
 

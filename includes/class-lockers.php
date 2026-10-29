@@ -283,6 +283,7 @@ class Livraria_Lockers {
      * Drop every cached list (login, logout, session end, settings save)
      */
     public static function forget_cache() {
+        delete_transient('livraria_couriers'); // the courier list the Route resolves ids from
         foreach (array_keys(self::COURIERS) as $courier) {
             delete_transient(self::CACHE_FRESH_PREFIX . $courier);
             delete_option(self::CACHE_STALE_PREFIX . $courier);

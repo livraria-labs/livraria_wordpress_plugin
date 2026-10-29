@@ -17,6 +17,27 @@ Weights are now converted to kg and dimensions to cm from the shop's units
 (g, lbs, oz; m, mm, in, yd): a shop set to grams was quoting 1,000 times the
 weight.
 
+### Added
+- Lockers (Sameday easybox and DPD locker). At checkout, on the classic
+  (shortcode) checkout and on the blocks checkout, the buyer chooses "Livrare
+  la adresă" or "Livrare la locker" and picks one locker from one list of
+  both couriers (filters by courier, county and city, search). Locker
+  delivery chosen with no locker picked blocks the order. The pick is saved
+  on the order (`_livraria_delivery_mode`, `_livraria_locker_id`,
+  `_livraria_locker_name`, `_livraria_locker_courier`). The locker list comes
+  through the shop's own server, cached for 15 minutes.
+- Settings: offer Sameday lockers, offer DPD lockers (both on by default),
+  require locker (hides home delivery). The shop adds its own shipping method
+  for locker delivery; the plugin creates none.
+- Order screen, Route: from (courier pickup, or drop-off at a locker, nearest
+  suggested) and to (the buyer's locker, the order address, or a locker
+  chosen there). Every route is quoted at once and shown under tabs, the
+  cheapest route marked. A pick the plugin cannot use is named and nothing is
+  quoted until the merchant ships to the address instead. Door delivery to an
+  address with no postcode, street or city offers "Add postcode" (street,
+  city) on the order. A "UAT" or "DEV" badge shows when the plugin is not
+  connected to production.
+
 ### Fixed
 - Every failed call to the Livraria API shows the API's own reason on the
   order screen as "<what failed>: <reason>" (for example "Could not create the
