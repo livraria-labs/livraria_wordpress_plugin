@@ -2,6 +2,18 @@
 // Dynamic data (orderId, autoCreateEnabled, etc.) provided via wp_localize_script as livrariaOrder.
 jQuery(document).ready(function($) {
 
+    // Server text (the backend's own words) goes in as text, never as HTML
+    function esc(value) {
+        return $('<div>').text(value === undefined || value === null ? '' : String(value)).html();
+    }
+
+    // The message of a wp_send_json_error() payload: a string, or { message }
+    function errorText(data, fallback) {
+        if (typeof data === 'string' && data !== '') { return data; }
+        if (data && typeof data.message === 'string' && data.message !== '') { return data.message; }
+        return fallback;
+    }
+
     // Delete expedition association
     $('#livraria-delete-expedition-btn').on('click', function() {
         var confirmed = confirm(
@@ -28,7 +40,7 @@ jQuery(document).ready(function($) {
                 if (response.success) {
                     location.reload();
                 } else {
-                    alert('Failed to remove expedition: ' + (response.data || 'Unknown error'));
+                    alert('Failed to remove expedition: ' + errorText(response.data, 'Unknown error'));
                     btn.prop('disabled', false).text('Remove expedition association');
                 }
             },
@@ -88,12 +100,12 @@ jQuery(document).ready(function($) {
             },
             success: function(response) {
                 if (!response.success || !response.data.quotes || response.data.quotes.length === 0) {
-                    var errorMsg = 'Unknown error';
+                    var errorMsg = 'Could not get quotes.';
                     if (response.data) {
-                        errorMsg = (typeof response.data === 'string') ? response.data : (response.data.message || errorMsg);
+                        errorMsg = errorText(response.data, errorMsg);
                     }
                     $overlay.find('h3').text('Error');
-                    $overlay.find('p').html('Failed to get quotes: ' + errorMsg + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                    $overlay.find('p').html(esc(errorMsg) + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
                     autoCreateInProgress = false;
                     window.livrariaPreventUnload = false;
                     return;
@@ -120,7 +132,7 @@ jQuery(document).ready(function($) {
                     success: function(selectResponse) {
                         if (!selectResponse.success) {
                             $overlay.find('h3').text('Error');
-                            $overlay.find('p').html('Failed to select quote. <br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                            $overlay.find('p').html(esc(errorText(selectResponse.data, 'Failed to select quote.')) + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
                             autoCreateInProgress = false;
                             window.livrariaPreventUnload = false;
                             return;
@@ -138,7 +150,7 @@ jQuery(document).ready(function($) {
                             success: function(labelResponse) {
                                 if (!labelResponse.success) {
                                     $overlay.find('h3').text('Error');
-                                    $overlay.find('p').html('Failed to create expedition: ' + (labelResponse.data || 'Unknown error') + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                    $overlay.find('p').html(esc(errorText(labelResponse.data, 'Could not create the shipment.')) + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
                                     autoCreateInProgress = false;
                                     window.livrariaPreventUnload = false;
                                     return;
@@ -153,9 +165,9 @@ jQuery(document).ready(function($) {
                                 }, 1000);
                             },
                             error: function(xhr, status, error) {
-                                var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? xhr.responseJSON.data : (error || ('Request failed: ' + status) || 'AJAX error occurred while creating expedition');
+                                var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? errorText(xhr.responseJSON.data, 'Request failed') : (error || ('Request failed: ' + status) || 'AJAX error occurred while creating expedition');
                                 $overlay.find('h3').text('Error');
-                                $overlay.find('p').html(errorMsg + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                $overlay.find('p').html(esc(errorMsg) + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
                                 console.error('Auto-create generate label error:', xhr, status, error);
                                 autoCreateInProgress = false;
                                 window.livrariaPreventUnload = false;
@@ -163,9 +175,9 @@ jQuery(document).ready(function($) {
                         });
                     },
                     error: function(xhr, status, error) {
-                        var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? xhr.responseJSON.data : (error || ('Request failed: ' + status) || 'AJAX error occurred while selecting quote');
+                        var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? errorText(xhr.responseJSON.data, 'Request failed') : (error || ('Request failed: ' + status) || 'AJAX error occurred while selecting quote');
                         $overlay.find('h3').text('Error');
-                        $overlay.find('p').html(errorMsg + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                        $overlay.find('p').html(esc(errorMsg) + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
                         console.error('Auto-create select quote error:', xhr, status, error);
                         autoCreateInProgress = false;
                         window.livrariaPreventUnload = false;
@@ -173,9 +185,9 @@ jQuery(document).ready(function($) {
                 });
             },
             error: function(xhr, status, error) {
-                var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? xhr.responseJSON.data : (error || ('Request failed: ' + status) || 'AJAX error occurred while getting quotes');
+                var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? errorText(xhr.responseJSON.data, 'Request failed') : (error || ('Request failed: ' + status) || 'AJAX error occurred while getting quotes');
                 $overlay.find('h3').text('Error');
-                $overlay.find('p').html(errorMsg + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                $overlay.find('p').html(esc(errorMsg) + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
                 console.error('Auto-create get quotes error:', xhr, status, error);
                 autoCreateInProgress = false;
                 window.livrariaPreventUnload = false;
@@ -234,12 +246,12 @@ jQuery(document).ready(function($) {
                         },
                         success: function(response) {
                             if (!response.success || !response.data.quotes || response.data.quotes.length === 0) {
-                                var errorMsg = 'Unknown error';
+                                var errorMsg = 'Could not get quotes.';
                                 if (response.data) {
-                                    errorMsg = (typeof response.data === 'string') ? response.data : (response.data.message || errorMsg);
+                                    errorMsg = errorText(response.data, errorMsg);
                                 }
                                 $overlay.find('h3').text('Error');
-                                $overlay.find('p').html('Failed to get quotes: ' + errorMsg + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                $overlay.find('p').html(esc(errorMsg) + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
                                 autoCreateInProgress = false;
                                 window.livrariaPreventUnload = false;
                                 return;
@@ -266,7 +278,7 @@ jQuery(document).ready(function($) {
                                 success: function(selectResponse) {
                                     if (!selectResponse.success) {
                                         $overlay.find('h3').text('Error');
-                                        $overlay.find('p').html('Failed to select quote. <br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                        $overlay.find('p').html(esc(errorText(selectResponse.data, 'Failed to select quote.')) + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
                                         autoCreateInProgress = false;
                                         window.livrariaPreventUnload = false;
                                         return;
@@ -284,7 +296,7 @@ jQuery(document).ready(function($) {
                                         success: function(labelResponse) {
                                             if (!labelResponse.success) {
                                                 $overlay.find('h3').text('Error');
-                                                $overlay.find('p').html('Failed to create expedition: ' + (labelResponse.data || 'Unknown error') + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                                $overlay.find('p').html(esc(errorText(labelResponse.data, 'Could not create the shipment.')) + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
                                                 autoCreateInProgress = false;
                                                 window.livrariaPreventUnload = false;
                                                 return;
@@ -306,9 +318,9 @@ jQuery(document).ready(function($) {
                                             }, 1000);
                                         },
                                         error: function(xhr, status, error) {
-                                            var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? xhr.responseJSON.data : (error || ('Request failed: ' + status) || 'AJAX error occurred while creating expedition');
+                                            var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? errorText(xhr.responseJSON.data, 'Request failed') : (error || ('Request failed: ' + status) || 'AJAX error occurred while creating expedition');
                                             $overlay.find('h3').text('Error');
-                                            $overlay.find('p').html(errorMsg + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                            $overlay.find('p').html(esc(errorMsg) + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
                                             console.error('Auto-create generate label error:', xhr, status, error);
                                             autoCreateInProgress = false;
                                             window.livrariaPreventUnload = false;
@@ -316,9 +328,9 @@ jQuery(document).ready(function($) {
                                     });
                                 },
                                 error: function(xhr, status, error) {
-                                    var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? xhr.responseJSON.data : (error || ('Request failed: ' + status) || 'AJAX error occurred while selecting quote');
+                                    var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? errorText(xhr.responseJSON.data, 'Request failed') : (error || ('Request failed: ' + status) || 'AJAX error occurred while selecting quote');
                                     $overlay.find('h3').text('Error');
-                                    $overlay.find('p').html(errorMsg + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                                    $overlay.find('p').html(esc(errorMsg) + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
                                     console.error('Auto-create select quote error:', xhr, status, error);
                                     autoCreateInProgress = false;
                                     window.livrariaPreventUnload = false;
@@ -326,9 +338,9 @@ jQuery(document).ready(function($) {
                             });
                         },
                         error: function(xhr, status, error) {
-                            var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? xhr.responseJSON.data : (error || ('Request failed: ' + status) || 'AJAX error occurred while getting quotes');
+                            var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? errorText(xhr.responseJSON.data, 'Request failed') : (error || ('Request failed: ' + status) || 'AJAX error occurred while getting quotes');
                             $overlay.find('h3').text('Error');
-                            $overlay.find('p').html(errorMsg + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
+                            $overlay.find('p').html(esc(errorMsg) + '<br><button onclick="window.livrariaPreventUnload=false;location.reload()" style="margin-top:15px;padding:8px 16px;background:#2271b1;color:white;border:none;border-radius:4px;cursor:pointer;">Reload Page</button>');
                             console.error('Auto-create get quotes error:', xhr, status, error);
                             autoCreateInProgress = false;
                             window.livrariaPreventUnload = false;
@@ -466,16 +478,16 @@ jQuery(document).ready(function($) {
                 } else {
                     var errorMsg = 'Failed to get quotes';
                     if (response.data) {
-                        errorMsg = (typeof response.data === 'string') ? response.data : (response.data.message || errorMsg);
+                        errorMsg = errorText(response.data, errorMsg);
                     }
-                    $('#expedition-result').html('<p style="color:red;">Error: ' + errorMsg + '</p>');
+                    $('#expedition-result').html('<p style="color:red;">Error: ' + esc(errorMsg) + '</p>');
                     btn.prop('disabled', false);
                 }
             },
             error: function(xhr, status, error) {
                 $('#expedition-loading').hide();
-                var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? xhr.responseJSON.data : (error || ('Request failed: ' + status) || 'AJAX request failed');
-                $('#expedition-result').html('<p style="color:red;">Error: ' + errorMsg + '</p>');
+                var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? errorText(xhr.responseJSON.data, 'Request failed') : (error || ('Request failed: ' + status) || 'AJAX request failed');
+                $('#expedition-result').html('<p style="color:red;">Error: ' + esc(errorMsg) + '</p>');
                 console.error('Get quotes AJAX error:', xhr, status, error);
                 btn.prop('disabled', false);
             }
@@ -540,16 +552,16 @@ jQuery(document).ready(function($) {
                 } else {
                     var errorMsg = 'Failed to select quote';
                     if (response.data) {
-                        errorMsg = (typeof response.data === 'string') ? response.data : (response.data.message || errorMsg);
+                        errorMsg = errorText(response.data, errorMsg);
                     }
-                    $('#quote-selection-result').html('<p style="color:red;">Error: ' + errorMsg + '</p>');
+                    $('#quote-selection-result').html('<p style="color:red;">Error: ' + esc(errorMsg) + '</p>');
                     btn.prop('disabled', false);
                 }
             },
             error: function(xhr, status, error) {
                 $('#expedition-loading').hide();
-                var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? xhr.responseJSON.data : (error || ('Request failed: ' + status) || 'AJAX request failed');
-                $('#quote-selection-result').html('<p style="color:red;">Error: ' + errorMsg + '</p>');
+                var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? errorText(xhr.responseJSON.data, 'Request failed') : (error || ('Request failed: ' + status) || 'AJAX request failed');
+                $('#quote-selection-result').html('<p style="color:red;">Error: ' + esc(errorMsg) + '</p>');
                 console.error('Select quote AJAX error:', xhr, status, error);
                 btn.prop('disabled', false);
             }
@@ -586,16 +598,16 @@ jQuery(document).ready(function($) {
                 } else {
                     var errorMsg = 'Failed to generate label';
                     if (response.data) {
-                        errorMsg = (typeof response.data === 'string') ? response.data : (response.data.message || errorMsg);
+                        errorMsg = errorText(response.data, errorMsg);
                     }
-                    $('#label-result').html('<p style="color:red;">Error: ' + errorMsg + '</p>');
+                    $('#label-result').html('<p style="color:red;">Error: ' + esc(errorMsg) + '</p>');
                     btn.prop('disabled', false);
                 }
             },
             error: function(xhr, status, error) {
                 $('#label-loading').hide();
-                var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? xhr.responseJSON.data : (error || ('Request failed: ' + status) || 'AJAX request failed');
-                $('#label-result').html('<p style="color:red;">Error: ' + errorMsg + '</p>');
+                var errorMsg = (xhr.responseJSON && xhr.responseJSON.data) ? errorText(xhr.responseJSON.data, 'Request failed') : (error || ('Request failed: ' + status) || 'AJAX request failed');
+                $('#label-result').html('<p style="color:red;">Error: ' + esc(errorMsg) + '</p>');
                 console.error('Generate label AJAX error:', xhr, status, error);
                 btn.prop('disabled', false);
             }

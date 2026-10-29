@@ -401,10 +401,16 @@ class Livraria_API_Client {
         if ($r['code'] === 401 && self::error_reason($r['data']) === 'REFRESH_EXPIRED') {
             $this->log_debug('Session refresh expired');
             $this->mark_session_expired('refresh token expired');
+            $this->set_last_error(401, self::SESSION_EXPIRED_MESSAGE, $r['data']);
             return false;
         }
 
         $this->log_debug('Session refresh failed (HTTP ' . $r['code'] . ')');
+        $this->set_last_error(
+            $r['code'],
+            'Could not renew the Livraria session: ' . ($r['code'] === 0 ? $this->no_response_message($r) : self::message_from_error_body($r['data'], $r['code'])),
+            $r['data']
+        );
         return false;
     }
 
@@ -484,23 +490,169 @@ class Livraria_API_Client {
     }
 
     /**
-     * The error text of an API error envelope: message, or message.error
+     * The error text of an API error envelope, '' when the body carries none
+     * (see backend_message())
      *
      * @param mixed $data Decoded response body
      * @return string
      */
     private static function error_message($data) {
-        if (!is_array($data) || !isset($data['message'])) {
+        return self::backend_message($data);
+    }
+
+    // -------------------------------------------------------------------------
+    // Last error: the backend's own words about the last failed call
+    // -------------------------------------------------------------------------
+
+    /** What the order panel shows while the session is over (401 REFRESH_EXPIRED) */
+    const SESSION_EXPIRED_MESSAGE = 'Livraria session expired, log in again: an administrator must log in from Settings > Livraria.';
+
+    /**
+     * The last failed call of this client: status (HTTP, 0 = no response or
+     * not sent), message (for the merchant), code, missingRecipientFields,
+     * reason. Null after a call that succeeded.
+     *
+     * @var array|null
+     */
+    private $last_error = null;
+
+    /**
+     * @return array|null status, message, code, missingRecipientFields, reason
+     */
+    public function get_last_error() {
+        return $this->last_error;
+    }
+
+    /**
+     * @return string The merchant-readable message of the last failure, '' if none
+     */
+    public function last_error_message() {
+        return is_array($this->last_error) ? (string) $this->last_error['message'] : '';
+    }
+
+    /**
+     * @return string The body's `code` of the last failure (e.g. RECIPIENT_FIELDS_REQUIRED), '' if none
+     */
+    public function last_error_code() {
+        return is_array($this->last_error) ? (string) $this->last_error['code'] : '';
+    }
+
+    /**
+     * @return int HTTP status of the last failure, 0 when no response came back
+     */
+    public function last_error_status() {
+        return is_array($this->last_error) ? (int) $this->last_error['status'] : 0;
+    }
+
+    public function clear_last_error() {
+        $this->last_error = null;
+    }
+
+    /**
+     * @param int $status HTTP status, 0 = no response / not sent
+     * @param string $message For the merchant
+     * @param mixed $data Decoded error body, for code / missingRecipientFields / reason
+     */
+    private function set_last_error($status, $message, $data = null) {
+        $details = self::error_details($data);
+        $this->last_error = array(
+            'status' => (int) $status,
+            'message' => (string) $message,
+            'code' => $details['code'],
+            'missingRecipientFields' => $details['missingRecipientFields'],
+            'reason' => $details['reason'],
+        );
+    }
+
+    /**
+     * The backend's own sentence in an error body, '' when it sent none.
+     * Precedence: nested envelope message.error; NestJS validation list
+     * message[] (first non-blank); string message; top-level error.
+     *
+     * @param mixed $data Decoded response body
+     * @return string
+     */
+    public static function backend_message($data) {
+        if (!is_array($data)) {
             return '';
         }
-        $message = $data['message'];
-        if (is_array($message)) {
-            if (isset($message['error']) && is_string($message['error'])) {
-                return $message['error'];
+        if (isset($data['message'])) {
+            $message = $data['message'];
+            if (is_array($message)) {
+                if (isset($message['error']) && is_string($message['error']) && trim($message['error']) !== '') {
+                    return trim($message['error']);
+                }
+                if (array_key_exists(0, $message)) {
+                    foreach ($message as $item) {
+                        if (is_string($item) && trim($item) !== '') {
+                            return trim($item);
+                        }
+                    }
+                }
+            } elseif (is_string($message) && trim($message) !== '') {
+                return trim($message);
             }
-            return (string) wp_json_encode($message, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         }
-        return (string) $message;
+        if (isset($data['error']) && is_string($data['error']) && trim($data['error']) !== '') {
+            return trim($data['error']);
+        }
+        return '';
+    }
+
+    /**
+     * What the merchant reads for a non-2xx answer: the backend's own
+     * sentence (backend_message()), else a canned line for 401/403/404/429,
+     * else "The Livraria API returned HTTP N."
+     *
+     * @param mixed $data Decoded response body
+     * @param int $status HTTP status
+     * @return string
+     */
+    public static function message_from_error_body($data, $status) {
+        $message = self::backend_message($data);
+        if ($message !== '') {
+            return $message;
+        }
+        switch ((int) $status) {
+            case 401:
+                return 'The Livraria session is no longer valid. Log in again under Settings > Livraria.';
+            case 403:
+                return 'The Livraria API refused this request (HTTP 403).';
+            case 404:
+                return 'The Livraria API could not find what this request asked for (HTTP 404).';
+            case 429:
+                return 'Too many requests to the Livraria API. Wait a moment and try again.';
+            default:
+                return 'The Livraria API returned HTTP ' . (int) $status . '.';
+        }
+    }
+
+    /**
+     * code, missingRecipientFields and reason of an error body, at the top
+     * level or inside the nested `message` envelope
+     *
+     * @param mixed $data Decoded response body
+     * @return array code (string), missingRecipientFields (string[]), reason (string)
+     */
+    public static function error_details($data) {
+        $details = array('code' => '', 'missingRecipientFields' => array(), 'reason' => '');
+        if (!is_array($data)) {
+            return $details;
+        }
+        $nested = (isset($data['message']) && is_array($data['message']) && !array_key_exists(0, $data['message']))
+            ? $data['message']
+            : array();
+
+        foreach (array($data, $nested) as $source) {
+            if ($details['code'] === '' && isset($source['code']) && is_string($source['code'])) {
+                $details['code'] = $source['code'];
+            }
+            if (empty($details['missingRecipientFields']) && isset($source['missingRecipientFields']) && is_array($source['missingRecipientFields'])) {
+                $details['missingRecipientFields'] = array_values(array_filter($source['missingRecipientFields'], 'is_string'));
+            }
+        }
+        $details['reason'] = self::error_reason($data);
+        return $details;
     }
 
     /**
@@ -726,13 +878,16 @@ class Livraria_API_Client {
      * @return array|false Array with 'body', 'headers', 'content_type', 'content_length' or false on failure
      */
     private function api_request_binary($method, $endpoint) {
+        $this->clear_last_error();
         if (!$this->base_url_allowed()) {
+            $this->set_last_error(0, self::BLOCKED_URL_MESSAGE);
             return false;
         }
 
         // Ensure valid token
         if (!$this->ensure_valid_token()) {
             $this->log_error('Unable to obtain valid API token for binary request');
+            $this->set_no_session_error();
             return false;
         }
 
@@ -757,6 +912,7 @@ class Livraria_API_Client {
 
             if (is_wp_error($response)) {
                 $this->log_error('Binary API Request Failed: ' . $response->get_error_message());
+                $this->set_last_error(0, 'No response from the Livraria API (' . $response->get_error_message() . ').');
                 return false;
             }
 
@@ -782,6 +938,8 @@ class Livraria_API_Client {
         }
 
         $this->log_error('Binary API Error: HTTP ' . $response_code . ' (' . strlen($body) . ' bytes)');
+        $data = json_decode((string) $body, true);
+        $this->set_last_error($response_code, $this->failed_status_message($response_code, $data), $data);
         return false;
     }
 
@@ -873,11 +1031,13 @@ class Livraria_API_Client {
      * @param string $endpoint API endpoint
      * @param array|null $data Request data
      * @param bool $with_auth Send the access token
-     * @return array code (0 = no response or refused), data (decoded body or null), json_ok
+     * @return array code (0 = no response or refused), data (decoded body or null), json_ok,
+     *               transport ('' or why nothing came back, for code 0)
      */
     private function request_json($method, $endpoint, $data = null, $with_auth = false) {
-        $result = array('code' => 0, 'data' => null, 'json_ok' => false);
+        $result = array('code' => 0, 'data' => null, 'json_ok' => false, 'transport' => '');
         if (!$this->base_url_allowed()) {
+            $result['transport'] = self::BLOCKED_URL_MESSAGE;
             return $result;
         }
 
@@ -910,6 +1070,7 @@ class Livraria_API_Client {
 
         if (is_wp_error($response)) {
             $this->log_error('API Request Failed: ' . $response->get_error_message());
+            $result['transport'] = 'No response from the Livraria API (' . $response->get_error_message() . ').';
             return $result;
         }
 
@@ -934,16 +1095,62 @@ class Livraria_API_Client {
         if ($r['code'] >= 200 && $r['code'] < 300) {
             if (!$r['json_ok']) {
                 $this->log_error('Invalid JSON response');
+                $this->set_last_error($r['code'], 'The Livraria API returned a response this plugin could not read.');
                 return false;
             }
+            $this->clear_last_error();
             return $r['data'];
         }
         if ($r['code'] !== 0) {
             $message = self::error_message($r['data']);
             // Never the body itself: it can echo what was sent
             $this->log_error($label . ': HTTP ' . $r['code'] . ($message !== '' ? ': ' . $message : ' (no message field)'));
+            $this->set_last_error($r['code'], $this->failed_status_message($r['code'], $r['data']), $r['data']);
+        } else {
+            $this->set_last_error(0, $this->no_response_message($r));
         }
         return false;
+    }
+
+    /** What every call says when the stored API URL is off the allow-list */
+    const BLOCKED_URL_MESSAGE = 'The configured Livraria API address is not a Livraria API host, so nothing was sent. An administrator must log in again from Settings > Livraria.';
+
+    /**
+     * Message for a non-2xx answer: the reconnect text when a 401 ended the
+     * session, else message_from_error_body()
+     *
+     * @param int $status
+     * @param mixed $data Decoded body
+     * @return string
+     */
+    private function failed_status_message($status, $data) {
+        if ((int) $status === 401 && self::is_session_expired()) {
+            return self::SESSION_EXPIRED_MESSAGE;
+        }
+        return self::message_from_error_body($data, $status);
+    }
+
+    /**
+     * @param array $r request_json() result with code 0
+     * @return string
+     */
+    private function no_response_message($r) {
+        return (isset($r['transport']) && $r['transport'] !== '') ? $r['transport'] : 'No response from the Livraria API.';
+    }
+
+    /**
+     * Last error when there is no access token to send: the reconnect text
+     * when the session is over; else what the refresh said, if it said
+     * anything; else "not connected".
+     */
+    private function set_no_session_error() {
+        if (self::is_session_expired()) {
+            $this->set_last_error(401, self::SESSION_EXPIRED_MESSAGE, array('message' => array('reason' => 'REFRESH_EXPIRED')));
+            return;
+        }
+        if ($this->last_error === null) {
+            $this->set_last_error(0, 'Not connected to Livraria: an administrator must log in from Settings > Livraria.');
+        }
     }
 
     /**
@@ -955,6 +1162,7 @@ class Livraria_API_Client {
      * @return array|false API response or false on failure
      */
     private function raw_api_request($method, $endpoint, $data = null) {
+        $this->clear_last_error();
         return $this->json_result($this->request_json($method, $endpoint, $data), 'Raw API Error');
     }
     
@@ -968,13 +1176,16 @@ class Livraria_API_Client {
      * @return array|false API response or false on failure
      */
     private function api_request($method, $endpoint, $data = null) {
+        $this->clear_last_error();
         if (!$this->base_url_allowed()) {
+            $this->set_last_error(0, self::BLOCKED_URL_MESSAGE);
             return false;
         }
         
         // Ensure we have a valid token before making the request
         if (!$this->ensure_valid_token()) {
             $this->log_error('Unable to obtain valid API token');
+            $this->set_no_session_error();
             return false;
         }
         

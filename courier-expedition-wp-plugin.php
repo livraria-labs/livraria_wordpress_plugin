@@ -853,7 +853,7 @@ class LivrariaPlugin {
             
             wp_send_json_success(array('message' => 'Quote selected successfully'));
         } else {
-            wp_send_json_error('Failed to select quote');
+            wp_send_json_error($this->order_handler->api_error_message('Could not select the quote'));
         }
     }
     
@@ -885,8 +885,11 @@ class LivrariaPlugin {
         }
         
         $billing_response = $this->api_client->attach_billing_info_from_sender_profile($quote_request_id, $default_sender_profile_id);
-        if ($billing_response === false || !isset($billing_response['id'])) {
-            wp_send_json_error('Failed to attach billing information from sender profile');
+        if ($billing_response === false) {
+            wp_send_json_error($this->order_handler->api_error_message('Could not attach the billing information'));
+        }
+        if (!isset($billing_response['id'])) {
+            wp_send_json_error('Could not attach the billing information: the Livraria API answered without a billing record.');
         }
         
         $billing_info_id = $billing_response['id'];
@@ -925,8 +928,10 @@ class LivrariaPlugin {
                 'expedition_id' => $expedition_response['id'],
                 'awb_number' => $expedition_response['awbNumber'] ?? null
             ));
+        } elseif ($expedition_response === false) {
+            wp_send_json_error($this->order_handler->api_error_message('Could not create the shipment'));
         } else {
-            wp_send_json_error('Failed to create expedition');
+            wp_send_json_error('Could not create the shipment: the Livraria API answered without a shipment id.');
         }
     }
     
@@ -1229,7 +1234,7 @@ class LivrariaPlugin {
         $pdf_data = $this->api_client->download_awb_pdf($awb_number, $options);
 
         if ($pdf_data === false) {
-            wp_die('Failed to download AWB PDF from API', 'Service Unavailable', array('response' => 503));
+            wp_die(esc_html($this->order_handler->api_error_message('Could not download the AWB')), 'Service Unavailable', array('response' => 503));
         }
 
         // Set headers for PDF download

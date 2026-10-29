@@ -46,7 +46,8 @@ class Livraria_Order_Handler {
             // Get available couriers first (with caching)
             $courier_ids = $this->get_available_courier_ids();
             if (empty($courier_ids)) {
-                return array('success' => false, 'message' => 'No couriers available');
+                $why = $this->api_client->last_error_message();
+                return array('success' => false, 'message' => $why !== '' ? 'Could not load the courier list: ' . $why : 'No couriers available');
             }
             
             // Create quote request and get courier quotes
@@ -65,7 +66,7 @@ class Livraria_Order_Handler {
             $quotes_response = $this->api_client->create_quote_request($quote_request_data);
             
             if (!$quotes_response) {
-                return array('success' => false, 'message' => 'Failed to create quote request');
+                return array('success' => false, 'message' => $this->api_error_message('Could not get quotes'));
             }
             
             // Extract quotes and quoteRequestId from response
@@ -214,6 +215,20 @@ class Livraria_Order_Handler {
         }
     }
     
+    /**
+     * "<what failed>: <the backend's words>" for the last failed API call
+     *
+     * @param string $what What the plugin was trying to do
+     * @return string
+     */
+    public function api_error_message($what) {
+        $message = $this->api_client->last_error_message();
+        if ($message === '') {
+            $message = 'the Livraria API did not say why';
+        }
+        return $what . ': ' . $message;
+    }
+
     /**
      * Validate order has required shipping information
      * 
