@@ -916,8 +916,8 @@ class Livraria_Order_Handler {
      * number (NSN), as the Livraria API wants it: phoneCountryCode "+40" and
      * a 9-digit phoneNSN starting 7, 2 or 3 for Romania.
      *
-     * Romanian numbers turn up in every shape: 0722 123 456, 0722.123.456,
-     * +40722123456, 0040722123456, 40722123456, 722123456, +40 0722 123 456.
+     * Romanian numbers turn up in every shape: 0700 000 001, 0700.000.001,
+     * +40700000001, 0040700000001, 40700000001, 700000001, +40 0700 000 001.
      * A number with another country code is accepted when it is written with
      * "+" (or "00"). Anything else comes back with an empty country code, and
      * phone_problem() turns that into a stop. Ported from the PrestaShop
@@ -944,7 +944,7 @@ class Livraria_Order_Handler {
             if (strpos($national, '40') === 0 && strlen($national) > 9) {
                 $national = substr($national, 2);
             }
-            // Trunk zero, including the "+40 0722..." double prefix
+            // Trunk zero, including the "+40 07..." double prefix
             while (strpos($national, '0') === 0 && strlen($national) > 9) {
                 $national = substr($national, 1);
             }

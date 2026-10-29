@@ -286,7 +286,7 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
         $wp_test_actions = $saved;
 
         $this->assertArrayNotHasKey('wp_ajax_livraria_get_courier_quotes', $registered);
-        // The legacy one-click create path is gone (operator, 29 Oct)
+        // The legacy one-click create path is gone (1.2.0)
         $this->assertArrayNotHasKey('wp_ajax_livraria_create_expedition', $registered);
         $this->assertFalse(method_exists('LivrariaPlugin', 'ajax_create_expedition'));
         $this->assertFalse(method_exists('Livraria_Order_Handler', 'create_expedition_for_order'));

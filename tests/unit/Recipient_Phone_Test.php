@@ -10,16 +10,16 @@ class Recipient_Phone_Test extends Livraria_Quote_Flow_TestCase {
 
     public function romanian_shapes() {
         return array(
-            'spaces' => array('0722 123 456', '722123456'),
-            'dots' => array('0722.123.456', '722123456'),
-            'dashes' => array('0722-123-456', '722123456'),
-            'plus 40' => array('+40722123456', '722123456'),
-            'plus 40 spaced' => array('+40 722 123 456', '722123456'),
-            '0040' => array('0040722123456', '722123456'),
-            '40 no plus' => array('40722123456', '722123456'),
-            'no trunk zero' => array('722123456', '722123456'),
-            'plus 40 and trunk zero' => array('+40 0722 123 456', '722123456'),
-            'brackets' => array('(0722) 123 456', '722123456'),
+            'spaces' => array('0700 000 001', '700000001'),
+            'dots' => array('0700.000.002', '700000002'),
+            'dashes' => array('0700-000-003', '700000003'),
+            'plus 40' => array('+40700000004', '700000004'),
+            'plus 40 spaced' => array('+40 700 000 005', '700000005'),
+            '0040' => array('0040700000006', '700000006'),
+            '40 no plus' => array('40700000007', '700000007'),
+            'no trunk zero' => array('700000008', '700000008'),
+            'plus 40 and trunk zero' => array('+40 0700 000 009', '700000009'),
+            'brackets' => array('(0700) 000 010', '700000010'),
             'invented range' => array('0700000123', '700000123'),
             'landline 02' => array('021 000 0123', '210000123'),
             'landline 03' => array('0310 000 123', '310000123'),
@@ -36,17 +36,17 @@ class Recipient_Phone_Test extends Livraria_Quote_Flow_TestCase {
     }
 
     public function test_explicit_foreign_codes_are_kept() {
-        $this->assertSame(array('phoneCountryCode' => '+36', 'phoneNSN' => '701234567'), Livraria_Order_Handler::normalize_phone('+36 70 123 4567'));
-        $this->assertSame(array('phoneCountryCode' => '+33', 'phoneNSN' => '612345678'), Livraria_Order_Handler::normalize_phone('0033 6 12 34 56 78'));
-        $this->assertSame(array('phoneCountryCode' => '+373', 'phoneNSN' => '69123456'), Livraria_Order_Handler::normalize_phone('+373 69 123 456'));
-        $this->assertSame('', Livraria_Order_Handler::phone_problem(Livraria_Order_Handler::normalize_phone('+36 70 123 4567')));
+        $this->assertSame(array('phoneCountryCode' => '+36', 'phoneNSN' => '700000011'), Livraria_Order_Handler::normalize_phone('+36 70 000 0011'));
+        $this->assertSame(array('phoneCountryCode' => '+33', 'phoneNSN' => '600000012'), Livraria_Order_Handler::normalize_phone('0033 6 00 00 00 12'));
+        $this->assertSame(array('phoneCountryCode' => '+373', 'phoneNSN' => '69000013'), Livraria_Order_Handler::normalize_phone('+373 69 000 013'));
+        $this->assertSame('', Livraria_Order_Handler::phone_problem(Livraria_Order_Handler::normalize_phone('+36 70 000 0011')));
     }
 
     public function test_numbers_that_cannot_be_placed() {
         $this->assertSame('unplaceable', Livraria_Order_Handler::phone_problem(Livraria_Order_Handler::normalize_phone('12345')));
         $this->assertSame('invalid_ro', Livraria_Order_Handler::phone_problem(Livraria_Order_Handler::normalize_phone('+40 123 456 789')));
         $this->assertSame('invalid_ro', Livraria_Order_Handler::phone_problem(Livraria_Order_Handler::normalize_phone('0812 345 678')));
-        $this->assertSame('invalid_ro', Livraria_Order_Handler::phone_problem(Livraria_Order_Handler::normalize_phone('0722 123')));
+        $this->assertSame('invalid_ro', Livraria_Order_Handler::phone_problem(Livraria_Order_Handler::normalize_phone('0700 000')));
         $this->assertSame('missing', Livraria_Order_Handler::phone_problem(Livraria_Order_Handler::normalize_phone('  ')));
     }
 
