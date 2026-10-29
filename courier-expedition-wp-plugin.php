@@ -294,6 +294,12 @@ class LivrariaPlugin {
             return;
         }
 
+        if (self::is_draft_order($order)) {
+            // WooCommerce > Orders > Add order: nothing to quote until the order is saved
+            echo '<p>' . esc_html('Save the order first, then quote it here.') . '</p>';
+            return;
+        }
+
         if (Livraria_API_Client::blocked_api_url() !== '') {
             echo '<p style="color: #d63638;">' . esc_html('The configured Livraria API address is not a Livraria API host, so shipments cannot be created or downloaded. An administrator must log in again from Settings > Livraria.') . '</p>';
             return;
@@ -509,6 +515,37 @@ class LivrariaPlugin {
                 ),
             ),
         );
+    }
+
+    /**
+     * The order the current order screen shows: ?id= (HPOS) or ?post=
+     * (classic), else WooCommerce's global $theorder (set on screens such as
+     * HPOS "Add order"), else 0
+     *
+     * @return int
+     */
+    public static function current_order_id() {
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only GET params used only to identify the order for script localization, no state change
+        $order_id = isset($_GET['id']) ? absint($_GET['id']) : (isset($_GET['post']) ? absint($_GET['post']) : 0);
+        if ($order_id) {
+            return $order_id;
+        }
+        $theorder = isset($GLOBALS['theorder']) ? $GLOBALS['theorder'] : null;
+        return is_a($theorder, 'WC_Order') ? (int) $theorder->get_id() : 0;
+    }
+
+    /**
+     * An order not saved yet (the "Add order" screen): auto-draft, or a
+     * checkout draft
+     *
+     * @param WC_Order $order
+     * @return bool
+     */
+    public static function is_draft_order($order) {
+        if (!is_object($order) || !method_exists($order, 'get_status')) {
+            return false;
+        }
+        return in_array((string) $order->get_status(), array('auto-draft', 'checkout-draft'), true);
     }
 
     /**
@@ -1522,8 +1559,9 @@ class LivrariaPlugin {
         }
 
         // Enqueue order meta box script with dynamic data
-        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only GET params used only to determine order ID for script localization, no state change
-        $order_id = isset($_GET['id']) ? absint($_GET['id']) : (isset($_GET['post']) ? absint($_GET['post']) : 0);
+        $order_id = self::current_order_id();
+        $order = $order_id && function_exists('wc_get_order') ? wc_get_order($order_id) : false;
+        $is_draft = $order ? self::is_draft_order($order) : true;
         Livraria_Checkout::register_picker_assets();
         wp_enqueue_style(Livraria_Checkout::SCRIPT);
         wp_enqueue_script('livraria-order-js', plugin_dir_url(__FILE__) . 'assets/order.js', array('jquery', Livraria_Checkout::SCRIPT), LIVRARIA_WC_PLUGIN_VERSION, true);
@@ -1532,7 +1570,7 @@ class LivrariaPlugin {
             'expeditionExists'  => (bool) Livraria_Order_Handler::get_order_meta($order_id, '_courier_expedition_id'),
             'orderId'           => $order_id,
             'shouldAutoCreate'  => (bool) get_transient('livraria_auto_create_order_' . $order_id),
-        ), self::route_script_data($order_id)));
+        ), $is_draft ? array() : self::route_script_data($order_id)));
 
         // Inline CSS for expedition form styling
         $css = "

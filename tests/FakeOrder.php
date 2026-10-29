@@ -50,6 +50,7 @@ class Livraria_Fake_Order {
     }
 
     public function get_id() { return $this->id; }
+    public function get_status() { return isset($this->fields['status']) ? $this->fields['status'] : 'processing'; }
     public function get_order_number() { return (string) $this->id; }
     public function get_items() { return $this->items; }
     public function get_total() { return $this->fields['total']; }

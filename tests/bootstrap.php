@@ -337,6 +337,26 @@ if (!function_exists('wc_add_notice')) {
     }
 }
 
+// Admin script registry, for the order-screen enqueue test
+foreach (array('wp_enqueue_style', 'wp_enqueue_script', 'wp_register_script', 'wp_register_style', 'wp_add_inline_style') as $livraria_stub) {
+    if (!function_exists($livraria_stub)) {
+        eval('function ' . $livraria_stub . '() { return true; }');
+    }
+}
+if (!function_exists('wp_localize_script')) {
+    function wp_localize_script($handle, $name, $data) {
+        global $wp_test_localized;
+        $wp_test_localized[$handle] = array('name' => $name, 'data' => $data);
+        return true;
+    }
+}
+if (!function_exists('get_current_screen')) {
+    function get_current_screen() {
+        global $wp_test_screen;
+        return $wp_test_screen;
+    }
+}
+
 if (!function_exists('absint')) {
     function absint($value) {
         return abs((int) $value);
