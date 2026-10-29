@@ -292,6 +292,55 @@ class Livraria_Order_Handler {
         return true;
     }
     
+    /** Payment method titles that mean the courier collects the money (lowercase) */
+    const COD_TITLE_INDICATORS = array('cash on delivery', 'payment on delivery', 'pay on delivery', 'ramburs', 'numerar');
+
+    /**
+     * Whether the buyer pays the courier: WooCommerce's own COD gateway (id
+     * "cod"), or a payment method title naming cash / payment on delivery,
+     * ramburs or numerar
+     *
+     * @param WC_Order $order
+     * @return bool
+     */
+    public static function is_cod_order($order) {
+        if (!$order || !method_exists($order, 'get_payment_method')) {
+            return false;
+        }
+        if ((string) $order->get_payment_method() === 'cod') {
+            return true;
+        }
+        $title = (string) $order->get_payment_method_title();
+        $title = function_exists('mb_strtolower') ? mb_strtolower($title, 'UTF-8') : strtolower($title);
+        foreach (self::COD_TITLE_INDICATORS as $indicator) {
+            if (strpos($title, $indicator) !== false) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The quote request's service block. "cod" is there only when there is
+     * something to collect (a COD order, or an amount typed in the panel):
+     * the backend reads its presence as "this is a COD shipment".
+     *
+     * @param array $service_options get_service_options() result
+     * @param mixed $sender_profile For the COD IBAN
+     * @return array
+     */
+    private function build_service($service_options, $sender_profile) {
+        $service = array(
+            'saturdayDelivery' => $service_options['saturday_delivery'],
+            'openOnDelivery' => $service_options['open_on_delivery'],
+        );
+        if ($service_options['cod_amount'] > 0) {
+            $service['cod'] = $this->build_cod_object($service_options['cod_amount'], $sender_profile);
+        }
+        $service['insurance'] = array('amount' => $service_options['insurance_amount']);
+        return $service;
+    }
+
     /**
      * Build COD object for quote request
      * Includes bankAccount if COD amount > 0 and sender profile has codIban
@@ -939,14 +988,7 @@ class Livraria_Order_Handler {
                     $this->generate_package_description($order),
                 'shipmentNote' => 'Order from ' . get_bloginfo('name') . ' - Order #' . $order->get_order_number(),
                 'externalRef' => 'WP-' . $this->sanitize_shop_name() . '-' . $order->get_id(),
-                'service' => array(
-                    'saturdayDelivery' => $service_options['saturday_delivery'],
-                    'openOnDelivery' => $service_options['open_on_delivery'],
-                    'cod' => $this->build_cod_object($service_options['cod_amount'], $sender_profile),
-                    'insurance' => array(
-                        'amount' => $service_options['insurance_amount']
-                    )
-                ),
+                'service' => $this->build_service($service_options, $sender_profile),
                 'paymentInfo' => array(
                     'courierServicePayer' => 'THIRD_PARTY'
                 )
@@ -1242,36 +1284,14 @@ class Livraria_Order_Handler {
         $insurance_amount = isset($custom_data['insurance_amount']) ? 
             floatval($custom_data['insurance_amount']) : floatval(get_option('courier_default_insurance_amount', 0));
         
-        // Check if payment method is Cash on Delivery
-        $payment_method = $order->get_payment_method();
-        $payment_method_title = $order->get_payment_method_title();
-        $is_cod = false;
-        
-        // Primary check: WooCommerce COD payment gateway ID is 'cod'
-        if ($payment_method === 'cod') {
-            $is_cod = true;
+        // Amount to collect: what the merchant typed in the panel, else the
+        // order total on a COD order, else nothing
+        if (isset($custom_data['cod_amount'])) {
+            $cod_amount = max(0, floatval($custom_data['cod_amount']));
+        } elseif (self::is_cod_order($order)) {
+            $cod_amount = max(0, floatval($order->get_total()));
         } else {
-            // Fallback: check payment method title for COD indicators (case-insensitive)
-            $payment_method_title_lower = strtolower($payment_method_title);
-            $cod_indicators = array('cash on delivery', 'payment on delivery', 'pay on delivery', 'cod');
-            
-            foreach ($cod_indicators as $indicator) {
-                if (strpos($payment_method_title_lower, strtolower($indicator)) !== false) {
-                    $is_cod = true;
-                    break;
-                }
-            }
-        }
-        
-        // Set COD amount based on payment method or custom data
-        $cod_amount = 0;
-        if ($is_cod) {
-            // If COD payment method, use order total (or custom amount if provided)
-            $cod_amount = isset($custom_data['cod_amount']) ? 
-                floatval($custom_data['cod_amount']) : floatval($order->get_total());
-        } else if (isset($custom_data['cod_amount'])) {
-            // If custom data has COD amount but payment method is not COD, use custom amount
-            $cod_amount = floatval($custom_data['cod_amount']);
+            $cod_amount = 0;
         }
 
         return array(

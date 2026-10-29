@@ -291,56 +291,10 @@ class LivrariaPlugin {
             error_log('Livraria Debug Display: Order ' . $order_id . ' - Expedition ID: ' . $expedition_id . ', AWB: ' . $awb_number . ', Courier: "' . $courier_name . '"');
         }
 
-        // Get order and check if payment method is COD
-        $cod_amount_default = '0';
-        $is_cod = false;
-        
-        if ($order) {
-            if ($order) {
-                // Get payment method ID (most reliable way to check)
-                $payment_method = $order->get_payment_method();
-                $payment_method_title = $order->get_payment_method_title();
-                
-                // Also check order meta directly as fallback
-                $payment_method_meta = $order->get_payment_method();
-                
-                // Debug: Log payment method info (only in development mode)
-                if (self::is_development_mode()) {
-                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                    error_log('Livraria Debug: Payment method ID: ' . $payment_method . ', Title: ' . $payment_method_title . ', Meta: ' . $payment_method_meta);
-                }
-                
-                // Primary check: payment method ID (WooCommerce COD gateway ID is 'cod')
-                if ($payment_method === 'cod' || $payment_method_meta === 'cod') {
-                    $is_cod = true;
-                } else {
-                    // Fallback: check payment method title for COD indicators (case-insensitive)
-                    $payment_method_title_lower = strtolower($payment_method_title);
-                    $cod_indicators = array('cash on delivery', 'payment on delivery', 'pay on delivery', 'cod');
-                    
-                    foreach ($cod_indicators as $indicator) {
-                        if (strpos($payment_method_title_lower, strtolower($indicator)) !== false) {
-                            $is_cod = true;
-                            break;
-                        }
-                    }
-                }
-                
-                // Set COD amount to order total if payment method is COD
-                if ($is_cod) {
-                    $cod_amount_default = $order->get_total();
-                    if (self::is_development_mode()) {
-                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                        error_log('Livraria Debug: COD detected, setting amount to: ' . $cod_amount_default);
-                    }
-                } else {
-                    if (self::is_development_mode()) {
-                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                        error_log('Livraria Debug: Not COD payment method');
-                    }
-                }
-            }
-        }
+        // COD orders (Livraria_Order_Handler::is_cod_order()) start with the
+        // order total as the amount to collect; the merchant can change it
+        $is_cod = Livraria_Order_Handler::is_cod_order($order);
+        $cod_amount_default = $is_cod ? $order->get_total() : '0';
         
         ?>
         <div id="courier-expedition-meta">
