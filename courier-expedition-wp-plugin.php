@@ -79,7 +79,6 @@ class LivrariaPlugin {
         
         // AJAX handlers
         add_action('wp_ajax_livraria_create_expedition', array($this, 'ajax_create_expedition'));
-        add_action('wp_ajax_livraria_get_courier_quotes', array($this, 'ajax_get_courier_quotes'));
         add_action('wp_ajax_livraria_get_quotes_for_order', array($this, 'ajax_get_quotes_for_order'));
         add_action('wp_ajax_livraria_select_quote', array($this, 'ajax_select_quote'));
         add_action('wp_ajax_livraria_generate_label', array($this, 'ajax_generate_label'));
