@@ -391,6 +391,37 @@ if (!function_exists('add_query_arg')) {
     function add_query_arg($args, $url = '') { return $url . (strpos($url, '?') === false ? '?' : '&') . http_build_query($args); }
 }
 
+// WP-cron and activation hooks: recorded for the tests
+if (!function_exists('wp_schedule_single_event')) {
+    function wp_schedule_single_event($timestamp, $hook, $args = array()) {
+        $GLOBALS['wp_test_cron'][$hook . '|' . json_encode($args)] = $timestamp;
+        return true;
+    }
+}
+if (!function_exists('wp_next_scheduled')) {
+    function wp_next_scheduled($hook, $args = array()) {
+        $key = $hook . '|' . json_encode($args);
+        return isset($GLOBALS['wp_test_cron'][$key]) ? $GLOBALS['wp_test_cron'][$key] : false;
+    }
+}
+if (!function_exists('wp_clear_scheduled_hook')) {
+    function wp_clear_scheduled_hook($hook, $args = array()) {
+        $count = 0;
+        foreach (array_keys((array) ($GLOBALS['wp_test_cron'] ?? array())) as $key) {
+            if ($key === $hook . '|' . json_encode($args) || (empty($args) && strpos($key, $hook . '|') === 0)) {
+                unset($GLOBALS['wp_test_cron'][$key]);
+                $count++;
+            }
+        }
+        return $count;
+    }
+}
+if (!function_exists('register_deactivation_hook')) {
+    function register_deactivation_hook($file, $callback) {
+        $GLOBALS['wp_test_deactivation'][] = $callback;
+    }
+}
+
 if (!function_exists('absint')) {
     function absint($value) {
         return abs((int) $value);

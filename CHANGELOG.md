@@ -31,7 +31,12 @@ rows there to send several parcels. Setting the option
   on the order (`_livraria_delivery_mode`, `_livraria_locker_id`,
   `_livraria_locker_name`, `_livraria_locker_courier`). The locker list comes
   through the shop's own server, cached for 15 minutes; only the chosen
-  county's lockers reach the browser.
+  county's lockers reach the browser. Buyers never wait on the Livraria API
+  for it: once the shop has a copy, every request is answered from it and an
+  older copy is refreshed in the background (WP-cron), together with the
+  counties of DPD lockers, which DPD does not send (read once per postcode
+  prefix from Livraria's postcode list). Only the very first request after
+  installing fetches the list while it waits.
 - Settings: offer Sameday lockers and offer DPD lockers (both on by default),
   require locker (hides home delivery only), the shipping-method tick list.
   The shop adds its own shipping method for locker delivery; the plugin

@@ -252,32 +252,99 @@ class Livraria_Lockers {
         );
     }
 
+    /** WP-cron hook that refreshes one courier's list in the background */
+    const REFRESH_HOOK = 'livraria_refresh_lockers';
+    /** After a failed background refresh, wait this long before scheduling another */
+    const REFRESH_BACKOFF = 300;
+
     /**
-     * One courier's lockers: fresh from the transient (hit), else from the
-     * backend (miss, cached 15 minutes, kept as the last good copy), else the
-     * last good copy when the backend fails (stale), else null.
+     * One courier's lockers, stale-while-revalidate: the stored copy answers
+     * every request, so no buyer waits on the backend once the shop has one.
+     * - fresh copy (younger than 15 minutes): "hit";
+     * - only an older copy: "stale", served at once, and one background
+     *   refresh is scheduled (WP-cron, refresh_courier());
+     * - no copy at all (first use): fetched now, "miss"; null when that fails.
      *
      * @param Livraria_API_Client $api_client
      * @param string $courier
-     * @return array|null lockers, status ('hit', 'miss' or 'stale'); null = failed, nothing cached
+     * @return array|null lockers, status ('hit', 'stale' or 'miss')
      */
     public static function courier_list($api_client, $courier) {
         $fresh = get_transient(self::CACHE_FRESH_PREFIX . $courier);
         if (is_array($fresh)) {
             return array('lockers' => $fresh, 'status' => 'hit');
         }
-        $payload = $api_client->get_pudo_points_by_courier($courier);
-        if ($payload !== false) {
-            $lockers = self::resolve_missing_counties($api_client, self::trim_lockers($payload, $courier));
-            set_transient(self::CACHE_FRESH_PREFIX . $courier, $lockers, self::CACHE_TTL);
-            update_option(self::CACHE_STALE_PREFIX . $courier, $lockers, false);
-            return array('lockers' => $lockers, 'status' => 'miss');
-        }
         $stale = get_option(self::CACHE_STALE_PREFIX . $courier, false);
         if (is_array($stale)) {
+            self::schedule_refresh($courier);
             return array('lockers' => $stale, 'status' => 'stale');
         }
-        return null;
+        $lockers = self::fetch_and_store($api_client, $courier);
+        return $lockers === null ? null : array('lockers' => $lockers, 'status' => 'miss');
+    }
+
+    /**
+     * Fetch one courier's list, fill in missing counties, store both copies
+     *
+     * @return array|null The lockers, or null when the backend failed
+     */
+    private static function fetch_and_store($api_client, $courier) {
+        $payload = $api_client->get_pudo_points_by_courier($courier);
+        if ($payload === false) {
+            return null;
+        }
+        $lockers = self::resolve_missing_counties($api_client, self::trim_lockers($payload, $courier));
+        set_transient(self::CACHE_FRESH_PREFIX . $courier, $lockers, self::CACHE_TTL);
+        update_option(self::CACHE_STALE_PREFIX . $courier, $lockers, false);
+        return $lockers;
+    }
+
+    /**
+     * One pending background refresh per courier at most, none while a
+     * failed refresh is backing off
+     *
+     * @param string $courier
+     */
+    public static function schedule_refresh($courier) {
+        if (!function_exists('wp_schedule_single_event') || get_transient('livraria_lockers_backoff_' . $courier)) {
+            return;
+        }
+        if (wp_next_scheduled(self::REFRESH_HOOK, array($courier)) === false) {
+            wp_schedule_single_event(time(), self::REFRESH_HOOK, array($courier));
+        }
+    }
+
+    /**
+     * WP-cron: refresh one courier's list (and the counties it lacks) in the
+     * background. A failure keeps the stored copy and backs off 5 minutes.
+     *
+     * @param string $courier
+     * @param Livraria_API_Client|null $api_client (tests)
+     * @return bool Whether the list was refreshed
+     */
+    public static function refresh_courier($courier, $api_client = null) {
+        if (self::parse_courier($courier) === null) {
+            return false;
+        }
+        $api_client = $api_client ?: new Livraria_API_Client();
+        if (self::fetch_and_store($api_client, $courier) === null) {
+            set_transient('livraria_lockers_backoff_' . $courier, 1, self::REFRESH_BACKOFF);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Plugin deactivation: no refresh left pending
+     */
+    public static function clear_scheduled_refreshes() {
+        if (!function_exists('wp_clear_scheduled_hook')) {
+            return;
+        }
+        foreach (array_keys(self::COURIERS) as $courier) {
+            wp_clear_scheduled_hook(self::REFRESH_HOOK, array($courier));
+        }
+        wp_clear_scheduled_hook(self::REFRESH_HOOK);
     }
 
     /**
@@ -534,14 +601,15 @@ class Livraria_Lockers {
     }
 
     /**
-     * Drop every cached list (login, logout, session end, settings save)
+     * Mark every cached list as old (login, logout, session end, settings save)
      */
     public static function forget_cache() {
         delete_transient('livraria_couriers'); // the courier list the Route resolves ids from
         delete_transient('livraria_courier_ids'); // the courier ids every quote request is checked against
         foreach (array_keys(self::COURIERS) as $courier) {
+            // The fresh copy goes; the stored copy keeps answering buyers until
+            // the background refresh replaces it (the list is the same for every account)
             delete_transient(self::CACHE_FRESH_PREFIX . $courier);
-            delete_option(self::CACHE_STALE_PREFIX . $courier);
         }
     }
 

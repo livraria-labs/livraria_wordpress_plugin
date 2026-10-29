@@ -1623,5 +1623,9 @@ class LivrariaPlugin {
     }
 }
 
+// Locker lists refresh in the background (WP-cron), never in a buyer's request
+add_action(Livraria_Lockers::REFRESH_HOOK, array('Livraria_Lockers', 'refresh_courier'), 10, 1);
+register_deactivation_hook(__FILE__, array('Livraria_Lockers', 'clear_scheduled_refreshes'));
+
 // Initialize the plugin
 new LivrariaPlugin();
