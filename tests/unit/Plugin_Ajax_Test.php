@@ -92,7 +92,7 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
             'courier_quote_id' => 'cq-0001',
         );
 
-        foreach (array('ajax_create_expedition', 'ajax_get_quotes_for_order', 'ajax_select_quote', 'ajax_generate_label', 'ajax_auto_create_expedition', 'ajax_clear_auto_create_flag') as $method) {
+        foreach (array('ajax_get_quotes_for_order', 'ajax_select_quote', 'ajax_generate_label', 'ajax_auto_create_expedition', 'ajax_clear_auto_create_flag') as $method) {
             $response = $this->call_ajax($method);
             $this->assertFalse($response->success, $method);
             $this->assertSame(403, $response->status, $method);
@@ -286,6 +286,11 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
         $wp_test_actions = $saved;
 
         $this->assertArrayNotHasKey('wp_ajax_livraria_get_courier_quotes', $registered);
+        // The legacy one-click create path is gone (operator, 29 Oct)
+        $this->assertArrayNotHasKey('wp_ajax_livraria_create_expedition', $registered);
+        $this->assertFalse(method_exists('LivrariaPlugin', 'ajax_create_expedition'));
+        $this->assertFalse(method_exists('Livraria_Order_Handler', 'create_expedition_for_order'));
+        $this->assertStringNotContainsString('livraria_create_expedition', file_get_contents(dirname(dirname(__DIR__)) . '/assets/admin.js'));
         foreach ($registered as $hook => $callbacks) {
             if (strpos($hook, 'wp_ajax_') !== 0) {
                 continue;

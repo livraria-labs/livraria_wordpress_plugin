@@ -732,107 +732,6 @@ class Livraria_Order_Handler {
     }
     
     /**
-     * Create expedition for WooCommerce order
-     * 
-     * @param int $order_id WooCommerce order ID
-     * @param array $custom_data Custom expedition data from admin interface
-     * @return array Result array with success status and message
-     */
-    public function create_expedition_for_order($order_id, $custom_data = array()) {
-        if (!class_exists('WooCommerce') || !function_exists('wc_get_order')) {
-            return array('success' => false, 'message' => 'WooCommerce not found');
-        }
-        
-        $order = wc_get_order($order_id);
-        if (!$order) {
-            return array('success' => false, 'message' => 'Order not found');
-        }
-        
-        // Check if expedition already exists
-        if (self::get_order_meta($order_id, '_courier_expedition_id')) {
-            return array('success' => false, 'message' => 'Expedition already exists for this order');
-        }
-        
-        // Validate order has shipping address
-        if (!$this->validate_order_for_shipping($order)) {
-            $missing_fields_text = implode(', ', $this->last_validation_errors);
-            return array(
-                'success' => false, 
-                'message' => 'Order is missing required information: ' . $missing_fields_text . '. Please complete these fields in the order (shipping address for delivery details, billing for contact info).'
-            );
-        }
-        
-        try {
-            // Step 1: Get available couriers first (with caching)
-            $courier_ids = $this->get_available_courier_ids();
-            if (empty($courier_ids)) {
-                return array('success' => false, 'message' => 'No couriers available');
-            }
-            
-            // Step 2: Create quote request and get courier quotes in one call
-            $quote_request_data = $this->prepare_quote_request_data($order, $custom_data, $courier_ids);
-            
-            // Debug (development mode only): ids and counts, never the order's people or addresses
-            if (Livraria_API_Client::is_dev_mode()) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode, ids and counts only
-                error_log('Livraria Debug: ' . self::describe_quote_request($order_id, $quote_request_data, count($courier_ids)));
-            }
-            
-            $quotes_response = $this->api_client->create_quote_request($quote_request_data);
-            
-            if (!$quotes_response || !isset($quotes_response['courierQuotes'])) {
-                return array('success' => false, 'message' => 'Failed to create quote request or get courier quotes');
-            }
-            
-            // The new API returns courierQuotes directly, we'll need to create a quote request separately
-            // For now, we'll use a placeholder ID
-            $quote_request_id = 'placeholder-' . time();
-            $courier_quotes = $quotes_response['courierQuotes'];
-            
-            if (empty($courier_quotes)) {
-                return array('success' => false, 'message' => 'No courier quotes available');
-            }
-            
-            // Step 2: Select best quote
-            $selected_quote = self::select_best_quote(self::normalize_quotes($courier_quotes));
-            if ($selected_quote === null) {
-                return array('success' => false, 'message' => 'No usable courier quote: ' . self::summarise_unusable_quotes(self::normalize_quotes($courier_quotes)));
-            }
-            
-            // Step 3: Create expedition
-            $expedition_data = array(
-                'quoteRequestId' => $quote_request_id,
-                'courierQuoteId' => $selected_quote['id'],
-                'billingInfo' => $this->prepare_billing_info($order),
-                'notes' => 'WooCommerce Order #' . $order->get_order_number(),
-                'pickupDate' => $this->calculate_pickup_date()
-            );
-            
-            $expedition_response = $this->api_client->create_expedition($expedition_data);
-            
-            if (!$expedition_response || !isset($expedition_response['id'])) {
-                return array('success' => false, 'message' => 'Failed to create expedition');
-            }
-            
-            // Step 5: Save expedition data
-            $this->save_expedition_data($order_id, $expedition_response, $selected_quote);
-            
-            // Step 6: Add order note
-            $this->add_expedition_order_note($order, $expedition_response);
-            
-            return array(
-                'success' => true, 
-                'message' => 'Expedition created successfully',
-                'expedition_id' => $expedition_response['id'],
-                'awb_number' => $expedition_response['awbNumber'] ?? null
-            );
-            
-        } catch (Exception $e) {
-            return array('success' => false, 'message' => 'Exception: ' . $e->getMessage());
-        }
-    }
-    
-    /**
      * One debug line for a quote request: ids and counts only (order id,
      * external reference, packages, couriers asked, COD yes/no), never a
      * name, phone, email or address of the recipient or the sender
@@ -2018,26 +1917,6 @@ class Livraria_Order_Handler {
     }
     
     /**
-     * Calculate pickup date (next business day)
-     * 
-     * @return string ISO 8601 formatted date
-     */
-    private function calculate_pickup_date() {
-        $pickup_days_offset = intval(get_option('courier_pickup_days_offset', 1));
-        $pickup_date = new DateTime();
-        $pickup_date->add(new DateInterval('P' . $pickup_days_offset . 'D'));
-        
-        // Skip weekends if configured
-        if (get_option('courier_skip_weekends', true)) {
-            while ($pickup_date->format('N') >= 6) { // 6 = Saturday, 7 = Sunday
-                $pickup_date->add(new DateInterval('P1D'));
-            }
-        }
-        
-        return $pickup_date->format('Y-m-d\TH:i:s.v\Z');
-    }
-    
-    /**
      * Generate package description from order
      * 
      * @param WC_Order $order
@@ -2162,22 +2041,6 @@ class Livraria_Order_Handler {
             $reasons[] = (isset($quote['courierName']) && $quote['courierName'] !== '' ? $quote['courierName'] : 'A courier') . ': ' . $quote['disabledReason'];
         }
         return implode(' · ', $reasons);
-    }
-    
-    /**
-     * Prepare billing info for expedition
-     * 
-     * @param WC_Order $order
-     * @return array
-     */
-    private function prepare_billing_info($order) {
-        return array(
-            'name' => trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()),
-            'email' => $order->get_billing_email(),
-            'street' => $order->get_billing_address_1(),
-            'city' => $order->get_billing_city(),
-            'county' => $order->get_billing_state()
-        );
     }
     
     /**

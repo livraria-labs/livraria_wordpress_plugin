@@ -38,6 +38,13 @@ weight.
   city) on the order. A "UAT" or "DEV" badge shows when the plugin is not
   connected to production.
 
+### Removed
+- The old one-click "create expedition" request (`livraria_create_expedition`)
+  and its order-screen binding. It could not create a shipment (it sent a
+  placeholder quote request) and fired alongside "Get Quotes". Shipments are
+  created with Get Quotes, a quote, then Generate Label; the cheapest usable
+  quote is preselected.
+
 ### Fixed
 - Every failed call to the Livraria API shows the API's own reason on the
   order screen as "<what failed>: <reason>" (for example "Could not create the

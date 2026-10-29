@@ -541,6 +541,11 @@ jQuery(document).ready(function($) {
                     renderBanner(response.data.banner);
                     activeTab = 'ALL';
                     displayQuotes(response.data.quotes, response.data.tabs);
+                    // Every quote is shown; the cheapest usable one is preselected (the merchant may pick another)
+                    var preselect = autoQuote(response.data);
+                    if (preselect) {
+                        $('.select-quote-btn').filter(function() { return $(this).attr('data-quote-id') === preselect.id; }).first().trigger('click');
+                    }
                     $('#quotes-section').show();
                     $('#quote-selection-result').html('');
                     btn.prop('disabled', false);

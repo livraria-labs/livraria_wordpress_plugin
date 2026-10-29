@@ -147,51 +147,6 @@ jQuery(document).ready(function($) {
         });
     });
     
-    // Create expedition button in order meta box
-    $(document).on('click', '#create-expedition-btn', function() {
-        var btn = $(this);
-        var orderId = btn.data('order-id') || livrariaAdmin.orderId;
-        var nonce = $('#courier_expedition_nonce_field').val();
-        
-        if (!orderId || !nonce) {
-            alert('Missing required data for expedition creation');
-            return;
-        }
-        
-        btn.prop('disabled', true);
-        $('#expedition-loading').show();
-        $('#expedition-result').html('');
-        
-        $.ajax({
-            url: ajaxurl,
-            type: 'POST',
-            data: {
-                action: 'livraria_create_expedition',
-                order_id: orderId,
-                nonce: nonce
-            },
-            success: function(response) {
-                if (response.success) {
-                    $('#expedition-result').html('<div class="notice notice-success"><p>Expedition created successfully!</p></div>');
-                    // Reload the page to show updated expedition info
-                    setTimeout(function() {
-                        location.reload();
-                    }, 2000);
-                } else {
-                    $('#expedition-result').html('<div class="notice notice-error"><p>Error: ' + response.data + '</p></div>');
-                    btn.prop('disabled', false);
-                }
-            },
-            error: function(xhr, status, error) {
-                $('#expedition-result').html('<div class="notice notice-error"><p>AJAX error: ' + error + '</p></div>');
-                btn.prop('disabled', false);
-            },
-            complete: function() {
-                $('#expedition-loading').hide();
-            }
-        });
-    });
-    
     // Update expedition status button
     $(document).on('click', '#update-expedition-status-btn', function() {
         var btn = $(this);

@@ -80,7 +80,6 @@ class LivrariaPlugin {
         add_action('save_post', array($this, 'save_expedition_meta'));
         
         // AJAX handlers
-        add_action('wp_ajax_livraria_create_expedition', array($this, 'ajax_create_expedition'));
         add_action('wp_ajax_livraria_get_quotes_for_order', array($this, 'ajax_get_quotes_for_order'));
         add_action('wp_ajax_livraria_select_quote', array($this, 'ajax_select_quote'));
         add_action('wp_ajax_livraria_generate_label', array($this, 'ajax_generate_label'));
@@ -927,33 +926,6 @@ class LivrariaPlugin {
         // Don't run automatically on hook - let JavaScript handle it
         // This prevents page refresh from interrupting the flow
         return;
-    }
-    
-    public function ajax_create_expedition() {
-        check_ajax_referer('courier_expedition_nonce', 'nonce');
-        $this->require_capability('edit_shop_orders');
-        
-        if (!isset($_POST['order_id'])) {
-            wp_send_json_error('Missing order_id');
-            return;
-        }
-        
-        $order_id = intval(wp_unslash($_POST['order_id']));
-        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Will be sanitized by sanitize_expedition_data() method below
-        $custom_data = isset($_POST['expedition_data']) ? wp_unslash($_POST['expedition_data']) : array();
-        
-        // Sanitize custom data
-        if (!empty($custom_data)) {
-            $custom_data = $this->sanitize_expedition_data($custom_data);
-        }
-        
-        $result = $this->order_handler->create_expedition_for_order($order_id, $custom_data);
-        
-        if ($result['success']) {
-            wp_send_json_success($result['message']);
-        } else {
-            wp_send_json_error($result['message']);
-        }
     }
     
     /**
