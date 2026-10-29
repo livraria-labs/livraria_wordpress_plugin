@@ -69,7 +69,7 @@ class Recipient_Email_Test extends Livraria_Quote_Flow_TestCase {
 
     public function test_other_fields_cannot_be_filled_in() {
         $this->order(707);
-        $this->assertFalse($this->handler()->update_order_contact(707, 'postcode', '400001')['success']);
+        $this->assertFalse($this->handler()->update_order_contact(707, 'company', 'Firma Exemplu')['success']);
     }
 
     public function test_the_ajax_fill_in_needs_edit_shop_orders() {

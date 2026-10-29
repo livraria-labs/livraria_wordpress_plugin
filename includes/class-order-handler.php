@@ -11,6 +11,8 @@ class Livraria_Order_Handler {
     
     private $api_client;
     private $last_validation_errors = array();
+    /** @var array|false|null Sender profile of this run (false = none), see get_sender_profile_from_api() */
+    private $sender_profile_memo = null;
     
     public function __construct($api_client) {
         $this->api_client = $api_client;
@@ -133,7 +135,6 @@ class Livraria_Order_Handler {
             return array('success' => false, 'message' => 'Order not found');
         }
         
-        // Validate order has shipping address
         if (!$this->validate_order_for_shipping($order)) {
             $missing_fields_text = implode(', ', $this->last_validation_errors);
             return array(
@@ -147,6 +148,24 @@ class Livraria_Order_Handler {
         if (isset($recipient['error'])) {
             return array('success' => false, 'message' => $recipient['error'], 'fix' => $recipient['fix'] ?? '');
         }
+
+        // Which ends are lockers: the buyer's pick, the merchant's Route choices
+        $plan = $this->route_plan($order, isset($custom_data['route']) && is_array($custom_data['route']) ? $custom_data['route'] : array());
+        if ($plan['blocked'] !== '') {
+            // An unusable pick is named, never guessed: no quote until the merchant decides
+            return array(
+                'success' => true,
+                'quotes' => array(),
+                'tabs' => self::quote_tabs(array()),
+                'quoteRequestId' => null,
+                'autoQuoteId' => null,
+                'unusableSummary' => $plan['blocked'],
+                'blocked' => $plan['blocked'],
+                'banner' => $plan['banner'],
+                'destinationMode' => $plan['destinationMode'],
+                'message' => $plan['blocked'],
+            );
+        }
         
         try {
             // Get available couriers first (with caching)
@@ -155,68 +174,561 @@ class Livraria_Order_Handler {
                 $why = $this->api_client->last_error_message();
                 return array('success' => false, 'message' => $why !== '' ? 'Could not load the courier list: ' . $why : 'No couriers available');
             }
-            
-            // Create quote request and get courier quotes
-            $quote_request_data = $this->prepare_quote_request_data($order, $custom_data, $courier_ids, $recipient);
-            
-            // Debug (development mode only): ids and counts, never the order's people or addresses
-            if (Livraria_API_Client::is_dev_mode()) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode, ids and counts only
-                error_log('Livraria Debug: ' . self::describe_quote_request($order_id, $quote_request_data, count($courier_ids)));
+
+            $quotes = array();
+            $request_ids = array();
+            $failures = array();
+            foreach ($plan['routes'] as $route => $ends) {
+                $result = $this->quote_route($order, $custom_data, $courier_ids, $recipient, $route, $ends);
+                if (isset($result['failed'])) {
+                    $failures[] = $result['failed'];
+                }
+                if (!empty($result['quoteRequestId'])) {
+                    $request_ids[$route] = $result['quoteRequestId'];
+                }
+                $quotes = array_merge($quotes, $result['quotes']);
             }
-            
-            $quotes_response = $this->api_client->create_quote_request($quote_request_data);
-            
-            if (!$quotes_response) {
-                return array('success' => false, 'message' => $this->api_error_message('Could not get quotes'));
+
+            if (count($failures) === count($plan['routes'])) {
+                return array('success' => false, 'message' => $failures[0]);
             }
-            
-            // Extract quotes and quoteRequestId from response
-            $quote_request_id = null;
-            $courier_quotes = array();
-            
-            if (isset($quotes_response['quoteRequest']['id'])) {
-                $quote_request_id = $quotes_response['quoteRequest']['id'];
-            } elseif (isset($quotes_response['quoteRequestId'])) {
-                $quote_request_id = $quotes_response['quoteRequestId'];
-            }
-            
-            if (isset($quotes_response['courierQuotes'])) {
-                $courier_quotes = $quotes_response['courierQuotes'];
-            } elseif (isset($quotes_response['data'])) {
-                $courier_quotes = is_array($quotes_response['data']) ? $quotes_response['data'] : array($quotes_response['data']);
-            } elseif (isset($quotes_response['quotes'])) {
-                $courier_quotes = is_array($quotes_response['quotes']) ? $quotes_response['quotes'] : array($quotes_response['quotes']);
-            }
-            
-            // Every door-to-door quote, disabled ones included (greyed, last)
-            $filtered_quotes = self::normalize_quotes($courier_quotes);
-            
-            if (empty($filtered_quotes)) {
+
+            $quotes = self::normalize_quotes($quotes);
+            if (empty($quotes)) {
                 return array('success' => false, 'message' => 'No courier quotes available');
             }
-            $best_quote = self::select_best_quote($filtered_quotes);
-            
-            if (!$quote_request_id) {
+            if (empty($request_ids)) {
                 return array('success' => false, 'message' => 'Quote request ID not found in response');
             }
-            
-            // Store quote request ID in order meta temporarily
+
+            // The unattended pick ships where the destination is: to the locker when there is one
+            $to_locker = $plan['destination'] !== null;
+            $best_quote = self::select_best_quote(array_values(array_filter($quotes, function($q) use ($to_locker) {
+                return self::ends_at_locker($q['deliveryType']) === $to_locker;
+            })));
+            $quote_request_id = $best_quote ? $best_quote['quoteRequestId'] : reset($request_ids);
             self::set_order_meta($order_id, array('_courier_quote_request_id' => $quote_request_id));
             
             return array(
                 'success' => true,
-                'quotes' => $filtered_quotes,
+                'quotes' => $quotes,
+                'tabs' => self::quote_tabs($quotes),
                 'quoteRequestId' => $quote_request_id,
+                'quoteRequestIds' => $request_ids,
                 // What an unattended run ships with: the cheapest usable quote, or null
                 'autoQuoteId' => $best_quote ? $best_quote['id'] : null,
-                'unusableSummary' => self::summarise_unusable_quotes($filtered_quotes),
+                'unusableSummary' => self::summarise_unusable_quotes($quotes),
+                'blocked' => '',
+                'banner' => $plan['banner'],
+                'destinationMode' => $plan['destinationMode'],
                 'message' => 'Quotes retrieved successfully'
             );
             
         } catch (Exception $e) {
             return array('success' => false, 'message' => 'Exception: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Quote one route: its own POST /public/awb/quotes (its own quote
+     * request), the lockers of its ends, the recipient address of its
+     * destination. A route that cannot be asked comes back as one disabled
+     * row saying why, without an API call.
+     *
+     * @return array quotes (each tagged with quoteRequestId and deliveryType), quoteRequestId, failed (message) on an API error
+     */
+    private function quote_route($order, $custom_data, $courier_ids, $recipient, $route, $ends) {
+        if ($ends['problem'] !== null) {
+            return array('quotes' => array(self::route_problem_row($route, $ends['problem'])), 'quoteRequestId' => null);
+        }
+
+        $route_recipient = $recipient;
+        if ($ends['destination'] !== null) {
+            $route_recipient['address'] = self::locker_recipient_address($ends['destination']);
+        }
+
+        $data = $this->prepare_quote_request_data($order, $custom_data, $courier_ids, $route_recipient);
+        if ($ends['origin'] !== null) {
+            $data['originLockerId'] = (string) $ends['origin']['id'];
+            $data['originCourierId'] = $ends['origin']['courierId'];
+            unset($data['sender']['clientId']); // the locker is the first mile
+        }
+        if ($ends['destination'] !== null) {
+            $data['destinationLockerId'] = (string) $ends['destination']['id'];
+            $data['destinationCourierId'] = $ends['destination']['courierId'];
+        }
+
+        if (Livraria_API_Client::is_dev_mode()) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode, ids and counts only
+            error_log('Livraria Debug: ' . $route . ' ' . self::describe_quote_request($order->get_id(), $data, count($courier_ids)));
+        }
+
+        $response = $this->api_client->create_quote_request($data);
+        if (!$response) {
+            $message = $this->api_error_message('Could not get quotes');
+            return array(
+                'quotes' => array(self::route_problem_row($route, array('code' => 'ROUTE_FAILED', 'message' => $message))),
+                'quoteRequestId' => null,
+                'failed' => $message,
+            );
+        }
+
+        $quote_request_id = $response['quoteRequest']['id'] ?? ($response['quoteRequestId'] ?? null);
+        $raw = array();
+        if (isset($response['courierQuotes'])) {
+            $raw = $response['courierQuotes'];
+        } elseif (isset($response['data'])) {
+            $raw = is_array($response['data']) ? $response['data'] : array($response['data']);
+        } elseif (isset($response['quotes'])) {
+            $raw = is_array($response['quotes']) ? $response['quotes'] : array($response['quotes']);
+        }
+
+        $quotes = array();
+        foreach ((array) $raw as $quote) {
+            if (!is_array($quote)) {
+                continue;
+            }
+            if (empty($quote['deliveryType'])) {
+                // An older backend: the route this request asked, unless the quote says locker and the route does not
+                if (!empty($quote['isLockerQuote']) && !self::ends_at_locker($route)) {
+                    continue;
+                }
+                $quote['deliveryType'] = $route;
+            } elseif ($quote['deliveryType'] !== $route) {
+                continue; // another route's quote: that route's own request prices it
+            }
+            $quote['quoteRequestId'] = $quote_request_id;
+            $quotes[] = $quote;
+        }
+        return array('quotes' => $quotes, 'quoteRequestId' => $quote_request_id);
+    }
+
+    /**
+     * A disabled row for a route that could not be quoted
+     *
+     * @param string $route
+     * @param array $problem code, message, missingFields?
+     * @return array
+     */
+    private static function route_problem_row($route, $problem) {
+        return array(
+            'id' => '',
+            'courierName' => self::ROUTE_LABELS[$route],
+            'amount' => 0,
+            'currency' => 'RON',
+            'isDisabled' => true,
+            'deliveryType' => $route,
+            'quoteRequestId' => null,
+            'error' => $problem,
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Routes and lockers (order panel)
+    // -------------------------------------------------------------------------
+
+    /** The four routes, in tab order */
+    const ROUTES = array('DOOR_TO_DOOR', 'DOOR_TO_LOCKER', 'LOCKER_TO_DOOR', 'LOCKER_TO_LOCKER');
+
+    const ROUTE_LABELS = array(
+        'DOOR_TO_DOOR' => 'Door to door',
+        'DOOR_TO_LOCKER' => 'To a locker',
+        'LOCKER_TO_DOOR' => 'From a locker',
+        'LOCKER_TO_LOCKER' => 'Locker to locker',
+    );
+
+    /**
+     * A quote's route: deliveryType, else by isLockerQuote (older backend)
+     *
+     * @param array $quote
+     * @return string
+     */
+    public static function quote_delivery_type($quote) {
+        if (!empty($quote['deliveryType'])) {
+            return (string) $quote['deliveryType'];
+        }
+        return !empty($quote['isLockerQuote']) ? 'DOOR_TO_LOCKER' : 'DOOR_TO_DOOR';
+    }
+
+    public static function ends_at_locker($type) {
+        return substr((string) $type, -strlen('_LOCKER')) === '_LOCKER';
+    }
+
+    public static function starts_at_locker($type) {
+        return strpos((string) $type, 'LOCKER_') === 0;
+    }
+
+    /**
+     * The tab row: ALL plus one tab per route with its count, and cheapest on
+     * the one route tab holding the lowest USABLE quote (ties: the first
+     * route in order; ALL never)
+     *
+     * @param array $quotes normalize_quotes() result
+     * @return array[] key, label, count, cheapest
+     */
+    public static function quote_tabs($quotes) {
+        $tabs = array(array('key' => 'ALL', 'label' => 'All', 'count' => count($quotes), 'cheapest' => false));
+        $cheapest_key = null;
+        $cheapest_amount = INF;
+        foreach (self::ROUTES as $route) {
+            $count = 0;
+            foreach ($quotes as $quote) {
+                if ($quote['deliveryType'] !== $route) {
+                    continue;
+                }
+                $count++;
+                if (!empty($quote['usable']) && (float) $quote['amount'] < $cheapest_amount) {
+                    $cheapest_amount = (float) $quote['amount'];
+                    $cheapest_key = $route;
+                }
+            }
+            $tabs[] = array('key' => $route, 'label' => self::ROUTE_LABELS[$route], 'count' => $count, 'cheapest' => false);
+        }
+        foreach ($tabs as $index => $tab) {
+            $tabs[$index]['cheapest'] = $tab['key'] === $cheapest_key;
+        }
+        return $tabs;
+    }
+
+    /**
+     * The buyer's locker pick on the order, or null (none, or home delivery).
+     * A pick that cannot be used comes back with supported false and a
+     * reason, never guessed: unsupported_courier (named as written) or
+     * missing_courier (a locker id with no courier).
+     *
+     * @param WC_Order $order
+     * @return array|null id, name, courier, rawCourier, supported, reason
+     */
+    public static function read_buyer_pick($order) {
+        $id = trim((string) self::get_order_meta($order, Livraria_Lockers::META_ID));
+        if ($id === '') {
+            return null;
+        }
+        if (strtolower(trim((string) self::get_order_meta($order, Livraria_Lockers::META_MODE))) === 'home') {
+            return null;
+        }
+        $raw = trim((string) self::get_order_meta($order, Livraria_Lockers::META_COURIER));
+        $courier = strtolower($raw);
+        $known = isset(Livraria_Lockers::COURIERS[$courier]);
+        $name = trim((string) self::get_order_meta($order, Livraria_Lockers::META_NAME));
+        return array(
+            'id' => $id,
+            'name' => $name !== '' ? $name : 'locker ' . $id,
+            'courier' => $courier,
+            'rawCourier' => $raw,
+            'supported' => $known,
+            'reason' => $known ? null : ($raw !== '' ? 'unsupported_courier' : 'missing_courier'),
+        );
+    }
+
+    /**
+     * What the merchant reads when the pick cannot be used, '' for a usable one
+     *
+     * @param array|null $pick read_buyer_pick()
+     * @return string
+     */
+    public static function unusable_pick_message($pick) {
+        if (!$pick || $pick['supported']) {
+            return '';
+        }
+        if ($pick['reason'] === 'missing_courier') {
+            return 'The order carries a locker pick (' . $pick['name'] . ') with no courier recorded, so it cannot be used. No quote is asked until you decide: ship to the order address instead, or choose a locker.';
+        }
+        return 'The buyer chose locker ' . $pick['name'] . ' of courier \'' . $pick['rawCourier'] . '\', which this plugin cannot ship to (unsupported courier). No quote is asked until you decide: ship to the order address instead, or choose a locker.';
+    }
+
+    /**
+     * The banner over the quotes for the buyer's pick and the destination in use
+     *
+     * @param array|null $pick read_buyer_pick()
+     * @param string $destination_mode 'buyer', 'order' or 'locker'
+     * @param array|null $destination_locker The locker the shipment goes to (merchant's choice)
+     * @return array|null type ('unusable', 'changed', 'buyer'), message
+     */
+    public static function route_banner($pick, $destination_mode, $destination_locker = null) {
+        if (!$pick) {
+            return null;
+        }
+        if (!$pick['supported']) {
+            return $destination_mode === 'buyer' ? array('type' => 'unusable', 'message' => self::unusable_pick_message($pick)) : null;
+        }
+        $buyer = Livraria_Lockers::display($pick);
+        if ($destination_mode === 'buyer') {
+            return array('type' => 'buyer', 'message' => 'The buyer chose delivery to a locker (livrare la locker): ' . $buyer . '. Quotes to it are under "To a locker".');
+        }
+        $to = $destination_mode === 'locker'
+            ? ($destination_locker ? Livraria_Lockers::display($destination_locker) : 'a locker you have not chosen yet')
+            : 'the order\'s shipping address';
+        return array('type' => 'changed', 'message' => 'You changed the destination. The buyer chose ' . $buyer . ' at checkout; this shipment goes to ' . $to . '.');
+    }
+
+    /**
+     * The courier's id from GET /public/couriers: slug (lowercased), then name
+     *
+     * @param array $couriers
+     * @param string $slug
+     * @return string|null
+     */
+    public static function resolve_courier_id($couriers, $slug) {
+        $wanted = strtolower(trim((string) $slug));
+        if ($wanted === '' || !is_array($couriers)) {
+            return null;
+        }
+        foreach (array('slug', 'name') as $field) {
+            foreach ($couriers as $courier) {
+                if (is_array($courier) && isset($courier[$field]) && strtolower((string) $courier[$field]) === $wanted) {
+                    $id = !empty($courier['id']) ? $courier['id'] : (!empty($courier['_id']) ? $courier['_id'] : '');
+                    return $id !== '' ? (string) $id : null;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The recipient address of a LOCKER destination: the locker's own
+     * address. Null when the locker has no city: the caller stops, nothing is guessed.
+     *
+     * @param array $locker Livraria_Lockers record
+     * @return array|null
+     */
+    public static function locker_recipient_address($locker) {
+        if (!is_array($locker) || empty($locker['city'])) {
+            return null;
+        }
+        return array(
+            'country' => 'Romania',
+            'county' => isset($locker['county']) ? (string) $locker['county'] : '',
+            'city' => (string) $locker['city'],
+            'postcode' => isset($locker['postalCode']) ? (string) $locker['postalCode'] : '',
+            'street' => isset($locker['street']) ? (string) $locker['street'] : '',
+            'streetNumber' => isset($locker['streetNo']) ? (string) $locker['streetNo'] : '',
+            'block' => '',
+            'staircase' => '',
+            'floor' => '',
+            'apartment' => '',
+        );
+    }
+
+    /**
+     * The order-address fields a DOOR destination needs and the order lacks,
+     * postcode first (the panel offers "Add <first>")
+     *
+     * @param WC_Order $order
+     * @return string[] of 'postcode', 'street', 'city'
+     */
+    public function missing_door_fields($order) {
+        $missing = array();
+        foreach (array('postcode' => 'postcode', 'street' => 'address_1', 'city' => 'city') as $field => $wc_field) {
+            if (trim((string) $this->get_shipping_or_billing($order, $wc_field)) === '') {
+                $missing[] = $field;
+            }
+        }
+        return $missing;
+    }
+
+    /**
+     * GET /public/couriers, cached for an hour
+     *
+     * @return array
+     */
+    private function couriers() {
+        $cached = get_transient('livraria_couriers');
+        if (is_array($cached)) {
+            return $cached;
+        }
+        $couriers = $this->api_client->get_available_couriers();
+        if (!is_array($couriers)) {
+            return array();
+        }
+        if (isset($couriers['data']) && is_array($couriers['data'])) {
+            $couriers = $couriers['data'];
+        }
+        set_transient('livraria_couriers', $couriers, HOUR_IN_SECONDS);
+        return $couriers;
+    }
+
+    /**
+     * A locker end of the route, from the panel's choice or the buyer's pick:
+     * the cached record (for its address) with the courier id resolved.
+     *
+     * @return array locker (or null) and problem (or null): why it cannot be used
+     */
+    private function route_end($courier, $id, $name) {
+        $courier = strtolower((string) $courier);
+        $stub = array('id' => (string) $id, 'name' => (string) $name, 'courier' => $courier);
+        if (!isset(Livraria_Lockers::COURIERS[$courier]) || (string) $id === '') {
+            return array('locker' => null, 'problem' => array('code' => 'LOCKER_UNKNOWN', 'message' => 'The locker has no courier this plugin can ship with.'));
+        }
+        $courier_id = self::resolve_courier_id($this->couriers(), $courier);
+        if ($courier_id === null) {
+            return array('locker' => $stub, 'problem' => array('code' => 'COURIER_NOT_RESOLVED', 'message' => Livraria_Lockers::COURIERS[$courier]['name'] . ' is not available in Livraria right now, so ' . Livraria_Lockers::display($stub) . ' cannot be used.'));
+        }
+        $locker = Livraria_Lockers::find_locker($this->api_client, $courier, $id);
+        if ($locker === null) {
+            $locker = $stub;
+        } elseif ((string) $name !== '') {
+            $locker['name'] = (string) $name;
+        }
+        $locker['courierId'] = $courier_id;
+        return array('locker' => $locker, 'problem' => null);
+    }
+
+    /**
+     * Which routes to quote and with which lockers.
+     *
+     * $route (from the panel): origin.mode 'pickup' | 'locker' (+ origin.locker
+     * {id, courier, name}); destination.mode 'buyer' | 'order' | 'locker'
+     * (+ destination.locker). Defaults: courier pickup; the buyer's pick when
+     * the order has one, else the order address. Every route the chosen ends
+     * allow is quoted: DOOR_TO_DOOR always, *_TO_LOCKER with a destination
+     * locker, LOCKER_TO_* with an origin locker.
+     *
+     * @param WC_Order $order
+     * @param array $route
+     * @return array routes (route => origin, destination, problem), destination, blocked, banner, destinationMode
+     */
+    public function route_plan($order, $route) {
+        $pick = self::read_buyer_pick($order);
+        $origin_spec = isset($route['origin']) && is_array($route['origin']) ? $route['origin'] : array();
+        $dest_spec = isset($route['destination']) && is_array($route['destination']) ? $route['destination'] : array();
+        $dest_mode = isset($dest_spec['mode']) && in_array($dest_spec['mode'], array('buyer', 'order', 'locker'), true)
+            ? $dest_spec['mode']
+            : ($pick ? 'buyer' : 'order');
+        if ($dest_mode === 'buyer' && !$pick) {
+            $dest_mode = 'order';
+        }
+
+        $plan = array('routes' => array(), 'destination' => null, 'blocked' => '', 'banner' => null, 'destinationMode' => $dest_mode);
+
+        $destination = null;
+        $dest_problem = null;
+        if ($dest_mode === 'buyer') {
+            if (!$pick['supported']) {
+                $plan['blocked'] = self::unusable_pick_message($pick);
+                $plan['banner'] = self::route_banner($pick, 'buyer');
+                return $plan;
+            }
+            $end = $this->route_end($pick['courier'], $pick['id'], $pick['name']);
+            $destination = $end['locker'];
+            $dest_problem = $end['problem'];
+        } elseif ($dest_mode === 'locker') {
+            $locker = isset($dest_spec['locker']) && is_array($dest_spec['locker']) ? $dest_spec['locker'] : array();
+            if (empty($locker['id'])) {
+                $dest_problem = array('code' => 'LOCKER_NOT_CHOSEN', 'message' => 'Choose the destination locker under Route.');
+                $destination = array('id' => '', 'name' => '', 'courier' => '');
+            } else {
+                $end = $this->route_end($locker['courier'] ?? '', $locker['id'], $locker['name'] ?? '');
+                $destination = $end['locker'];
+                $dest_problem = $end['problem'];
+            }
+        }
+        if ($destination !== null && $dest_problem === null && self::locker_recipient_address($destination) === null) {
+            $dest_problem = array('code' => 'LOCKER_ADDRESS_UNKNOWN', 'message' => 'The address of ' . Livraria_Lockers::display($destination) . ' is not known (it has no city in the locker list), so it cannot be quoted. Choose another locker.');
+        }
+        $plan['destination'] = $destination;
+        $plan['banner'] = self::route_banner($pick, $dest_mode, $destination);
+
+        $origin = null;
+        $origin_problem = null;
+        if (isset($origin_spec['mode']) && $origin_spec['mode'] === 'locker') {
+            $locker = isset($origin_spec['locker']) && is_array($origin_spec['locker']) ? $origin_spec['locker'] : array();
+            if (empty($locker['id'])) {
+                $origin = array('id' => '', 'name' => '', 'courier' => '');
+                $origin_problem = array('code' => 'LOCKER_NOT_CHOSEN', 'message' => 'Choose the drop-off locker under Route.');
+            } else {
+                $end = $this->route_end($locker['courier'] ?? '', $locker['id'], $locker['name'] ?? '');
+                $origin = $end['locker'];
+                $origin_problem = $end['problem'];
+            }
+        }
+
+        $missing = $this->missing_door_fields($order);
+        $door_problem = empty($missing) ? null : array(
+            'code' => 'ORDER_ADDRESS_INCOMPLETE',
+            'message' => 'The order address has no ' . implode(', no ', $missing) . ', so door delivery cannot be quoted. Add it to the order.',
+            'missingFields' => $missing,
+        );
+
+        $first = function() {
+            foreach (func_get_args() as $problem) {
+                if ($problem !== null) {
+                    return $problem;
+                }
+            }
+            return null;
+        };
+        $plan['routes']['DOOR_TO_DOOR'] = array('origin' => null, 'destination' => null, 'problem' => $door_problem);
+        if ($destination !== null) {
+            $plan['routes']['DOOR_TO_LOCKER'] = array('origin' => null, 'destination' => $destination, 'problem' => $dest_problem);
+        }
+        if ($origin !== null) {
+            $plan['routes']['LOCKER_TO_DOOR'] = array('origin' => $origin, 'destination' => null, 'problem' => $first($origin_problem, $door_problem));
+        }
+        if ($origin !== null && $destination !== null) {
+            $plan['routes']['LOCKER_TO_LOCKER'] = array('origin' => $origin, 'destination' => $destination, 'problem' => $first($origin_problem, $dest_problem));
+        }
+        return $plan;
+    }
+
+    /**
+     * The first supported locker in a GET /pudo-points/closest answer (mixed
+     * couriers, nearest first; the courier is the entry's provider)
+     *
+     * @param mixed $payload
+     * @return array|null Livraria_Lockers record
+     */
+    public static function nearest_supported_locker($payload) {
+        $raw = (is_array($payload) && isset($payload['data']) && is_array($payload['data'])) ? $payload['data'] : $payload;
+        if (!is_array($raw)) {
+            return null;
+        }
+        foreach ($raw as $entry) {
+            $courier = is_array($entry) && isset($entry['provider']) ? strtolower((string) $entry['provider']) : '';
+            if (!isset(Livraria_Lockers::COURIERS[$courier])) {
+                continue;
+            }
+            $lockers = Livraria_Lockers::trim_lockers(array($entry), $courier);
+            if (!empty($lockers)) {
+                return $lockers[0];
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The nearest supported locker to the sender (origin) or to the order's
+     * address (destination), for the panel's suggestion; null when none
+     *
+     * @param int $order_id
+     * @param string $end 'origin' or 'destination'
+     * @return array|null locker, nearTo
+     */
+    public function suggest_locker($order_id, $end) {
+        $order = function_exists('wc_get_order') ? wc_get_order($order_id) : false;
+        if (!$order) {
+            return null;
+        }
+        if ($end === 'origin') {
+            $profile = $this->get_sender_profile_from_api();
+            $profile = is_array($profile) ? $profile : array();
+            $address = isset($profile['address']) && is_array($profile['address']) ? array_merge($profile, $profile['address']) : $profile;
+            $parts = array($address['street'] ?? '', $address['streetNumber'] ?? '', $address['city'] ?? '', $address['county'] ?? '', $address['postcode'] ?? '');
+        } else {
+            $parts = array(
+                self::fold_street($this->get_shipping_or_billing($order, 'address_1'), $this->get_shipping_or_billing($order, 'address_2')),
+                '',
+                $this->get_shipping_or_billing($order, 'city'),
+                $this->get_shipping_or_billing($order, 'state'),
+                $this->get_shipping_or_billing($order, 'postcode'),
+            );
+        }
+        $line = implode(', ', array_filter(array_map('trim', array_map('strval', $parts)), 'strlen'));
+        if ($line === '') {
+            return null;
+        }
+        $locker = self::nearest_supported_locker($this->api_client->get_closest_pudo_points($line));
+        return $locker ? array('locker' => $locker, 'nearTo' => $line) : null;
     }
     
     /**
@@ -359,13 +871,11 @@ class Livraria_Order_Handler {
      * @return bool
      */
     private function validate_order_for_shipping($order) {
+        // The address is checked per route (missing_door_fields()): a locker
+        // destination does not need the order's street, city or postcode.
         $required_fields = array(
             'shipping_first_name' => 'Shipping First Name',
             'shipping_last_name' => 'Shipping Last Name',
-            'shipping_address_1' => 'Shipping Address',
-            'shipping_city' => 'Shipping City',
-            'shipping_postcode' => 'Shipping Postal Code',
-            'shipping_country' => 'Shipping Country',
             // Keep email and phone from billing since they're not typically in shipping
             // The phone is checked by build_recipient() (shipping, then billing).
             // The email is optional: a courier that needs it answers with a
@@ -857,7 +1367,7 @@ class Livraria_Order_Handler {
      * The value is checked first; a note on the order records the change.
      *
      * @param int $order_id
-     * @param string $field 'email' or 'phone'
+     * @param string $field 'email', 'phone', 'postcode', 'street' or 'city'
      * @param string $value
      * @return array success, message
      */
@@ -893,6 +1403,24 @@ class Livraria_Order_Handler {
             $order->add_order_note('Livraria: recipient phone set on the order (' . $where . ') from the shipping panel.');
             $order->save();
             return array('success' => true, 'message' => 'Phone saved on the order.');
+        }
+
+        // A door destination's missing address field ("Add postcode" first)
+        $address_fields = array('postcode' => 'postcode', 'street' => 'address_1', 'city' => 'city');
+        if (isset($address_fields[$field])) {
+            if ($value === '' || ($field === 'postcode' && !preg_match('/^\d{6}$/', $value))) {
+                return array('success' => false, 'message' => $field === 'postcode' ? 'Enter the 6-digit Romanian postcode.' : 'Enter the ' . $field . '.');
+            }
+            // Where the plugin reads it: the shipping address when the order has one, else billing
+            $has_shipping = trim((string) $order->get_shipping_address_1() . (string) $order->get_shipping_city() . (string) $order->get_shipping_postcode()) !== '';
+            $setter = ($has_shipping ? 'set_shipping_' : 'set_billing_') . $address_fields[$field];
+            if (!method_exists($order, $setter)) {
+                return array('success' => false, 'message' => 'This field cannot be filled in from the shipping panel.');
+            }
+            $order->$setter($value);
+            $order->add_order_note('Livraria: ' . $field . ' set on the order (' . ($has_shipping ? 'shipping' : 'billing') . ' address) from the shipping panel.');
+            $order->save();
+            return array('success' => true, 'message' => ucfirst($field) . ' saved on the order.');
         }
 
         return array('success' => false, 'message' => 'This field cannot be filled in from the shipping panel.');
@@ -1106,7 +1634,15 @@ class Livraria_Order_Handler {
      * @return array|null Sender profile data or null if not available
      */
     private function get_sender_profile_from_api() {
+        // One request per run: every route quoted at once uses the same sender
+        if ($this->sender_profile_memo !== null) {
+            return $this->sender_profile_memo === false ? null : $this->sender_profile_memo;
+        }
         $sender_profile = $this->api_client->get_sender_profile();
+        $this->sender_profile_memo = false;
+        if ($sender_profile !== false && !is_wp_error($sender_profile)) {
+            $this->sender_profile_memo = (is_array($sender_profile) && isset($sender_profile[0])) ? $sender_profile[0] : (is_array($sender_profile) ? $sender_profile : false);
+        }
         
         if ($sender_profile === false || is_wp_error($sender_profile)) {
             return null;
@@ -1536,8 +2072,8 @@ class Livraria_Order_Handler {
      * - disabledReason: the API's error.message (or why it is unusable);
      * - errorCode, missingRecipientFields, needsEmail (RECIPIENT_FIELDS_REQUIRED
      *   naming "email": the panel offers "Add email").
-     * Usable quotes keep the API's order; unusable ones go last. Locker
-     * quotes are left out: this version ships door-to-door only.
+     * Usable quotes keep the API's order; unusable ones go last. Every
+     * route is kept (deliveryType filled in: quote_delivery_type()).
      *
      * @param mixed $quotes courierQuotes from the API
      * @return array
@@ -1549,7 +2085,7 @@ class Livraria_Order_Handler {
         $usable = array();
         $unusable = array();
         foreach ($quotes as $quote) {
-            if (!is_array($quote) || !empty($quote['isLockerQuote'])) {
+            if (!is_array($quote)) {
                 continue;
             }
             $error = (isset($quote['error']) && is_array($quote['error'])) ? $quote['error'] : array();
@@ -1568,6 +2104,11 @@ class Livraria_Order_Handler {
             $quote['errorCode'] = isset($error['code']) ? (string) $error['code'] : '';
             $quote['missingRecipientFields'] = array_values(array_filter($fields, 'is_string'));
             $quote['needsEmail'] = $disabled && $quote['errorCode'] === 'RECIPIENT_FIELDS_REQUIRED' && in_array('email', $quote['missingRecipientFields'], true);
+            // A door route the order's address cannot serve: "Add <first missing field>"
+            $quote['needsField'] = ($disabled && $quote['errorCode'] === 'ORDER_ADDRESS_INCOMPLETE' && !empty($error['missingFields']) && is_array($error['missingFields']))
+                ? (string) reset($error['missingFields'])
+                : '';
+            $quote['deliveryType'] = self::quote_delivery_type($quote);
             $quote['disabledReason'] = '';
             if (!$quote['usable']) {
                 $message = isset($error['message']) && is_string($error['message']) ? trim($error['message']) : '';

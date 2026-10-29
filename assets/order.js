@@ -21,11 +21,20 @@ jQuery(document).ready(function($) {
 
     // "Add email" / "Add phone": a value written onto the WooCommerce order
     // (billing email; the phone field the plugin reads first), then a new quote
+    var FILL_INS = {
+        email: { type: 'email', placeholder: 'name@example.com', label: 'Add email' },
+        phone: { type: 'tel', placeholder: '07XX XXX XXX', label: 'Add phone' },
+        postcode: { type: 'text', placeholder: '400001', label: 'Add postcode' },
+        street: { type: 'text', placeholder: 'Strada, număr, bloc', label: 'Add street' },
+        city: { type: 'text', placeholder: 'Oraș', label: 'Add city' }
+    };
+
     function fillInControl(field) {
-        var isEmail = field === 'email';
-        return '<div class="livraria-fill-in" data-field="' + (isEmail ? 'email' : 'phone') + '" style="margin-top: 6px;">' +
-            '<input type="' + (isEmail ? 'email' : 'tel') + '" class="livraria-fill-in-value" placeholder="' + (isEmail ? 'name@example.com' : '07XX XXX XXX') + '" style="width: 60%;"> ' +
-            '<button type="button" class="button livraria-fill-in-save">' + (isEmail ? 'Add email' : 'Add phone') + '</button>' +
+        var f = FILL_INS[field];
+        if (!f) { return ''; }
+        return '<div class="livraria-fill-in" data-field="' + field + '" style="margin-top: 6px;">' +
+            '<input type="' + f.type + '" class="livraria-fill-in-value" placeholder="' + esc(f.placeholder) + '" style="width: 60%;"> ' +
+            '<button type="button" class="button livraria-fill-in-save">' + f.label + '</button>' +
             '<span class="livraria-fill-in-result" style="display: block; font-size: 12px;"></span>' +
             '</div>';
     }
@@ -33,7 +42,7 @@ jQuery(document).ready(function($) {
     // An error line, with the fill-in the server named (data.fix) under it
     function errorHtml(data, fallback) {
         var html = '<p style="color:red;">Error: ' + esc(errorText(data, fallback)) + '</p>';
-        if (data && (data.fix === 'email' || data.fix === 'phone')) {
+        if (data && FILL_INS[data.fix]) {
             html += fillInControl(data.fix);
         }
         return html;
@@ -507,7 +516,8 @@ jQuery(document).ready(function($) {
             cod_amount:          parseFloat($('input[name="cod_amount"]').val()),
             insurance_amount:    parseFloat($('input[name="insurance_amount"]').val()),
             open_on_delivery:    $('input[name="open_on_delivery"]').is(':checked') ? 1 : 0,
-            saturday_delivery:   $('input[name="saturday_delivery"]').is(':checked') ? 1 : 0
+            saturday_delivery:   $('input[name="saturday_delivery"]').is(':checked') ? 1 : 0,
+            route:               routeForRequest()
         };
 
         $.ajax({
@@ -521,9 +531,16 @@ jQuery(document).ready(function($) {
             },
             success: function(response) {
                 $('#expedition-loading').hide();
-                if (response.success && response.data.quotes && response.data.quotes.length > 0) {
+                if (response.success && response.data.blocked) {
+                    // An unusable buyer pick: named, never guessed; the merchant decides
+                    renderBanner(response.data.banner);
+                    $('#expedition-result').html('<p style="color:#996800;">' + esc(response.data.blocked) + '</p>');
+                    btn.prop('disabled', false);
+                } else if (response.success && response.data.quotes && response.data.quotes.length > 0) {
                     quoteRequestId = response.data.quoteRequestId;
-                    displayQuotes(response.data.quotes);
+                    renderBanner(response.data.banner);
+                    activeTab = 'ALL';
+                    displayQuotes(response.data.quotes, response.data.tabs);
                     $('#quotes-section').show();
                     $('#quote-selection-result').html('');
                     btn.prop('disabled', false);
@@ -546,34 +563,214 @@ jQuery(document).ready(function($) {
         });
     });
 
-    // Usable quotes first with a price and "Select"; disabled ones greyed,
-    // last, with the API's reason, no price and no way to select them
-    function displayQuotes(quotes) {
+    // Tabs ALL / one per route ("· Cheapest" on the route holding the lowest
+    // usable quote, from the server); rows: usable first with a price and
+    // "Select", disabled ones greyed with the backend's reason, never selectable
+    var activeTab = 'ALL';
+    var tabsData = [];
+    var ROUTE_BADGES = { DOOR_TO_DOOR: 'Door to door', DOOR_TO_LOCKER: 'To a locker', LOCKER_TO_DOOR: 'From a locker', LOCKER_TO_LOCKER: 'Locker to locker' };
+
+    function displayQuotes(quotes, tabs) {
         quotesData = quotes;
+        if (tabs) { tabsData = tabs; }
+        var tabsHtml = '<div class="livraria-quote-tabs" role="tablist" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;">';
+        tabsData.forEach(function(tab) {
+            var active = tab.key === activeTab;
+            tabsHtml += '<button type="button" role="tab" class="button livraria-quote-tab' + (active ? ' button-primary' : '') + '" data-tab="' + esc(tab.key) + '" aria-selected="' + (active ? 'true' : 'false') + '"' + (tab.count === 0 ? ' disabled' : '') + '>' +
+                esc(tab.label) + ' (' + esc(tab.count) + ')' + (tab.cheapest ? ' · Cheapest' : '') + '</button>';
+        });
+        tabsHtml += '</div>';
+
         var quotesHtml = '';
         quotes.forEach(function(quote, index) {
+            if (activeTab !== 'ALL' && quote.deliveryType !== activeTab) { return; }
             var name = esc(quote.courierName || ('Courier ' + (index + 1)));
+            var badge = ' <span style="font-size: 11px; color: #646970;">' + esc(ROUTE_BADGES[quote.deliveryType] || quote.deliveryType || '') + '</span>';
             if (!quote.usable) {
                 quotesHtml += '<div class="quote-item quote-disabled" data-quote-id="' + esc(quote.id) + '" aria-disabled="true" style="border: 1px solid #e0e0e0; padding: 10px; margin-bottom: 10px; border-radius: 4px; background-color: #f6f7f7; color: #8c8f94;">';
-                quotesHtml += '<strong style="color: #8c8f94;">' + name + '</strong> <span style="font-size: 11px;">(unavailable)</span>';
+                quotesHtml += '<strong style="color: #8c8f94;">' + name + '</strong>' + badge + ' <span style="font-size: 11px;">(unavailable)</span>';
                 quotesHtml += '<br><span class="quote-disabled-reason">' + esc(quote.disabledReason) + '</span>';
                 if (quote.needsEmail) {
                     quotesHtml += fillInControl('email');
+                } else if (quote.needsField) {
+                    quotesHtml += fillInControl(quote.needsField);
                 }
                 quotesHtml += '</div>';
                 return;
             }
             var isSelected = selectedQuoteId === quote.id;
             quotesHtml += '<div class="quote-item" data-quote-id="' + esc(quote.id) + '" style="border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 4px; ' + (isSelected ? 'border-color: #0073aa; background-color: #f0f8ff;' : '') + '">';
-            quotesHtml += '<strong>' + name + '</strong>';
+            quotesHtml += '<strong>' + name + '</strong>' + badge;
             if (quote.amount !== undefined)       { quotesHtml += '<br>Price: <strong>' + esc(quote.amount) + ' ' + esc(quote.currency || 'RON') + '</strong>'; }
             if (quote.deliveryDays !== undefined) { quotesHtml += '<br>Estimated delivery: ' + esc(quote.deliveryDays) + ' day(s)'; }
             quotesHtml += '<br><button type="button" class="button select-quote-btn" data-quote-id="' + esc(quote.id) + '" ' + (isSelected ? 'disabled style="background-color: #46b450; color: white;"' : '') + '>';
             quotesHtml += isSelected ? '✓ Selected' : 'Select This Quote';
             quotesHtml += '</button></div>';
         });
-        $('#quotes-container').html(quotesHtml);
+        $('#quotes-container').html(tabsHtml + quotesHtml);
     }
+
+    $(document).on('click', '.livraria-quote-tab', function() {
+        activeTab = $(this).attr('data-tab');
+        displayQuotes(quotesData);
+    });
+
+    // ---------------------------------------------------------------------
+    // Route: origin (courier pickup / drop-off at a locker) and destination
+    // (the buyer's pick / the order address / a locker). Any change drops the
+    // quotes: they were priced for the other route.
+    // ---------------------------------------------------------------------
+    var buyerPick = livrariaOrder.buyerPick || null;
+    var route = {
+        origin: { mode: 'pickup', locker: null, suggested: false },
+        destination: { mode: buyerPick ? 'buyer' : 'order', locker: null, suggested: false }
+    };
+    var pickerFor = null;
+    var picker = null;
+
+    function lockerLabel(locker) {
+        if (!locker) { return ''; }
+        var product = locker.courier === 'sameday' ? 'easybox Sameday' : (locker.courier === 'dpd' ? 'locker DPD' : 'locker');
+        return product + ' ' + (locker.name || locker.id);
+    }
+
+    function routeForRequest() {
+        var payload = { origin: { mode: route.origin.mode }, destination: { mode: route.destination.mode } };
+        ['origin', 'destination'].forEach(function(end) {
+            var locker = route[end].locker;
+            if (route[end].mode === 'locker' && locker) {
+                payload[end].locker = { id: locker.id, courier: locker.courier, name: locker.name };
+            }
+        });
+        return payload;
+    }
+
+    function renderBanner(banner) {
+        var $box = $('#livraria-route-banner');
+        if (!$box.length) { return; }
+        $box.empty();
+        if (!banner) { return; }
+        var $notice = $('<div class="notice inline"></div>').addClass(banner.type === 'buyer' ? 'notice-info' : 'notice-warning');
+        $notice.append($('<p></p>').text(banner.message));
+        if (banner.type === 'unusable' || banner.type === 'buyer') {
+            $notice.append($('<p></p>').append($('<button type="button" class="button livraria-ship-to-address"></button>').text('Ship to the order address instead')));
+        }
+        if (banner.type === 'changed' && buyerPick) {
+            $notice.append($('<p></p>').append($('<button type="button" class="button livraria-use-buyer-pick"></button>').text(buyerPick.supported ? "Use the buyer's locker again" : 'Undo')));
+        }
+        $box.append($notice);
+    }
+
+    // The banner for the destination in use, before any quote (the server sends its own with the quotes)
+    function localBanner() {
+        if (!buyerPick) { return null; }
+        if (!buyerPick.supported) {
+            return route.destination.mode === 'buyer'
+                ? { type: 'unusable', message: buyerPick.message }
+                : { type: 'changed', message: 'You chose not to use the buyer\'s pick (' + buyerPick.display + ', which cannot be used).' };
+        }
+        if (route.destination.mode === 'buyer') {
+            return { type: 'buyer', message: 'The buyer chose delivery to a locker (livrare la locker): ' + buyerPick.display + '. Quotes to it are under "To a locker".' };
+        }
+        var to = route.destination.mode === 'locker'
+            ? (route.destination.locker ? lockerLabel(route.destination.locker) : 'a locker you have not chosen yet')
+            : 'the order\'s shipping address';
+        return { type: 'changed', message: 'You changed the destination. The buyer chose ' + buyerPick.display + ' at checkout; this shipment goes to ' + to + '.' };
+    }
+
+    function resetQuotes() {
+        quotesData = [];
+        tabsData = [];
+        selectedQuoteId = null;
+        quoteRequestId = null;
+        $('#quotes-section').hide();
+        $('#quotes-container').html('');
+        $('#generate-label-section').hide();
+        $('#expedition-result').html('');
+    }
+
+    function renderEnd(end) {
+        var $box = $('#livraria-' + end + '-locker');
+        $box.empty();
+        if (route[end].mode !== 'locker') { return; }
+        var locker = route[end].locker;
+        if (locker) {
+            $box.append($('<p></p>').text((route[end].suggested ? 'Suggested (nearest): ' : 'Locker: ') + lockerLabel(locker)));
+            if (end === 'origin' && locker.courier === 'sameday') {
+                $box.append($('<p style="font-size: 11px; color: #646970;"></p>').text('Suggested drop-off point. You may leave the parcel at any easybox.'));
+            }
+        } else if (route[end].status) {
+            $box.append($('<p style="font-size: 12px;"></p>').text(route[end].status));
+        }
+        $box.append($('<button type="button" class="button livraria-choose-locker"></button>').attr('data-end', end).text(locker ? 'Change' : 'Choose locker'));
+    }
+
+    function suggest(end) {
+        route[end].status = 'Looking for the nearest locker…';
+        renderEnd(end);
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: { action: 'livraria_closest_locker', order_id: orderId, end: end, nonce: $('#courier_expedition_nonce_field').val() },
+            success: function(response) {
+                if (route[end].mode !== 'locker' || route[end].locker) { return; }
+                if (response.success && response.data && response.data.locker) {
+                    route[end].locker = response.data.locker;
+                    route[end].suggested = true;
+                    route[end].status = '';
+                } else {
+                    route[end].status = errorText(response.data, 'No locker could be suggested. Choose one from the list.');
+                }
+                renderEnd(end);
+                renderBanner(localBanner());
+            },
+            error: function() {
+                route[end].status = 'No locker could be suggested. Choose one from the list.';
+                renderEnd(end);
+            }
+        });
+    }
+
+    function openPicker(end) {
+        var $root = $('#livraria-route-picker');
+        if (!$root.length || !window.LivrariaLockerPicker) { return; }
+        pickerFor = end;
+        if (picker) { picker.destroy(); }
+        $root.show();
+        picker = window.LivrariaLockerPicker.mount($root[0], $.extend({}, livrariaOrder.lockerPicker, {
+            onChange: function(pick) {
+                if (!pick.id || !pickerFor) { return; }
+                route[pickerFor].locker = { id: pick.id, name: pick.name, courier: pick.courier };
+                route[pickerFor].suggested = false;
+                renderEnd(pickerFor);
+                renderBanner(localBanner());
+                resetQuotes();
+                picker.destroy();
+                $root.hide();
+                pickerFor = null;
+            }
+        }));
+    }
+
+    function setDestination(mode) {
+        route.destination.mode = mode;
+        $('#livraria-destination-mode').val(mode);
+        resetQuotes();
+        renderEnd('destination');
+        renderBanner(localBanner());
+        if (mode === 'locker' && !route.destination.locker) { suggest('destination'); }
+    }
+
+    $('#livraria-origin-mode').on('change', function() {
+        route.origin.mode = $(this).val();
+        resetQuotes();
+        renderEnd('origin');
+        if (route.origin.mode === 'locker' && !route.origin.locker) { suggest('origin'); }
+    });
+    $('#livraria-destination-mode').on('change', function() { setDestination($(this).val()); });
+    $(document).on('click', '.livraria-choose-locker', function() { openPicker($(this).attr('data-end')); });
+    $(document).on('click', '.livraria-ship-to-address', function() { setDestination('order'); });
+    $(document).on('click', '.livraria-use-buyer-pick', function() { setDestination('buyer'); });
 
     $(document).on('click', '.livraria-fill-in-save', function() {
         var btn = $(this);
@@ -677,7 +874,7 @@ jQuery(document).ready(function($) {
             data: {
                 action: 'livraria_select_quote',
                 order_id: orderId,
-                quote_request_id: quoteRequestId,
+                quote_request_id: selectedQuote.quoteRequestId || quoteRequestId,
                 courier_quote_id: quoteId,
                 courier_name: courierName,
                 sender_profile_id: senderProfileId,

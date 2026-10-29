@@ -98,6 +98,7 @@ class LivrariaPlugin {
         add_action('wp_ajax_livraria_reload_sender_profiles', array($this, 'ajax_reload_sender_profiles'));
         // Locker list: the order panel (merchant) and the checkout (buyer, logged in or not)
         add_action('wp_ajax_livraria_lockers', array($this, 'ajax_admin_lockers'));
+        add_action('wp_ajax_livraria_closest_locker', array($this, 'ajax_closest_locker'));
         add_action('wp_ajax_livraria_checkout_lockers', array($this, 'ajax_checkout_lockers'));
         add_action('wp_ajax_nopriv_livraria_checkout_lockers', array($this, 'ajax_checkout_lockers'));
         add_action('updated_option', array($this, 'forget_sender_profiles_on_settings_save'), 10, 1);
@@ -323,6 +324,10 @@ class LivrariaPlugin {
         
         ?>
         <div id="courier-expedition-meta">
+            <?php $environment = self::environment_badge($this->api_client->get_api_base_url()); ?>
+            <?php if ($environment !== ''): ?>
+                <p><span class="livraria-env-badge" style="display:inline-block; padding:1px 8px; border-radius:10px; background:#dba617; color:#1d2327; font-size:11px; font-weight:600;"><?php echo esc_html($environment); ?></span> <span style="font-size:11px; color:#646970;">Livraria <?php echo esc_html($environment === 'UAT' ? 'test (uat)' : 'development'); ?> API: AWBs created here are real on uat couriers.</span></p>
+            <?php endif; ?>
             <?php if ($expedition_id): ?>
                 <p><strong>Expedition ID:</strong> <?php echo esc_html($expedition_id); ?></p>
                 <?php if ($courier_name): ?>
@@ -443,6 +448,8 @@ class LivrariaPlugin {
                     </div>
                 </div>
 
+                <?php $this->render_route_section($order); ?>
+
                 <div class="expedition-section">
                     <button type="button" id="create-expedition-btn" class="button button-primary">Get Quotes</button>
                     <div id="expedition-loading" style="display:none;">Loading quotes...</div>
@@ -467,6 +474,148 @@ class LivrariaPlugin {
         
         <?php // Order meta box JS moved to assets/order.js; data provided via wp_localize_script in enqueue_admin_styles(). ?>
         <?php
+    }
+
+    /**
+     * What order.js needs for the Route control, from the order's data only:
+     * the buyer's pick and the locker picker's settings (English)
+     *
+     * @param int $order_id
+     * @return array buyerPick, lockerPicker
+     */
+    public static function route_script_data($order_id) {
+        $order = $order_id && function_exists('wc_get_order') ? wc_get_order($order_id) : false;
+        $pick = $order ? Livraria_Order_Handler::read_buyer_pick($order) : null;
+        if ($pick) {
+            $pick['display'] = $pick['supported'] ? Livraria_Lockers::display($pick) : $pick['name'];
+            $pick['message'] = Livraria_Order_Handler::unusable_pick_message($pick);
+        }
+        $couriers = array();
+        foreach (Livraria_Lockers::enabled_couriers() as $slug) {
+            $couriers[] = array('slug' => $slug, 'label' => Livraria_Lockers::COURIERS[$slug]['product']);
+        }
+        return array(
+            'buyerPick' => $pick,
+            'lockerPicker' => array(
+                'ajaxUrl' => admin_url('admin-ajax.php'),
+                'action' => 'livraria_lockers',
+                'nonce' => wp_create_nonce('courier_expedition_nonce'),
+                'couriers' => $couriers,
+                'showModeChoice' => false,
+                'strings' => array(
+                    'filterAll' => 'All', 'countyLabel' => 'County', 'countyAll' => 'All counties', 'cityLabel' => 'City', 'cityAll' => 'All cities',
+                    'search' => 'Search by name or address', 'loading' => 'Loading lockers…', 'error' => 'Could not load the lockers.', 'retry' => 'Retry',
+                    'select' => 'Select', 'change' => 'Change', 'clearFilters' => 'Clear filters', 'chosen' => 'Chosen:', 'gate' => 'Choose a locker.',
+                    'showingFirst' => 'Showing the first {cap} of {total} lockers: narrow the search.', 'none' => 'No locker matches.',
+                ),
+            ),
+        );
+    }
+
+    /**
+     * "UAT" / "DEV" when the API is not production, '' for production
+     *
+     * @param string $base_url
+     * @return string
+     */
+    public static function environment_badge($base_url) {
+        $host = strtolower(Livraria_API_Client::url_host($base_url));
+        if ($host === 'www.api.livraria.ro' || $host === 'api.livraria.ro') {
+            return '';
+        }
+        return strpos($host, 'api-uat.livraria.ro') !== false ? 'UAT' : 'DEV';
+    }
+
+    /**
+     * The Route control of the order panel, from the order's data only:
+     * origin (courier pickup, or drop-off at a locker), destination (the
+     * buyer's pick, the order address, or a locker), and the banner about the
+     * buyer's pick. order.js fills the lockers in and keeps it in step.
+     *
+     * @param WC_Order $order
+     */
+    private function render_route_section($order) {
+        $pick = Livraria_Order_Handler::read_buyer_pick($order);
+        $banner = Livraria_Order_Handler::route_banner($pick, $pick ? 'buyer' : 'order');
+        ?>
+        <div class="expedition-section" id="livraria-route">
+            <h4>5. Route</h4>
+            <div id="livraria-route-banner">
+                <?php if ($banner): ?>
+                    <div class="notice notice-<?php echo esc_attr($banner['type'] === 'buyer' ? 'info' : 'warning'); ?> inline"><p><?php echo esc_html($banner['message']); ?></p></div>
+                <?php endif; ?>
+            </div>
+            <p>
+                <label for="livraria-origin-mode"><strong>From</strong></label><br>
+                <select id="livraria-origin-mode">
+                    <option value="pickup">Courier pickup at the sender address</option>
+                    <option value="locker">Drop-off at a locker</option>
+                </select>
+            </p>
+            <div id="livraria-origin-locker"></div>
+            <p>
+                <label for="livraria-destination-mode"><strong>To</strong></label><br>
+                <select id="livraria-destination-mode">
+                    <?php if ($pick): ?>
+                        <option value="buyer" selected="selected"><?php echo esc_html("The buyer's pick: " . ($pick['supported'] ? Livraria_Lockers::display($pick) : $pick['name'] . ' (cannot be used)')); ?></option>
+                    <?php endif; ?>
+                    <option value="order"<?php echo $pick ? '' : ' selected="selected"'; ?>>The order's shipping address</option>
+                    <option value="locker">A locker</option>
+                </select>
+            </p>
+            <div id="livraria-destination-locker"></div>
+            <div id="livraria-route-picker" style="display:none;"></div>
+        </div>
+        <?php
+    }
+
+    /**
+     * AJAX (Route): the nearest supported locker to the sender (origin) or
+     * to the order's address (destination), as a suggestion
+     */
+    public function ajax_closest_locker() {
+        check_ajax_referer('courier_expedition_nonce', 'nonce');
+        $this->require_capability('edit_shop_orders');
+        $order_id = isset($_POST['order_id']) ? absint(wp_unslash($_POST['order_id'])) : 0;
+        $end = isset($_POST['end']) && $_POST['end'] === 'origin' ? 'origin' : 'destination';
+        $suggestion = $this->order_handler->suggest_locker($order_id, $end);
+        if ($suggestion === null) {
+            $why = $this->api_client->last_error_message();
+            wp_send_json_error('No locker could be suggested' . ($why !== '' ? ': ' . $why : ' near this address') . '. Choose one from the list.');
+        }
+        wp_send_json_success($suggestion);
+    }
+
+    /**
+     * The Route the panel posts, cleaned: origin.mode pickup|locker,
+     * destination.mode buyer|order|locker, each locker {id, courier, name}
+     *
+     * @param mixed $route
+     * @return array
+     */
+    public static function sanitize_route($route) {
+        $route = is_array($route) ? $route : array();
+        $locker = function($value) {
+            $value = is_array($value) ? $value : array();
+            return array(
+                'id' => sanitize_text_field((string) ($value['id'] ?? '')),
+                'courier' => (string) Livraria_Lockers::parse_courier($value['courier'] ?? ''),
+                'name' => sanitize_text_field((string) ($value['name'] ?? '')),
+            );
+        };
+        $origin = isset($route['origin']) && is_array($route['origin']) ? $route['origin'] : array();
+        $destination = isset($route['destination']) && is_array($route['destination']) ? $route['destination'] : array();
+        $clean = array(
+            'origin' => array('mode' => (($origin['mode'] ?? '') === 'locker') ? 'locker' : 'pickup'),
+            'destination' => array('mode' => in_array($destination['mode'] ?? '', array('buyer', 'order', 'locker'), true) ? $destination['mode'] : 'buyer'),
+        );
+        if ($clean['origin']['mode'] === 'locker') {
+            $clean['origin']['locker'] = $locker($origin['locker'] ?? array());
+        }
+        if ($clean['destination']['mode'] === 'locker') {
+            $clean['destination']['locker'] = $locker($destination['locker'] ?? array());
+        }
+        return $clean;
     }
 
     /**
@@ -854,7 +1003,7 @@ class LivrariaPlugin {
         $order_id = isset($_POST['order_id']) ? absint(wp_unslash($_POST['order_id'])) : 0;
         $field = isset($_POST['field']) ? sanitize_text_field(wp_unslash($_POST['field'])) : '';
         $value = isset($_POST['value']) ? sanitize_text_field(wp_unslash($_POST['value'])) : '';
-        if (!$order_id || !in_array($field, array('email', 'phone'), true)) {
+        if (!$order_id || !in_array($field, array('email', 'phone', 'postcode', 'street', 'city'), true)) {
             wp_send_json_error('Missing required parameters');
         }
 
@@ -1060,6 +1209,9 @@ class LivrariaPlugin {
         $sanitized['insurance_amount'] = floatval($data['insurance_amount'] ?? 0);
         $sanitized['open_on_delivery'] = filter_var($data['open_on_delivery'] ?? false, FILTER_VALIDATE_BOOLEAN);
         $sanitized['saturday_delivery'] = filter_var($data['saturday_delivery'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        if (isset($data['route'])) {
+            $sanitized['route'] = self::sanitize_route($data['route']);
+        }
         
         return $sanitized;
     }
@@ -1396,13 +1548,15 @@ class LivrariaPlugin {
         // Enqueue order meta box script with dynamic data
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only GET params used only to determine order ID for script localization, no state change
         $order_id = isset($_GET['id']) ? absint($_GET['id']) : (isset($_GET['post']) ? absint($_GET['post']) : 0);
-        wp_enqueue_script('livraria-order-js', plugin_dir_url(__FILE__) . 'assets/order.js', array('jquery'), LIVRARIA_WC_PLUGIN_VERSION, true);
-        wp_localize_script('livraria-order-js', 'livrariaOrder', array(
+        Livraria_Checkout::register_picker_assets();
+        wp_enqueue_style(Livraria_Checkout::SCRIPT);
+        wp_enqueue_script('livraria-order-js', plugin_dir_url(__FILE__) . 'assets/order.js', array('jquery', Livraria_Checkout::SCRIPT), LIVRARIA_WC_PLUGIN_VERSION, true);
+        wp_localize_script('livraria-order-js', 'livrariaOrder', array_merge(array(
             'autoCreateEnabled' => (bool) get_option('courier_auto_create'),
             'expeditionExists'  => (bool) Livraria_Order_Handler::get_order_meta($order_id, '_courier_expedition_id'),
             'orderId'           => $order_id,
             'shouldAutoCreate'  => (bool) get_transient('livraria_auto_create_order_' . $order_id),
-        ));
+        ), self::route_script_data($order_id)));
 
         // Inline CSS for expedition form styling
         $css = "

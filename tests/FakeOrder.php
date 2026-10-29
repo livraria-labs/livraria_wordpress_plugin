@@ -90,6 +90,12 @@ class Livraria_Fake_Order {
     public function set_billing_email($value) { $this->fields['billing_email'] = $value; }
     public function set_billing_phone($value) { $this->fields['billing_phone'] = $value; }
     public function set_shipping_phone($value) { $this->fields['shipping_phone'] = $value; }
+    public function set_shipping_postcode($value) { $this->fields['shipping_postcode'] = $value; }
+    public function set_shipping_address_1($value) { $this->fields['shipping_address_1'] = $value; }
+    public function set_shipping_city($value) { $this->fields['shipping_city'] = $value; }
+    public function set_billing_postcode($value) { $this->fields['billing_postcode'] = $value; }
+    public function set_billing_address_1($value) { $this->fields['billing_address_1'] = $value; }
+    public function set_billing_city($value) { $this->fields['billing_city'] = $value; }
 }
 
 /** A stand-in product: weight and dimensions in the shop's units ('' = not set) */

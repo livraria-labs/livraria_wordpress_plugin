@@ -26,29 +26,31 @@ class Quotes_Test extends Livraria_Quote_Flow_TestCase {
     public function test_disabled_quotes_are_kept_last_with_their_reason() {
         $quotes = Livraria_Order_Handler::normalize_quotes($this->api_quotes());
 
-        $this->assertSame(array('cq-dpd', 'cq-str', 'cq-fan', 'cq-zero', '', 'cq-email'), array_column($quotes, 'id'));
-        $this->assertSame(array(true, true, false, false, false, false), array_column($quotes, 'usable'));
+        $this->assertSame(array('cq-dpd', 'cq-locker', 'cq-str', 'cq-fan', 'cq-zero', '', 'cq-email'), array_column($quotes, 'id'));
+        $this->assertSame(array(true, true, true, false, false, false, false), array_column($quotes, 'usable'));
 
-        $fan = $quotes[2];
+        $fan = $quotes[3];
         $this->assertTrue($fan['isDisabled']);
         $this->assertSame('No pickup point is configured for this courier on your account.', $fan['disabledReason']);
-        $this->assertSame('No price was returned for this courier.', $quotes[3]['disabledReason']);
+        $this->assertSame('No price was returned for this courier.', $quotes[4]['disabledReason']);
         $this->assertSame('', $quotes[0]['disabledReason']);
     }
 
-    public function test_locker_quotes_are_left_out_of_door_to_door() {
-        $ids = array_column(Livraria_Order_Handler::normalize_quotes($this->api_quotes()), 'id');
-        $this->assertNotContains('cq-locker', $ids);
+    public function test_locker_quotes_are_kept_with_their_route() {
+        $quotes = Livraria_Order_Handler::normalize_quotes($this->api_quotes());
+        $locker = $quotes[array_search('cq-locker', array_column($quotes, 'id'), true)];
+        $this->assertSame('DOOR_TO_LOCKER', $locker['deliveryType']);
+        $this->assertSame('DOOR_TO_DOOR', $quotes[0]['deliveryType']);
     }
 
     public function test_recipient_fields_required_marks_the_email_fill_in() {
         $quotes = Livraria_Order_Handler::normalize_quotes($this->api_quotes());
-        $email = $quotes[5];
+        $email = $quotes[6];
 
         $this->assertTrue($email['needsEmail']);
         $this->assertSame('RECIPIENT_FIELDS_REQUIRED', $email['errorCode']);
         $this->assertSame(array('email'), $email['missingRecipientFields']);
-        $this->assertFalse($quotes[2]['needsEmail']);
+        $this->assertFalse($quotes[3]['needsEmail']);
 
         // missingRecipientFields at the quote's top level is read too
         $top = Livraria_Order_Handler::normalize_quotes(array(array('id' => 'cq-8', 'amount' => 0, 'isDisabled' => true,
@@ -59,7 +61,7 @@ class Quotes_Test extends Livraria_Quote_Flow_TestCase {
     public function test_auto_pick_is_the_cheapest_usable_never_a_disabled_zero() {
         $quotes = Livraria_Order_Handler::normalize_quotes($this->api_quotes());
         $best = Livraria_Order_Handler::select_best_quote($quotes);
-        $this->assertSame('cq-str', $best['id']);
+        $this->assertSame('cq-locker', $best['id'], 'the cheapest usable quote of any route');
 
         $none = Livraria_Order_Handler::normalize_quotes(array($this->api_quotes()[0], $this->api_quotes()[6]));
         $this->assertNull(Livraria_Order_Handler::select_best_quote($none));
