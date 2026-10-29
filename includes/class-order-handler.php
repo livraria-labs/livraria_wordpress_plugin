@@ -101,7 +101,7 @@ class Livraria_Order_Handler {
             }
             
             // Store quote request ID in order meta temporarily
-            update_post_meta($order_id, '_courier_quote_request_id', $quote_request_id);
+            self::set_order_meta($order_id, array('_courier_quote_request_id' => $quote_request_id));
             
             return array(
                 'success' => true,
@@ -133,7 +133,7 @@ class Livraria_Order_Handler {
         }
         
         // Check if expedition already exists
-        if (get_post_meta($order_id, '_courier_expedition_id', true)) {
+        if (self::get_order_meta($order_id, '_courier_expedition_id')) {
             return array('success' => false, 'message' => 'Expedition already exists for this order');
         }
         
@@ -1053,8 +1053,10 @@ class Livraria_Order_Handler {
             error_log('Livraria Debug Save: Full selected_quote: ' . print_r($selected_quote, true));
         }
 
-        update_post_meta($order_id, '_courier_expedition_id', $expedition_response['id']);
-        update_post_meta($order_id, '_courier_quote_id', $selected_quote['id']);
+        $values = array(
+            '_courier_expedition_id' => $expedition_response['id'],
+            '_courier_quote_id' => $selected_quote['id'],
+        );
 
         // Get courier name from expedition response (multiple possible locations)
         // Priority: expedition response > selected quote (since expedition response is authoritative)
@@ -1100,19 +1102,20 @@ class Livraria_Order_Handler {
             // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
             error_log('Livraria Debug: Saving courier name: "' . $courier_name . '" for order ' . $order_id);
         }
-        update_post_meta($order_id, '_courier_name', $courier_name);
-        update_post_meta($order_id, '_courier_price', $selected_quote['amount'] ?? 0);
+        $values['_courier_name'] = $courier_name;
+        $values['_courier_price'] = $selected_quote['amount'] ?? 0;
 
         if (isset($expedition_response['awbNumber'])) {
-            update_post_meta($order_id, '_courier_awb_number', $expedition_response['awbNumber']);
+            $values['_courier_awb_number'] = $expedition_response['awbNumber'];
         }
         
         if (isset($expedition_response['status'])) {
-            update_post_meta($order_id, '_courier_status', $expedition_response['status']['name'] ?? 'Created');
+            $values['_courier_status'] = $expedition_response['status']['name'] ?? 'Created';
         }
         
         // Save creation timestamp
-        update_post_meta($order_id, '_courier_expedition_created', current_time('mysql'));
+        $values['_courier_expedition_created'] = current_time('mysql');
+        self::set_order_meta($order_id, $values);
     }
     
     /**
@@ -1145,7 +1148,7 @@ class Livraria_Order_Handler {
      * @return array|null
      */
     public function get_order_expedition_data($order_id) {
-        $expedition_id = get_post_meta($order_id, '_courier_expedition_id', true);
+        $expedition_id = self::get_order_meta($order_id, '_courier_expedition_id');
         
         if (!$expedition_id) {
             return null;
@@ -1153,11 +1156,11 @@ class Livraria_Order_Handler {
         
         return array(
             'expedition_id' => $expedition_id,
-            'awb_number' => get_post_meta($order_id, '_courier_awb_number', true),
-            'courier_name' => get_post_meta($order_id, '_courier_name', true),
-            'price' => get_post_meta($order_id, '_courier_price', true),
-            'status' => get_post_meta($order_id, '_courier_status', true),
-            'created' => get_post_meta($order_id, '_courier_expedition_created', true)
+            'awb_number' => self::get_order_meta($order_id, '_courier_awb_number'),
+            'courier_name' => self::get_order_meta($order_id, '_courier_name'),
+            'price' => self::get_order_meta($order_id, '_courier_price'),
+            'status' => self::get_order_meta($order_id, '_courier_status'),
+            'created' => self::get_order_meta($order_id, '_courier_expedition_created')
         );
     }
     
@@ -1170,7 +1173,7 @@ class Livraria_Order_Handler {
      */
     public function update_expedition_status($order_id, $awb_number = null) {
         if (!$awb_number) {
-            $awb_number = get_post_meta($order_id, '_courier_awb_number', true);
+            $awb_number = self::get_order_meta($order_id, '_courier_awb_number');
         }
         
         if (!$awb_number) {
@@ -1185,7 +1188,7 @@ class Livraria_Order_Handler {
         
         // Update stored status
         if (isset($expedition_data['status']['name'])) {
-            update_post_meta($order_id, '_courier_status', $expedition_data['status']['name']);
+            self::set_order_meta($order_id, array('_courier_status' => $expedition_data['status']['name']));
         }
         
         return array(
@@ -1195,6 +1198,91 @@ class Livraria_Order_Handler {
         );
     }
     
+    // -------------------------------------------------------------------------
+    // Order meta, HPOS-safe
+    // -------------------------------------------------------------------------
+
+    /**
+     * The order behind $order_or_id (a WC_Order-like object is used as is)
+     *
+     * @param mixed $order_or_id
+     * @return object|null
+     */
+    private static function order_object($order_or_id) {
+        if (is_object($order_or_id)) {
+            return $order_or_id;
+        }
+        if (!function_exists('wc_get_order')) {
+            return null;
+        }
+        $order = wc_get_order((int) $order_or_id);
+        return $order ? $order : null;
+    }
+
+    /**
+     * One order meta value through the order object ($order->get_meta()), so
+     * it works with High-Performance Order Storage. A value 1.1.0 or earlier
+     * wrote with update_post_meta() on an HPOS store lives in wp_postmeta: when
+     * the order has nothing under $key, that legacy row is read (never written).
+     *
+     * @param mixed $order_or_id WC_Order or order id
+     * @param string $key Meta key
+     * @return mixed '' when unset
+     */
+    public static function get_order_meta($order_or_id, $key) {
+        $order = self::order_object($order_or_id);
+        $value = ($order && method_exists($order, 'get_meta')) ? $order->get_meta($key, true) : '';
+        if (($value === '' || $value === null || $value === false) && function_exists('get_post_meta')) {
+            $id = $order ? (int) $order->get_id() : (int) $order_or_id;
+            if ($id > 0) {
+                $value = get_post_meta($id, $key, true);
+            }
+        }
+        return ($value === null || $value === false) ? '' : $value;
+    }
+
+    /**
+     * Write order meta through the order object and save once
+     *
+     * @param mixed $order_or_id WC_Order or order id
+     * @param array $values key => value
+     * @return bool False when the order cannot be loaded
+     */
+    public static function set_order_meta($order_or_id, array $values) {
+        $order = self::order_object($order_or_id);
+        if (!$order) {
+            return false;
+        }
+        foreach ($values as $key => $value) {
+            $order->update_meta_data($key, $value);
+        }
+        $order->save();
+        return true;
+    }
+
+    /**
+     * Delete order meta through the order object and save once; the legacy
+     * wp_postmeta copy (see get_order_meta()) goes too
+     *
+     * @param mixed $order_or_id WC_Order or order id
+     * @param string[] $keys
+     */
+    public static function delete_order_meta($order_or_id, array $keys) {
+        $order = self::order_object($order_or_id);
+        $id = $order ? (int) $order->get_id() : (int) $order_or_id;
+        if ($order) {
+            foreach ($keys as $key) {
+                $order->delete_meta_data($key);
+            }
+            $order->save();
+        }
+        if ($id > 0 && function_exists('delete_post_meta')) {
+            foreach ($keys as $key) {
+                delete_post_meta($id, $key);
+            }
+        }
+    }
+
     /**
      * Get shipping address field, fallback to billing if shipping is empty
      * 

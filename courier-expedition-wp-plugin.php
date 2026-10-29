@@ -24,6 +24,18 @@ require_once plugin_dir_path(__FILE__) . 'includes/class-api-client.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-order-handler.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-admin-page.php';
 
+/**
+ * Tell WooCommerce the plugin works with High-Performance Order Storage:
+ * every order meta read and write goes through the order object
+ * (Livraria_Order_Handler::get_order_meta() / set_order_meta()).
+ */
+function livraria_declare_hpos_compatibility() {
+    if (class_exists('\Automattic\WooCommerce\Utilities\FeaturesUtil')) {
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility('custom_order_tables', __FILE__, true);
+    }
+}
+add_action('before_woocommerce_init', 'livraria_declare_hpos_compatibility');
+
 class LivrariaPlugin {
     
     private $api_base_url;
@@ -268,9 +280,9 @@ class LivrariaPlugin {
         
         wp_nonce_field('courier_expedition_nonce', 'courier_expedition_nonce_field');
         
-        $expedition_id = get_post_meta($order_id, '_courier_expedition_id', true);
-        $awb_number = get_post_meta($order_id, '_courier_awb_number', true);
-        $courier_name = get_post_meta($order_id, '_courier_name', true);
+        $expedition_id = Livraria_Order_Handler::get_order_meta($order_id, '_courier_expedition_id');
+        $awb_number = Livraria_Order_Handler::get_order_meta($order_id, '_courier_awb_number');
+        $courier_name = Livraria_Order_Handler::get_order_meta($order_id, '_courier_name');
 
         // Debug: Log what we're getting from meta (only in development mode)
         if ($expedition_id && self::is_development_mode()) {
@@ -289,7 +301,7 @@ class LivrariaPlugin {
                 $payment_method_title = $order->get_payment_method_title();
                 
                 // Also check order meta directly as fallback
-                $payment_method_meta = get_post_meta($order_id, '_payment_method', true);
+                $payment_method_meta = $order->get_payment_method();
                 
                 // Debug: Log payment method info (only in development mode)
                 if (self::is_development_mode()) {
@@ -452,7 +464,7 @@ class LivrariaPlugin {
                                 }
                                 
                                 // Use default profile if no order-specific profile is set
-                                $selected_id = get_post_meta($order_id, '_livraria_sender_profile_id', true);
+                                $selected_id = Livraria_Order_Handler::get_order_meta($order_id, '_livraria_sender_profile_id');
                                 if (empty($selected_id)) {
                                     $selected_id = $default_profile_id;
                                 }
@@ -598,7 +610,7 @@ class LivrariaPlugin {
         }
         
         // Check if expedition already exists
-        if (get_post_meta($order_id, '_courier_expedition_id', true)) {
+        if (Livraria_Order_Handler::get_order_meta($order_id, '_courier_expedition_id')) {
             if (self::is_development_mode()) {
                 // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
                 error_log('Livraria Debug: Expedition already exists for order ID: ' . $order_id);
@@ -643,7 +655,7 @@ class LivrariaPlugin {
         }
         
         // Store selected quote in order meta
-        update_post_meta($order_id, '_courier_selected_quote_id', $selected_quote_id);
+        Livraria_Order_Handler::set_order_meta($order_id, array('_courier_selected_quote_id' => $selected_quote_id));
         
         // Step 3: Select the quote via API
         $select_result = $this->api_client->select_courier_quote($quote_request_id, $selected_quote_id);
@@ -702,9 +714,7 @@ class LivrariaPlugin {
         }
         
         // Clean up temporary meta
-        delete_post_meta($order_id, '_courier_quote_request_id');
-        delete_post_meta($order_id, '_courier_selected_quote_id');
-        delete_post_meta($order_id, '_courier_selected_quote_name');
+        Livraria_Order_Handler::delete_order_meta($order_id, array('_courier_quote_request_id', '_courier_selected_quote_id', '_courier_selected_quote_name'));
 
         if (self::is_development_mode()) {
             // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
@@ -826,18 +836,20 @@ class LivrariaPlugin {
 
         if ($result !== false) {
             // Store selected quote info in order meta
-            update_post_meta($order_id, '_courier_quote_request_id', $quote_request_id);
-            update_post_meta($order_id, '_courier_selected_quote_id', $courier_quote_id);
+            Livraria_Order_Handler::set_order_meta($order_id, array(
+                '_courier_quote_request_id' => $quote_request_id,
+                '_courier_selected_quote_id' => $courier_quote_id,
+            ));
 
             // Store courier name for later use
             if (!empty($courier_name)) {
-                update_post_meta($order_id, '_courier_selected_quote_name', $courier_name);
+                Livraria_Order_Handler::set_order_meta($order_id, array('_courier_selected_quote_name' => $courier_name));
             }
             
             // If sender profile ID is provided, attach billing info from sender profile
             if (!empty($sender_profile_id)) {
                 // Save sender profile ID for this order
-                update_post_meta($order_id, '_livraria_sender_profile_id', $sender_profile_id);
+                Livraria_Order_Handler::set_order_meta($order_id, array('_livraria_sender_profile_id' => $sender_profile_id));
                 
                 // Attach billing info from sender profile
                 $billing_result = $this->api_client->attach_billing_info_from_sender_profile($quote_request_id, $sender_profile_id);
@@ -870,8 +882,8 @@ class LivrariaPlugin {
         }
         
         $order_id = intval(wp_unslash($_POST['order_id']));
-        $quote_request_id = get_post_meta($order_id, '_courier_quote_request_id', true);
-        $courier_quote_id = get_post_meta($order_id, '_courier_selected_quote_id', true);
+        $quote_request_id = Livraria_Order_Handler::get_order_meta($order_id, '_courier_quote_request_id');
+        $courier_quote_id = Livraria_Order_Handler::get_order_meta($order_id, '_courier_selected_quote_id');
         
         if (!$quote_request_id || !$courier_quote_id) {
             wp_send_json_error('Quote request ID or selected quote ID not found');
@@ -906,7 +918,7 @@ class LivrariaPlugin {
             $order = wc_get_order($order_id);
             if ($order) {
                 // Retrieve stored courier name
-                $courier_name = get_post_meta($order_id, '_courier_selected_quote_name', true);
+                $courier_name = Livraria_Order_Handler::get_order_meta($order_id, '_courier_selected_quote_name');
 
                 // Pass courier name along with quote ID to save_expedition_data
                 $selected_quote = array('id' => $courier_quote_id);
@@ -919,9 +931,7 @@ class LivrariaPlugin {
             }
 
             // Clean up temporary meta
-            delete_post_meta($order_id, '_courier_quote_request_id');
-            delete_post_meta($order_id, '_courier_selected_quote_id');
-            delete_post_meta($order_id, '_courier_selected_quote_name');
+            Livraria_Order_Handler::delete_order_meta($order_id, array('_courier_quote_request_id', '_courier_selected_quote_id', '_courier_selected_quote_name'));
             
             wp_send_json_success(array(
                 'message' => 'Expedition created successfully',
@@ -1186,9 +1196,7 @@ class LivrariaPlugin {
             '_courier_selected_quote_name',
         );
 
-        foreach ($meta_keys as $key) {
-            delete_post_meta($order_id, $key);
-        }
+        Livraria_Order_Handler::delete_order_meta($order_id, $meta_keys);
 
         wp_send_json_success();
     }
@@ -1218,7 +1226,7 @@ class LivrariaPlugin {
         }
 
         // Verify AWB belongs to this order (security check)
-        $stored_awb = get_post_meta($order_id, '_courier_awb_number', true);
+        $stored_awb = Livraria_Order_Handler::get_order_meta($order_id, '_courier_awb_number');
         if ($stored_awb !== $awb_number) {
             wp_die('AWB number mismatch', 'Forbidden', array('response' => 403));
         }
@@ -1297,7 +1305,7 @@ class LivrariaPlugin {
         wp_enqueue_script('livraria-order-js', plugin_dir_url(__FILE__) . 'assets/order.js', array('jquery'), LIVRARIA_WC_PLUGIN_VERSION, true);
         wp_localize_script('livraria-order-js', 'livrariaOrder', array(
             'autoCreateEnabled' => (bool) get_option('courier_auto_create'),
-            'expeditionExists'  => (bool) get_post_meta($order_id, '_courier_expedition_id', true),
+            'expeditionExists'  => (bool) Livraria_Order_Handler::get_order_meta($order_id, '_courier_expedition_id'),
             'orderId'           => $order_id,
             'shouldAutoCreate'  => (bool) get_transient('livraria_auto_create_order_' . $order_id),
         ));

@@ -252,7 +252,116 @@ if (!function_exists('wc_get_order')) {
 
 if (!function_exists('add_action')) {
     function add_action($tag, $callback, $priority = 10, $accepted_args = 1) {
+        global $wp_test_actions;
+        $wp_test_actions[$tag][] = $callback;
         return true;
+    }
+}
+
+// Legacy post meta (wp_postmeta): what 1.1.0 and earlier wrote. The plugin
+// now only reads it (fallback) and deletes it; writing it is a test failure.
+if (!function_exists('get_post_meta')) {
+    function get_post_meta($post_id, $key = '', $single = false) {
+        global $wp_test_post_meta;
+        return isset($wp_test_post_meta[$post_id][$key]) ? $wp_test_post_meta[$post_id][$key] : '';
+    }
+}
+
+if (!function_exists('delete_post_meta')) {
+    function delete_post_meta($post_id, $key) {
+        global $wp_test_post_meta;
+        unset($wp_test_post_meta[$post_id][$key]);
+        return true;
+    }
+}
+
+if (!function_exists('update_post_meta')) {
+    function update_post_meta($post_id, $key, $value) {
+        throw new LogicException('update_post_meta(' . $key . ') is not HPOS-safe; write through the order object');
+    }
+}
+
+if (!function_exists('get_transient')) {
+    function get_transient($key) {
+        global $wp_test_transients;
+        return isset($wp_test_transients[$key]) ? $wp_test_transients[$key] : false;
+    }
+}
+
+if (!function_exists('set_transient')) {
+    function set_transient($key, $value, $expiration = 0) {
+        global $wp_test_transients;
+        $wp_test_transients[$key] = $value;
+        return true;
+    }
+}
+
+if (!function_exists('delete_transient')) {
+    function delete_transient($key) {
+        global $wp_test_transients;
+        unset($wp_test_transients[$key]);
+        return true;
+    }
+}
+
+if (!function_exists('absint')) {
+    function absint($value) {
+        return abs((int) $value);
+    }
+}
+
+if (!function_exists('current_time')) {
+    function current_time($type) {
+        return $type === 'mysql' ? gmdate('Y-m-d H:i:s') : time();
+    }
+}
+
+if (!function_exists('is_email')) {
+    function is_email($email) {
+        return filter_var($email, FILTER_VALIDATE_EMAIL) !== false ? $email : false;
+    }
+}
+
+if (!function_exists('sanitize_email')) {
+    function sanitize_email($email) {
+        return trim((string) $email);
+    }
+}
+
+if (!defined('HOUR_IN_SECONDS')) {
+    define('HOUR_IN_SECONDS', 3600);
+}
+if (!defined('DAY_IN_SECONDS')) {
+    define('DAY_IN_SECONDS', 86400);
+}
+if (!defined('MINUTE_IN_SECONDS')) {
+    define('MINUTE_IN_SECONDS', 60);
+}
+
+// WooCommerce: the class the handler checks for, and WC()->countries with
+// the Romanian states a test sets in $wp_test_ro_states
+if (!class_exists('WooCommerce')) {
+    class WooCommerce {
+        public $countries;
+        public function __construct() {
+            $this->countries = new Livraria_Test_Countries();
+        }
+    }
+    class Livraria_Test_Countries {
+        public function get_states($country) {
+            global $wp_test_ro_states;
+            return $country === 'RO' && is_array($wp_test_ro_states) ? $wp_test_ro_states : array();
+        }
+    }
+}
+
+if (!function_exists('WC')) {
+    function WC() {
+        static $wc = null;
+        if ($wc === null) {
+            $wc = new WooCommerce();
+        }
+        return $wc;
     }
 }
 
@@ -343,6 +452,8 @@ if (!function_exists('wp_salt')) {
         return 'unit-test-salt-' . $scheme . '-not-a-real-key';
     }
 }
+
+require_once __DIR__ . '/FakeOrder.php';
 
 // Load the main plugin file (it defines LIVRARIA_WC_PLUGIN_VERSION and
 // requires the classes under includes/), then the classes directly.
