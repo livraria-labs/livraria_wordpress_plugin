@@ -436,6 +436,21 @@ class Livraria_Order_Handler {
         return array('phone' => '', 'source' => '');
     }
 
+    /** The API's limit on address.street */
+    const MAX_STREET_LENGTH = 100;
+
+    /**
+     * Address line 1 and line 2 as one street line, at most 100 characters
+     *
+     * @param string $line1
+     * @param string $line2
+     * @return string
+     */
+    public static function fold_street($line1, $line2) {
+        $street = trim(preg_replace('/\s+/u', ' ', trim((string) $line1) . ' ' . trim((string) $line2)));
+        return function_exists('mb_substr') ? mb_substr($street, 0, self::MAX_STREET_LENGTH, 'UTF-8') : substr($street, 0, self::MAX_STREET_LENGTH);
+    }
+
     /**
      * The recipient of the quote request, or array('error' => message,
      * 'fix' => order field the merchant can fill in) when the order cannot be
@@ -503,8 +518,10 @@ class Livraria_Order_Handler {
                 'county' => $recipient_county,
                 'city' => $recipient_city,
                 'postcode' => $this->get_shipping_or_billing($order, 'postcode'),
-                'street' => $this->get_shipping_or_billing($order, 'address_1'),
-                'streetNumber' => $this->get_shipping_or_billing($order, 'address_2'),
+                // Both address lines in street: couriers print streetNumber as
+                // the house number, and line 2 is "Bl. D6, sc. A, ap. 5"
+                'street' => self::fold_street($this->get_shipping_or_billing($order, 'address_1'), $this->get_shipping_or_billing($order, 'address_2')),
+                'streetNumber' => '',
                 'block' => '',
                 'staircase' => '',
                 'floor' => '',
