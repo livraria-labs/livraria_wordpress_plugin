@@ -62,15 +62,15 @@ livraria_wordpress_plugin/
 ### 3. How Data Flows
 
 ```
-User completes order
+Order status changes to completed (auto-create on)
     ↓
-WooCommerce triggers: woocommerce_order_status_completed
+LivrariaPlugin::handle_order_status_change() sets a 60 s flag
     ↓
-LivrariaPlugin::auto_create_expedition()
+assets/order.js on the open order page: livraria_get_quotes_for_order (auto, claims the order)
     ↓
-Livraria_Order_Handler::create_expedition_for_order()
+Livraria_Order_Handler::get_quotes_for_order() → one quote request per route
     ↓
-Livraria_API_Client makes API calls
+livraria_select_quote → livraria_generate_label (POST /expedition)
     ↓
 Expedition created, data saved to order
 ```
