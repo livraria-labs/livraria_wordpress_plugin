@@ -350,6 +350,17 @@ if (!function_exists('wp_localize_script')) {
         return true;
     }
 }
+if (!function_exists('add_meta_box')) {
+    function add_meta_box($id, $title, $callback, $screen = null, $context = 'advanced', $priority = 'default') {
+        global $wp_test_meta_boxes;
+        $wp_test_meta_boxes[] = compact('id', 'screen', 'context', 'priority');
+    }
+}
+if (!function_exists('wc_get_page_screen_id')) {
+    function wc_get_page_screen_id($for) {
+        return 'woocommerce_page_wc-orders';
+    }
+}
 if (!function_exists('get_current_screen')) {
     function get_current_screen() {
         global $wp_test_screen;

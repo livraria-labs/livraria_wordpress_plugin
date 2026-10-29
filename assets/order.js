@@ -433,16 +433,14 @@ jQuery(document).ready(function($) {
     // Add package
     $('#add-package-btn').click(function() {
         packageCount++;
-        var packageHtml = '<div class="package-item" data-package="' + packageCount + '">' +
-            '<h5>Package ' + packageCount + '</h5>' +
-            '<div class="package-dimensions">' +
-                '<label>Weight (kg): <input type="number" name="package_weight[]" step="0.01" min="1" value="1"></label>' +
-                '<label>Width (cm): <input type="number" name="package_width[]" step="1" min="10" value="10"></label>' +
-                '<label>Height (cm): <input type="number" name="package_height[]" step="1" min="10" value="10"></label>' +
-                '<label>Length (cm): <input type="number" name="package_length[]" step="1" min="10" value="10"></label>' +
-                '<button type="button" class="button remove-package">Remove</button>' +
-            '</div>' +
-        '</div>';
+        var packageHtml = '<tr class="package-item" data-package="' + packageCount + '">' +
+            '<td class="livraria-package-label">Package ' + packageCount + '</td>' +
+            '<td><input type="number" name="package_weight[]" step="0.01" min="1" value="1" aria-label="Weight (kg)"></td>' +
+            '<td><input type="number" name="package_length[]" step="1" min="10" value="10" aria-label="Length (cm)"></td>' +
+            '<td><input type="number" name="package_width[]" step="1" min="10" value="10" aria-label="Width (cm)"></td>' +
+            '<td><input type="number" name="package_height[]" step="1" min="10" value="10" aria-label="Height (cm)"></td>' +
+            '<td><button type="button" class="button remove-package">Remove</button></td>' +
+        '</tr>';
         $('#packages-container').append(packageHtml);
         updateRemoveButtons();
     });
@@ -460,7 +458,7 @@ jQuery(document).ready(function($) {
 
     function updatePackageNumbers() {
         $('.package-item').each(function(index) {
-            $(this).find('h5').text('Package ' + (index + 1));
+            $(this).find('.livraria-package-label').text('Package ' + (index + 1));
         });
     }
 
@@ -586,32 +584,33 @@ jQuery(document).ready(function($) {
         });
         tabsHtml += '</div>';
 
-        var quotesHtml = '';
+        var rows = '';
         quotes.forEach(function(quote, index) {
             if (activeTab !== 'ALL' && quote.deliveryType !== activeTab) { return; }
             var name = esc(quote.courierName || ('Courier ' + (index + 1)));
-            var badge = ' <span style="font-size: 11px; color: #646970;">' + esc(ROUTE_BADGES[quote.deliveryType] || quote.deliveryType || '') + '</span>';
+            var badge = esc(ROUTE_BADGES[quote.deliveryType] || quote.deliveryType || '');
             if (!quote.usable) {
-                quotesHtml += '<div class="quote-item quote-disabled" data-quote-id="' + esc(quote.id) + '" aria-disabled="true" style="border: 1px solid #e0e0e0; padding: 10px; margin-bottom: 10px; border-radius: 4px; background-color: #f6f7f7; color: #8c8f94;">';
-                quotesHtml += '<strong style="color: #8c8f94;">' + name + '</strong>' + badge + ' <span style="font-size: 11px;">(unavailable)</span>';
-                quotesHtml += '<br><span class="quote-disabled-reason">' + esc(quote.disabledReason) + '</span>';
-                if (quote.needsEmail) {
-                    quotesHtml += fillInControl('email');
-                } else if (quote.needsField) {
-                    quotesHtml += fillInControl(quote.needsField);
-                }
-                quotesHtml += '</div>';
+                var fill = quote.needsEmail ? fillInControl('email') : (quote.needsField ? fillInControl(quote.needsField) : '');
+                rows += '<tr class="quote-item quote-disabled" data-quote-id="' + esc(quote.id) + '" aria-disabled="true">' +
+                    '<td><strong>' + name + '</strong> <span style="font-size: 11px;">(unavailable)</span></td>' +
+                    '<td>' + badge + '</td>' +
+                    '<td>—</td>' +
+                    '<td><span class="quote-disabled-reason">' + esc(quote.disabledReason) + '</span>' + fill + '</td>' +
+                    '</tr>';
                 return;
             }
             var isSelected = selectedQuoteId === quote.id;
-            quotesHtml += '<div class="quote-item" data-quote-id="' + esc(quote.id) + '" style="border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 4px; ' + (isSelected ? 'border-color: #0073aa; background-color: #f0f8ff;' : '') + '">';
-            quotesHtml += '<strong>' + name + '</strong>' + badge;
-            if (quote.amount !== undefined)       { quotesHtml += '<br>Price: <strong>' + esc(quote.amount) + ' ' + esc(quote.currency || 'RON') + '</strong>'; }
-            if (quote.deliveryDays !== undefined) { quotesHtml += '<br>Estimated delivery: ' + esc(quote.deliveryDays) + ' day(s)'; }
-            quotesHtml += '<br><button type="button" class="button select-quote-btn" data-quote-id="' + esc(quote.id) + '" ' + (isSelected ? 'disabled style="background-color: #46b450; color: white;"' : '') + '>';
-            quotesHtml += isSelected ? '✓ Selected' : 'Select This Quote';
-            quotesHtml += '</button></div>';
+            var price = quote.amount !== undefined ? '<strong>' + esc(quote.amount) + ' ' + esc(quote.currency || 'RON') + '</strong>' : '';
+            if (quote.deliveryDays !== undefined) { price += '<br><span style="font-size: 11px;">' + esc(quote.deliveryDays) + ' day(s)</span>'; }
+            rows += '<tr class="quote-item" data-quote-id="' + esc(quote.id) + '"' + (isSelected ? ' style="background-color: #f0f8ff;"' : '') + '>' +
+                '<td><strong>' + name + '</strong></td>' +
+                '<td>' + badge + '</td>' +
+                '<td>' + price + '</td>' +
+                '<td><button type="button" class="button select-quote-btn" data-quote-id="' + esc(quote.id) + '" ' + (isSelected ? 'disabled style="background-color: #46b450; color: white;"' : '') + '>' +
+                (isSelected ? '✓ Selected' : 'Select This Quote') + '</button></td>' +
+                '</tr>';
         });
+        var quotesHtml = '<table class="widefat livraria-quotes"><thead><tr><th>Courier</th><th>Route</th><th>Price</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
         $('#quotes-container').html(tabsHtml + quotesHtml);
     }
 

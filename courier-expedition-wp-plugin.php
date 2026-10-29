@@ -208,6 +208,14 @@ class LivrariaPlugin {
         return 'Deliver with Livraria';
     }
     
+    /**
+     * The order screen box. A new id (it was "livraria-expedition" in the
+     * sidebar): WordPress keeps each user's dragged box positions by id, so
+     * the old id would have kept the box in the sidebar for anyone who ever
+     * rearranged the order screen.
+     */
+    const META_BOX_ID = 'livraria-shipping';
+
     public function add_expedition_meta_box() {
         // Debug: Log when this method is called (only in development mode)
         if (self::is_development_mode()) {
@@ -219,11 +227,11 @@ class LivrariaPlugin {
         
         // For traditional WooCommerce order pages (post-based)
         add_meta_box(
-            'livraria-expedition',
+            self::META_BOX_ID,
             $metabox_title,
             array($this, 'expedition_meta_box_callback'),
             'shop_order',
-            'side',
+            'normal',
             'high'
         );
         if (self::is_development_mode()) {
@@ -234,11 +242,11 @@ class LivrariaPlugin {
         // For WooCommerce High-Performance Order Storage (HPOS)
         if (class_exists('Automattic\WooCommerce\Internal\DataStores\Orders\OrdersTableDataStore')) {
             add_meta_box(
-                'livraria-expedition',
+                self::META_BOX_ID,
                 $metabox_title,
                 array($this, 'expedition_meta_box_callback'),
                 wc_get_page_screen_id('shop-order'),
-                'side',
+                'normal',
                 'high'
             );
         }
@@ -247,11 +255,11 @@ class LivrariaPlugin {
         $screen = get_current_screen();
         if ($screen && in_array($screen->id, array('woocommerce_page_wc-orders', 'shop_order'))) {
             add_meta_box(
-                'livraria-expedition',
+                self::META_BOX_ID,
                 $metabox_title,
                 array($this, 'expedition_meta_box_callback'),
                 $screen->id,
-                'side',
+                'normal',
                 'high'
             );
         }
@@ -393,75 +401,68 @@ class LivrariaPlugin {
                 </div>
             <?php else: ?>
                 
-                <!-- Package Configuration -->
-                <div class="expedition-section">
-                    <h4>1. Package Information</h4>
-                    <?php
-                    // One parcel for the whole order, worked out from the products
-                    // (kg and cm); the merchant can change it or add rows
-                    $parcels = $this->order_handler->calculate_packages_from_order($order);
-                    $parcel = $parcels[0];
-                    ?>
-                    <div id="packages-container">
-                        <div class="package-item" data-package="1">
-                            <h5>Package 1</h5>
-                            <div class="package-dimensions">
-                                <label>Weight (kg): <input type="number" name="package_weight[]" step="0.01" min="1" value="<?php echo esc_attr($parcel['weight']); ?>"></label>
-                                <label>Width (cm): <input type="number" name="package_width[]" step="1" min="10" value="<?php echo esc_attr($parcel['width']); ?>"></label>
-                                <label>Height (cm): <input type="number" name="package_height[]" step="1" min="10" value="<?php echo esc_attr($parcel['height']); ?>"></label>
-                                <label>Length (cm): <input type="number" name="package_length[]" step="1" min="10" value="<?php echo esc_attr($parcel['length']); ?>"></label>
-                                <button type="button" class="button remove-package" style="display:none;">Remove</button>
-                            </div>
-                        </div>
-                    </div>
-                    <button type="button" id="add-package-btn" class="button">Add Another Package</button>
-                </div>
-
-                <!-- Content Description -->
-                <div class="expedition-section">
-                    <h4>2. Content Description</h4>
-                    <textarea name="content_description" placeholder="Describe the package contents..." rows="3"></textarea>
-                </div>
-
-                <!-- Sender Profile Selection -->
-                <div class="expedition-section">
-                    <h4>3. Sender Profile</h4>
-                    <?php $this->render_sender_profile_select($order_id); ?>
-                </div>
-
-                <!-- Service Options -->
-                <div class="expedition-section">
-                    <h4>4. Service Options</h4>
-                    <?php if ($order && $is_cod): ?>
-                        <span class="service-badge cod">✓ Cash on Delivery</span>
-                    <?php else: ?>
-                        <span class="service-badge no-cod">No COD</span>
-                    <?php endif; ?>
-                    <div class="service-options-grid">
-                        <div class="service-option-item">
-                            <label>COD Amount: <span class="input-group"><input type="number" name="cod_amount" step="0.01" min="0" value="<?php echo esc_attr($cod_amount_default); ?>"> RON</span></label>
-                        </div>
-                        <div class="service-option-item">
-                            <label>Insurance Amount: <span class="input-group"><input type="number" name="insurance_amount" step="0.01" min="0" value="0"> RON</span></label>
-                        </div>
-                        <div class="service-option-item">
-                            <label><input type="checkbox" name="open_on_delivery" value="1"> Open on Delivery</label>
-                        </div>
-                        <div class="service-option-item">
-                            <label><input type="checkbox" name="saturday_delivery" value="1"> Saturday Delivery</label>
-                        </div>
-                    </div>
-                </div>
+                <?php
+                // One parcel for the whole order, worked out from the products
+                // (kg and cm); the merchant can change it or add rows
+                $parcels = $this->order_handler->calculate_packages_from_order($order);
+                $parcel = $parcels[0];
+                ?>
 
                 <?php $this->render_route_section($order); ?>
 
-                <div class="expedition-section">
+                <!-- Packages -->
+                <div class="expedition-section livraria-packages-section">
+                    <h4>Packages</h4>
+                    <table class="widefat livraria-packages">
+                        <thead>
+                            <tr><th>Package</th><th>Weight (kg)</th><th>Length (cm)</th><th>Width (cm)</th><th>Height (cm)</th><th></th></tr>
+                        </thead>
+                        <tbody id="packages-container">
+                            <tr class="package-item" data-package="1">
+                                <td class="livraria-package-label">Package 1</td>
+                                <td><input type="number" name="package_weight[]" step="0.01" min="1" value="<?php echo esc_attr($parcel['weight']); ?>" aria-label="Weight (kg)"></td>
+                                <td><input type="number" name="package_length[]" step="1" min="10" value="<?php echo esc_attr($parcel['length']); ?>" aria-label="Length (cm)"></td>
+                                <td><input type="number" name="package_width[]" step="1" min="10" value="<?php echo esc_attr($parcel['width']); ?>" aria-label="Width (cm)"></td>
+                                <td><input type="number" name="package_height[]" step="1" min="10" value="<?php echo esc_attr($parcel['height']); ?>" aria-label="Height (cm)"></td>
+                                <td><button type="button" class="button remove-package" style="display:none;">Remove</button></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <p><button type="button" id="add-package-btn" class="button">Add Another Package</button></p>
+                    <p>
+                        <label for="livraria-content-description"><strong>Content description</strong></label><br>
+                        <textarea id="livraria-content-description" name="content_description" placeholder="Describe the package contents..." rows="2" style="width:100%;"></textarea>
+                    </p>
+                </div>
+
+                <!-- Options -->
+                <div class="expedition-section livraria-options-section">
+                    <h4>Options
+                        <?php if ($order && $is_cod): ?>
+                            <span class="service-badge cod">✓ Cash on Delivery</span>
+                        <?php else: ?>
+                            <span class="service-badge no-cod">No COD</span>
+                        <?php endif; ?>
+                    </h4>
+                    <div class="livraria-options">
+                        <label class="livraria-option">COD amount (RON)<br><input type="number" name="cod_amount" step="0.01" min="0" value="<?php echo esc_attr($cod_amount_default); ?>"></label>
+                        <label class="livraria-option">Insurance amount (RON)<br><input type="number" name="insurance_amount" step="0.01" min="0" value="0"></label>
+                        <label class="livraria-option livraria-option-check"><input type="checkbox" name="open_on_delivery" value="1"> Open on delivery</label>
+                        <label class="livraria-option livraria-option-check"><input type="checkbox" name="saturday_delivery" value="1"> Saturday delivery</label>
+                        <div class="livraria-option livraria-option-profile">
+                            <strong>Sender profile</strong>
+                            <?php $this->render_sender_profile_select($order_id); ?>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="expedition-section livraria-actions">
                     <button type="button" id="create-expedition-btn" class="button button-primary">Get Quotes</button>
                     <div id="expedition-loading" style="display:none;">Loading quotes...</div>
                     <div id="expedition-result"></div>
                 </div>
                 
-                <!-- Quotes Display Section -->
+                <!-- Quotes -->
                 <div id="quotes-section" class="expedition-section" style="display:none;">
                     <h4>Available Shipping Options</h4>
                     <div id="quotes-container"></div>
@@ -575,31 +576,33 @@ class LivrariaPlugin {
         $banner = Livraria_Order_Handler::route_banner($pick, $pick ? 'buyer' : 'order');
         ?>
         <div class="expedition-section" id="livraria-route">
-            <h4>5. Route</h4>
+            <h4>Route</h4>
             <div id="livraria-route-banner">
                 <?php if ($banner): ?>
                     <div class="notice notice-<?php echo esc_attr($banner['type'] === 'buyer' ? 'info' : 'warning'); ?> inline"><p><?php echo esc_html($banner['message']); ?></p></div>
                 <?php endif; ?>
             </div>
-            <p>
-                <label for="livraria-origin-mode"><strong>From</strong></label><br>
-                <select id="livraria-origin-mode">
-                    <option value="pickup">Courier pickup at the sender address</option>
-                    <option value="locker">Drop-off at a locker</option>
-                </select>
-            </p>
-            <div id="livraria-origin-locker"></div>
-            <p>
-                <label for="livraria-destination-mode"><strong>To</strong></label><br>
-                <select id="livraria-destination-mode">
-                    <?php if ($pick): ?>
-                        <option value="buyer" selected="selected"><?php echo esc_html("The buyer's pick: " . ($pick['supported'] ? Livraria_Lockers::display($pick) : $pick['name'] . ' (cannot be used)')); ?></option>
-                    <?php endif; ?>
-                    <option value="order"<?php echo $pick ? '' : ' selected="selected"'; ?>>The order's shipping address</option>
-                    <option value="locker">A locker</option>
-                </select>
-            </p>
-            <div id="livraria-destination-locker"></div>
+            <div class="livraria-route-grid">
+                <div class="livraria-route-end">
+                    <label for="livraria-origin-mode"><strong>From</strong></label><br>
+                    <select id="livraria-origin-mode">
+                        <option value="pickup">Courier pickup at the sender address</option>
+                        <option value="locker">Drop-off at a locker</option>
+                    </select>
+                    <div id="livraria-origin-locker"></div>
+                </div>
+                <div class="livraria-route-end">
+                    <label for="livraria-destination-mode"><strong>To</strong></label><br>
+                    <select id="livraria-destination-mode">
+                        <?php if ($pick): ?>
+                            <option value="buyer" selected="selected"><?php echo esc_html("The buyer's pick: " . ($pick['supported'] ? Livraria_Lockers::display($pick) : $pick['name'] . ' (cannot be used)')); ?></option>
+                        <?php endif; ?>
+                        <option value="order"<?php echo $pick ? '' : ' selected="selected"'; ?>>The order's shipping address</option>
+                        <option value="locker">A locker</option>
+                    </select>
+                    <div id="livraria-destination-locker"></div>
+                </div>
+            </div>
             <div id="livraria-route-picker" style="display:none;"></div>
         </div>
         <?php
@@ -1866,6 +1869,26 @@ class LivrariaPlugin {
         }
         ";
         
+        // The box sits in the main column (context normal): lay it out wide
+        $css .= "
+        #livraria-shipping .expedition-section { margin: 12px 0 16px; }
+        #livraria-shipping .expedition-section h4 { margin: 0 0 8px; font-size: 13px; }
+        .livraria-route-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 24px; }
+        .livraria-route-grid select { width: 100%; max-width: 100%; }
+        .livraria-packages input[type=number] { width: 7em; }
+        .livraria-packages td, .livraria-packages th { vertical-align: middle; }
+        .livraria-options { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; }
+        .livraria-options input[type=number] { width: 8em; }
+        .livraria-option-check { padding-bottom: 6px; }
+        .livraria-option-profile select { min-width: 14em; }
+        .livraria-quotes td { vertical-align: middle; }
+        .livraria-quotes tr.quote-disabled td { color: #8c8f94; background: #f6f7f7; }
+        .livraria-quotes .livraria-fill-in { margin-top: 4px; }
+        @media (max-width: 782px) {
+            .livraria-route-grid { grid-template-columns: 1fr; }
+        }
+        ";
+
         wp_add_inline_style('wp-admin', $css);
     }
 }
