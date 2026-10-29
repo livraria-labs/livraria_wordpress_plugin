@@ -163,6 +163,13 @@ class Checkout_Lockers_Test extends Livraria_Quote_Flow_TestCase {
         $this->assertSame('livraria_checkout_lockers', $integration->get_script_data()['action']);
     }
 
+    public function test_the_blocks_picker_sits_under_the_shipping_rates_once() {
+        $script = file_get_contents(dirname(dirname(__DIR__)) . '/assets/checkout-lockers-blocks.js');
+        $this->assertStringContainsString('el(wc.blocksCheckout.ExperimentalOrderShippingPackages, null, el(LockerPicker))', $script);
+        $this->assertStringNotContainsString('ExperimentalOrderMeta', $script, 'not in the order summary card');
+        $this->assertStringContainsString('owner === null', $script, 'one picker even if the slot renders per package');
+    }
+
     public function test_an_order_without_a_pick_field_is_left_alone() {
         $order = $this->blocks_order(array());
         $this->assertSame(array(), $order->meta);

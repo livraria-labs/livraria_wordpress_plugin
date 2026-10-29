@@ -7,8 +7,9 @@
  * woocommerce_checkout_process refuses the order on the gate,
  * woocommerce_checkout_create_order writes the pick on the order.
  *
- * Blocks checkout: the picker renders in the order summary through a block
- * integration script (Livraria_Blocks_Integration, slot ExperimentalOrderMeta)
+ * Blocks checkout: the picker renders in the Shipping options section, under
+ * the shipping rates, through a block integration script
+ * (Livraria_Blocks_Integration, slot ExperimentalOrderShippingPackages)
  * and sends the pick as Store API extension data (namespace "livraria");
  * woocommerce_store_api_checkout_update_order_from_request refuses the order
  * on the gate and writes the pick.

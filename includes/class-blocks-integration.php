@@ -1,7 +1,7 @@
 <?php
 /**
  * Blocks checkout integration: loads the locker picker into the checkout
- * block (order summary slot) and hands it its settings. Loaded only when
+ * block (Shipping options section, slot ExperimentalOrderShippingPackages) and hands it its settings. Loaded only when
  * WooCommerce Blocks provides IntegrationInterface.
  */
 
