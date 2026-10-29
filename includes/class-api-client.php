@@ -243,6 +243,7 @@ class Livraria_API_Client {
                 update_option('courier_api_username', $username); // an email address, not a secret
             }
             update_option(self::OPT_CONNECTED_AT, time());
+            self::forget_sender_profiles();
             delete_option(self::OPT_SESSION_STATE);
             delete_option(self::OPT_SESSION_EXPIRED_AT);
             delete_option(self::OPT_LEGACY_PASSWORD);
@@ -315,6 +316,7 @@ class Livraria_API_Client {
      * Forget the API session (logout). The username stays for the login form.
      */
     public static function clear_session() {
+        self::forget_sender_profiles();
         delete_option('livraria_api_token');
         delete_option('livraria_token_expires_at');
         delete_option(self::OPT_REFRESH_TOKEN);
@@ -460,6 +462,7 @@ class Livraria_API_Client {
         delete_option('livraria_api_token');
         delete_option('livraria_token_expires_at');
         delete_option(self::OPT_REFRESH_TOKEN);
+        self::forget_sender_profiles();
 
         if (self::is_session_expired()) {
             return;
@@ -835,7 +838,31 @@ class Livraria_API_Client {
      * @return array|false API response or false on failure
      */
     public function get_sender_profile() {
-        return $this->api_request('GET', '/users/me/sender-profile');
+        $profiles = $this->api_request('GET', '/users/me/sender-profile');
+        if ($profiles !== false) {
+            // The order panel renders from this copy (cached_sender_profiles())
+            set_transient(self::SENDER_PROFILES_TRANSIENT, $profiles, HOUR_IN_SECONDS);
+        }
+        return $profiles;
+    }
+
+    /** Transient holding the last GET /users/me/sender-profile answer */
+    const SENDER_PROFILES_TRANSIENT = 'livraria_sender_profiles';
+
+    /**
+     * The cached sender profiles, false when none are cached. No API call.
+     *
+     * @return mixed
+     */
+    public static function cached_sender_profiles() {
+        return get_transient(self::SENDER_PROFILES_TRANSIENT);
+    }
+
+    /**
+     * Drop the cached sender profiles (login, logout, session end, settings save)
+     */
+    public static function forget_sender_profiles() {
+        delete_transient(self::SENDER_PROFILES_TRANSIENT);
     }
 
     /**

@@ -94,6 +94,8 @@ class LivrariaPlugin {
         add_action('wp_ajax_livraria_download_awb_pdf', array($this, 'ajax_download_awb_pdf'));
         add_action('wp_ajax_livraria_delete_expedition', array($this, 'ajax_delete_expedition'));
         add_action('wp_ajax_livraria_update_order_contact', array($this, 'ajax_update_order_contact'));
+        add_action('wp_ajax_livraria_reload_sender_profiles', array($this, 'ajax_reload_sender_profiles'));
+        add_action('updated_option', array($this, 'forget_sender_profiles_on_settings_save'), 10, 1);
 
         // A stored API URL off the Livraria allow-list stops all API calls
         Livraria_API_Client::check_stored_api_url();
@@ -393,58 +395,7 @@ class LivrariaPlugin {
                 <!-- Sender Profile Selection -->
                 <div class="expedition-section">
                     <h4>3. Sender Profile</h4>
-                    <?php
-                    // Get sender profiles from API
-                    $api_client = new Livraria_API_Client();
-                    $sender_profiles = $api_client->get_sender_profile();
-                    $default_profile_id = get_option('livraria_default_sender_profile_id', '');
-                    
-                    if ($sender_profiles !== false && !is_wp_error($sender_profiles)) {
-                        $profiles = is_array($sender_profiles) ? $sender_profiles : array($sender_profiles);
-                        ?>
-                        <select id="livraria-sender-profile-select" name="livraria_sender_profile_id">
-                            <?php foreach ($profiles as $index => $profile): 
-                                $profile_array = (array) $profile;
-                                $profile_id = isset($profile_array['id']) ? $profile_array['id'] : ('profile-' . $index);
-                                
-                                // Extract profile name
-                                $profile_name = 'Profile ' . ($index + 1);
-                                if (isset($profile_array['name']) && !empty($profile_array['name'])) {
-                                    $profile_name = $profile_array['name'];
-                                } elseif (isset($profile_array['companyName']) && !empty($profile_array['companyName'])) {
-                                    $profile_name = $profile_array['companyName'];
-                                } elseif (isset($profile_array['company']) && !empty($profile_array['company'])) {
-                                    if (is_array($profile_array['company']) || is_object($profile_array['company'])) {
-                                        $company_data = (array) $profile_array['company'];
-                                        if (isset($company_data['name'])) {
-                                            $profile_name = $company_data['name'];
-                                        } elseif (isset($company_data['companyName'])) {
-                                            $profile_name = $company_data['companyName'];
-                                        }
-                                    } else {
-                                        $profile_name = $profile_array['company'];
-                                    }
-                                }
-                                
-                                // Use default profile if no order-specific profile is set
-                                $selected_id = Livraria_Order_Handler::get_order_meta($order_id, '_livraria_sender_profile_id');
-                                if (empty($selected_id)) {
-                                    $selected_id = $default_profile_id;
-                                }
-                                ?>
-                                <option value="<?php echo esc_attr($profile_id); ?>" <?php selected($selected_id, $profile_id); ?>>
-                                    <?php echo esc_html($profile_name); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                        <p class="description">Select the sender profile to use for this expedition</p>
-                        <?php
-                    } else {
-                        ?>
-                        <p style="color: #d63638; font-size: 12px;">Unable to load sender profiles. Please check your API connection.</p>
-                        <?php
-                    }
-                    ?>
+                    <?php $this->render_sender_profile_select($order_id); ?>
                 </div>
 
                 <!-- Service Options -->
@@ -495,6 +446,116 @@ class LivrariaPlugin {
         
         <?php // Order meta box JS moved to assets/order.js; data provided via wp_localize_script in enqueue_admin_styles(). ?>
         <?php
+    }
+
+    /**
+     * The sender profile select of the order panel, from the cached profile
+     * list only: rendering the panel never calls the API. With nothing cached
+     * it shows a "Reload profiles" control (ajax_reload_sender_profiles()).
+     *
+     * @param int $order_id
+     */
+    private function render_sender_profile_select($order_id) {
+        $profiles = Livraria_API_Client::cached_sender_profiles();
+        echo '<div id="livraria-sender-profiles">';
+        if ($profiles === false) {
+            echo '<p class="description">Sender profiles are not loaded yet.</p>';
+            echo '<button type="button" class="button" id="livraria-reload-profiles">Reload profiles</button>';
+            echo '<span id="livraria-reload-profiles-result" style="display:block; font-size:12px;"></span>';
+        } else {
+            $selected_id = $this->selected_sender_profile_id($order_id);
+            echo '<select id="livraria-sender-profile-select" name="livraria_sender_profile_id">';
+            foreach (self::sender_profile_options($profiles) as $option) {
+                echo '<option value="' . esc_attr($option['id']) . '"' . ($option['id'] === (string) $selected_id ? ' selected="selected"' : '') . '>' . esc_html($option['label']) . '</option>';
+            }
+            echo '</select>';
+            echo '<p class="description">Select the sender profile to use for this expedition</p>';
+        }
+        echo '</div>';
+    }
+
+    /**
+     * The profile chosen for this order before, else the default one
+     *
+     * @param int $order_id
+     * @return string
+     */
+    private function selected_sender_profile_id($order_id) {
+        $selected_id = Livraria_Order_Handler::get_order_meta($order_id, '_livraria_sender_profile_id');
+        return (string) (empty($selected_id) ? get_option('livraria_default_sender_profile_id', '') : $selected_id);
+    }
+
+    /**
+     * id and label of each sender profile in a GET /users/me/sender-profile
+     * answer (one profile or a list)
+     *
+     * @param mixed $profiles
+     * @return array[] id, label
+     */
+    public static function sender_profile_options($profiles) {
+        if (!is_array($profiles) || $profiles === array()) {
+            return array();
+        }
+        if (!array_key_exists(0, $profiles)) {
+            $profiles = array($profiles); // a single profile
+        }
+        $options = array();
+        foreach (array_values($profiles) as $index => $profile) {
+            $profile = (array) $profile;
+            $label = 'Profile ' . ($index + 1);
+            if (!empty($profile['name'])) {
+                $label = $profile['name'];
+            } elseif (!empty($profile['companyName'])) {
+                $label = $profile['companyName'];
+            } elseif (!empty($profile['company'])) {
+                if (is_array($profile['company']) || is_object($profile['company'])) {
+                    $company = (array) $profile['company'];
+                    if (isset($company['name'])) {
+                        $label = $company['name'];
+                    } elseif (isset($company['companyName'])) {
+                        $label = $company['companyName'];
+                    }
+                } else {
+                    $label = $profile['company'];
+                }
+            }
+            $options[] = array(
+                'id' => (string) (isset($profile['id']) ? $profile['id'] : ('profile-' . $index)),
+                'label' => (string) $label,
+            );
+        }
+        return $options;
+    }
+
+    /**
+     * AJAX ("Reload profiles" in the order panel): fetch the sender profiles,
+     * which also caches them for the next render
+     */
+    public function ajax_reload_sender_profiles() {
+        check_ajax_referer('courier_expedition_nonce', 'nonce');
+        $this->require_capability('edit_shop_orders');
+
+        $order_id = isset($_POST['order_id']) ? absint(wp_unslash($_POST['order_id'])) : 0;
+        $profiles = $this->api_client->get_sender_profile();
+        if ($profiles === false) {
+            wp_send_json_error($this->order_handler->api_error_message('Could not load the sender profiles'));
+        }
+        wp_send_json_success(array(
+            'options' => self::sender_profile_options($profiles),
+            'selected' => $this->selected_sender_profile_id($order_id),
+        ));
+    }
+
+    /**
+     * A plugin setting changed (Settings > Livraria, options.php): the cached
+     * sender profiles may no longer fit
+     *
+     * @param string $option
+     */
+    public function forget_sender_profiles_on_settings_save($option) {
+        if (strpos((string) $option, 'courier_') === 0 || $option === 'livraria_default_sender_profile_id') {
+            Livraria_API_Client::forget_sender_profiles();
+        }
     }
 
     /**
@@ -1132,6 +1193,7 @@ class LivrariaPlugin {
         
         // Update the option (same as what happens when clicking "Save changes")
         $result = update_option($option_name, $option_value);
+        Livraria_API_Client::forget_sender_profiles();
         
         if ($result !== false) {
             wp_send_json_success(array('message' => 'Option updated successfully'));

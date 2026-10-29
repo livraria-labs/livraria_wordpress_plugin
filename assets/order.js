@@ -614,6 +614,43 @@ jQuery(document).ready(function($) {
         });
     });
 
+    // "Reload profiles": the panel renders sender profiles from the cache only;
+    // with none cached, fetch them through admin-ajax and build the select
+    $(document).on('click', '#livraria-reload-profiles', function() {
+        var btn = $(this);
+        var $result = $('#livraria-reload-profiles-result');
+        btn.prop('disabled', true);
+        $result.css('color', '').text('Loading...');
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: {
+                action: 'livraria_reload_sender_profiles',
+                order_id: orderId,
+                nonce: $('#courier_expedition_nonce_field').val()
+            },
+            success: function(response) {
+                if (!response.success) {
+                    $result.css('color', 'red').text(errorText(response.data, 'Could not load the sender profiles.'));
+                    btn.prop('disabled', false);
+                    return;
+                }
+                var $select = $('<select id="livraria-sender-profile-select" name="livraria_sender_profile_id"></select>');
+                $.each(response.data.options || [], function(i, option) {
+                    var $option = $('<option></option>').attr('value', option.id).text(option.label);
+                    if (option.id === response.data.selected) { $option.prop('selected', true); }
+                    $select.append($option);
+                });
+                $('#livraria-sender-profiles').empty().append($select)
+                    .append($('<p class="description"></p>').text('Select the sender profile to use for this expedition'));
+            },
+            error: function(xhr) {
+                $result.css('color', 'red').text(errorText(xhr.responseJSON && xhr.responseJSON.data, 'Could not load the sender profiles.'));
+                btn.prop('disabled', false);
+            }
+        });
+    });
+
     // Select quote
     $(document).on('click', '.select-quote-btn', function() {
         var quoteId = String($(this).attr('data-quote-id'));
