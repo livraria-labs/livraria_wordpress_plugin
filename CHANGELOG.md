@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Every failed call to the Livraria API shows the API's own reason on the
+  order screen as "<what failed>: <reason>" (for example "Could not create the
+  shipment: This quote has expired, please get a new one"), instead of
+  "Failed to create expedition". An ended session still asks an administrator
+  to log in again.
+- The recipient phone is sent the way couriers need it (+40 and 9 digits) for
+  every way a Romanian number is typed; a number that cannot be used stops the
+  quote with a message naming it, and the order screen offers "Add phone".
+  The shipping phone is used first, then the billing phone.
+- Address line 2 is added to the street instead of being sent as the street
+  number (couriers printed "Bl. D6, sc. A, ap. 5" as the house number).
+- The recipient county and city are taken from Livraria's locality list (the
+  order's state is used as a hint, and as before when the list cannot be
+  reached).
+- Cash on delivery is requested only for cash-on-delivery orders (or when an
+  amount is typed on the order screen); prepaid orders no longer send a
+  zero-amount COD.
+- Courier quotes the API marks as unavailable are shown greyed, last, with the
+  API's reason and no price, and can never be selected; automatic creation
+  picks the cheapest available quote instead of the first one.
+- Automatic creation claims the order first, so a repeated status change
+  cannot create a second shipment; a shipment is never created for an order
+  that already has one. When automatic creation stops, the reason is added to
+  the order notes.
+
+### Changed
+- The recipient email is optional. When a courier needs it, its quote says so
+  and the order screen offers "Add email", which saves the email on the
+  WooCommerce order and gets quotes again.
+- Order data is read and written through WooCommerce's order API, and the
+  plugin declares compatibility with High-Performance Order Storage. Shipments
+  recorded by earlier versions stay visible.
+
 ## [1.1.0] - 2026-10-28
 
 ### Changed
