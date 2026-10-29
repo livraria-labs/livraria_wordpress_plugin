@@ -1233,7 +1233,13 @@ class Livraria_API_Client {
     /**
      * Keys whose values are never logged (compared case-insensitively)
      */
-    const REDACTED_KEYS = array('password', 'accesstoken', 'access_token', 'refreshtoken', 'refresh_token', 'idtoken', 'id_token', 'token', 'authorization');
+    const REDACTED_KEYS = array(
+        'password', 'accesstoken', 'access_token', 'refreshtoken', 'refresh_token', 'idtoken', 'id_token', 'token', 'authorization',
+        // People and addresses (quote bodies, sender profiles): never in a log
+        'name', 'firstname', 'lastname', 'companyname', 'company', 'cui', 'email', 'username', 'phone', 'phonensn',
+        'address', 'street', 'streetnumber', 'block', 'staircase', 'floor', 'apartment', 'city', 'county', 'postcode',
+        'localitypostcode', 'bankaccount', 'codiban', 'iban', 'shipmentnote', 'packagedescription',
+    );
 
     /**
      * $data with every REDACTED_KEYS value replaced by "***", at any depth.

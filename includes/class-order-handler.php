@@ -159,14 +159,10 @@ class Livraria_Order_Handler {
             // Create quote request and get courier quotes
             $quote_request_data = $this->prepare_quote_request_data($order, $custom_data, $courier_ids, $recipient);
             
-            // Debug: Log the data being sent (only in development mode)
+            // Debug (development mode only): ids and counts, never the order's people or addresses
             if (Livraria_API_Client::is_dev_mode()) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-                error_log('Livraria Debug: Quote request data structure: ' . print_r($quote_request_data, true));
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                error_log('Livraria Debug: Has sender: ' . (isset($quote_request_data['sender']) ? 'yes' : 'no'));
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                error_log('Livraria Debug: Has recipient: ' . (isset($quote_request_data['recipient']) ? 'yes' : 'no'));
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode, ids and counts only
+                error_log('Livraria Debug: ' . self::describe_quote_request($order_id, $quote_request_data, count($courier_ids)));
             }
             
             $quotes_response = $this->api_client->create_quote_request($quote_request_data);
@@ -264,12 +260,10 @@ class Livraria_Order_Handler {
             // Step 2: Create quote request and get courier quotes in one call
             $quote_request_data = $this->prepare_quote_request_data($order, $custom_data, $courier_ids);
             
-            // Debug: Log the data being sent (only in development mode)
+            // Debug (development mode only): ids and counts, never the order's people or addresses
             if (Livraria_API_Client::is_dev_mode()) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-                error_log('Livraria Debug: Quote request data: ' . print_r($quote_request_data, true));
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-                error_log('Livraria Debug: Available courier IDs: ' . print_r($courier_ids, true));
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode, ids and counts only
+                error_log('Livraria Debug: ' . self::describe_quote_request($order_id, $quote_request_data, count($courier_ids)));
             }
             
             $quotes_response = $this->api_client->create_quote_request($quote_request_data);
@@ -326,6 +320,24 @@ class Livraria_Order_Handler {
         }
     }
     
+    /**
+     * One debug line for a quote request: ids and counts only (order id,
+     * external reference, packages, couriers asked, COD yes/no), never a
+     * name, phone, email or address of the recipient or the sender
+     *
+     * @param int $order_id
+     * @param array $data Quote request body
+     * @param int $courier_count
+     * @return string
+     */
+    public static function describe_quote_request($order_id, $data, $courier_count) {
+        $packages = isset($data['content']['packages']) && is_array($data['content']['packages']) ? count($data['content']['packages']) : 0;
+        return 'quote request for order ' . (int) $order_id
+            . ' (externalRef ' . ($data['externalRef'] ?? '-') . '): '
+            . $packages . ' package(s), ' . (int) $courier_count . ' courier(s) available, COD '
+            . (isset($data['service']['cod']) ? 'yes' : 'no');
+    }
+
     /**
      * "<what failed>: <the backend's words>" for the last failed API call
      *
@@ -704,7 +716,7 @@ class Livraria_Order_Handler {
 
         if (Livraria_API_Client::is_dev_mode()) {
             // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode, no order data
-            error_log('Livraria Debug: county ' . ($failed ? 'lookup failed (' . $this->api_client->last_error_message() . ')' : 'not found in the catalogue') . '; using the order\'s state as the county');
+            error_log('Livraria Debug: county ' . ($failed ? 'lookup failed (HTTP ' . $this->api_client->last_error_status() . ')' : 'not found in the catalogue') . '; using the order\'s state as the county');
         }
         return $fallback;
     }
@@ -1069,14 +1081,6 @@ class Livraria_Order_Handler {
             throw new Exception($recipient_obj['error']);
         }
         
-        // Debug: Log sender and recipient data (only in development mode)
-        if (Livraria_API_Client::is_dev_mode()) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-            error_log('Livraria Debug: Sender object: ' . PHP_EOL . json_encode($sender_obj, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-            error_log('Livraria Debug: Recipient object: ' . PHP_EOL . json_encode($recipient_obj, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-        }
-        
         return array(
                 'sender' => $sender_obj,
                 'recipient' => $recipient_obj,
@@ -1196,21 +1200,13 @@ class Livraria_Order_Handler {
                     // Log what we got for debugging (only in development mode)
                     if (Livraria_API_Client::is_dev_mode()) {
                         // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                        error_log('Livraria: Sender profile address incomplete. Missing: ' . implode(', ', $missing_fields));
-                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-                        error_log('Livraria: Full sender profile: ' . print_r($sender_profile, true));
-                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-                        error_log('Livraria: Address data found: ' . print_r($address_data, true));
-                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-                        error_log('Livraria: Extracted address: ' . print_r($address, true));
+                        error_log('Livraria: Sender profile address incomplete. Missing: ' . implode(', ', $missing_fields) . '; fields present: ' . implode(', ', array_keys($sender_profile)));
                     }
                 }
             } else {
                 if (Livraria_API_Client::is_dev_mode()) {
                     // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                    error_log('Livraria: No address data found in sender profile');
-                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-                    error_log('Livraria: Full sender profile structure: ' . print_r($sender_profile, true));
+                    error_log('Livraria: No address data found in sender profile; fields present: ' . implode(', ', array_keys($sender_profile)));
                 }
             }
         } else {
@@ -1653,10 +1649,8 @@ class Livraria_Order_Handler {
     public function save_expedition_data($order_id, $expedition_response, $selected_quote) {
         // Debug: Log the full response structure (only in development mode)
         if (Livraria_API_Client::is_dev_mode()) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-            error_log('Livraria Debug Save: Full expedition_response: ' . print_r($expedition_response, true));
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,WordPress.PHP.DevelopmentFunctions.error_log_print_r -- Debug logging only in development mode
-            error_log('Livraria Debug Save: Full selected_quote: ' . print_r($selected_quote, true));
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode, ids only
+            error_log('Livraria Debug Save: order ' . $order_id . ', expedition ' . ($expedition_response['id'] ?? '?') . ', AWB ' . ($expedition_response['awbNumber'] ?? '-') . ', quote ' . ($selected_quote['id'] ?? '?') . ', response fields: ' . implode(', ', array_keys((array) $expedition_response)));
         }
 
         $values = array(
