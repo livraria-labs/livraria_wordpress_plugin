@@ -27,10 +27,14 @@ if (!function_exists('get_option')) {
 }
 
 if (!function_exists('update_option')) {
-    function update_option($option, $value) {
+    function update_option($option, $value, $autoload = null) {
         global $wp_test_options;
         if (!isset($wp_test_options)) {
             $wp_test_options = array();
+        }
+        // As WordPress: false when the value is unchanged
+        if (array_key_exists($option, $wp_test_options) && $wp_test_options[$option] === $value) {
+            return false;
         }
         $wp_test_options[$option] = $value;
         return true;

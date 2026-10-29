@@ -1382,7 +1382,8 @@ class LivrariaPlugin {
         $result = update_option($option_name, $option_value);
         Livraria_API_Client::forget_sender_profiles();
         
-        if ($result !== false) {
+        // update_option() answers false when the value did not change: that is saved too
+        if ($result !== false || (string) get_option($option_name, '') === (string) $option_value) {
             wp_send_json_success(array('message' => 'Option updated successfully'));
         } else {
             wp_send_json_error('Failed to update option');

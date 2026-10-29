@@ -301,6 +301,29 @@ class Plugin_Ajax_Test extends Livraria_TestCase {
         }
     }
 
+    public function test_saving_an_unchanged_option_is_a_success() {
+        $this->as_user(array('read', 'manage_options'));
+        update_option('courier_auto_create', '1');
+        $_POST = array('option_name' => 'courier_auto_create', 'option_value' => '1');
+
+        $response = $this->call_ajax('ajax_update_option');
+
+        $this->assertTrue($response->success);
+        $this->assertSame('1', get_option('courier_auto_create'));
+    }
+
+    public function test_the_courier_id_cache_goes_with_the_account() {
+        set_transient('livraria_courier_ids', array('courier-invented-1'), 3600);
+        Livraria_API_Client::clear_session();
+        $this->assertFalse(get_transient('livraria_courier_ids'), 'logout');
+
+        set_transient('livraria_courier_ids', array('courier-invented-1'), 3600);
+        $urls = array();
+        $this->ok_login_responses($urls);
+        (new Livraria_API_Client(Livraria_API_Client::PRODUCTION_API_URL))->login('merchant@example.com', 'invented-password-11');
+        $this->assertFalse(get_transient('livraria_courier_ids'), 'login');
+    }
+
     public function test_logout_runs_for_an_administrator() {
         $this->as_user(array('read', 'manage_options'));
         update_option('livraria_api_token', 'existing-token');

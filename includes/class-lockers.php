@@ -343,6 +343,7 @@ class Livraria_Lockers {
      */
     public static function forget_cache() {
         delete_transient('livraria_couriers'); // the courier list the Route resolves ids from
+        delete_transient('livraria_courier_ids'); // the courier ids every quote request is checked against
         foreach (array_keys(self::COURIERS) as $courier) {
             delete_transient(self::CACHE_FRESH_PREFIX . $courier);
             delete_option(self::CACHE_STALE_PREFIX . $courier);
