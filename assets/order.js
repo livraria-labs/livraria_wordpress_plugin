@@ -62,6 +62,31 @@ jQuery(document).ready(function($) {
         return fallback;
     }
 
+    // Cancel the AWB at Livraria/the courier, then clear it from the order
+    $('#livraria-cancel-awb-btn').on('click', function() {
+        var btn = $(this);
+        if (!confirm('Cancel AWB ' + btn.data('awb') + '?\n\nThe courier will not collect this parcel. This cannot be undone.')) return;
+
+        btn.prop('disabled', true).text('Cancelling...');
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: { action: 'livraria_cancel_awb', order_id: btn.data('order-id'), nonce: btn.data('nonce') },
+            success: function(response) {
+                if (response.success) {
+                    location.reload();
+                } else {
+                    alert(errorText(response.data, 'Could not cancel the AWB.'));
+                    btn.prop('disabled', false).text('Cancel shipment');
+                }
+            },
+            error: function() {
+                alert('AJAX error while cancelling the AWB');
+                btn.prop('disabled', false).text('Cancel shipment');
+            }
+        });
+    });
+
     // Delete expedition association
     $('#livraria-delete-expedition-btn').on('click', function() {
         var confirmed = confirm(
@@ -183,6 +208,7 @@ jQuery(document).ready(function($) {
                         order_id: orderId,
                         quote_request_id: quoteRequestId,
                         courier_quote_id: selectedQuote.id,
+                        courier_name: selectedQuote.courierName || '',
                         sender_profile_id: senderProfileId,
                         nonce: $('#courier_expedition_nonce_field').val()
                     },
@@ -339,6 +365,7 @@ jQuery(document).ready(function($) {
                                     order_id: orderId,
                                     quote_request_id: quoteRequestId,
                                     courier_quote_id: selectedQuote.id,
+                        courier_name: selectedQuote.courierName || '',
                                     sender_profile_id: senderProfileId,
                                     nonce: $('#courier_expedition_nonce_field').val()
                                 },

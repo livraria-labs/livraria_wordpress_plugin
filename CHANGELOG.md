@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Cancel shipment** on the order panel: cancels the AWB at Livraria and, if the courier has not collected the parcel yet, at the courier; then clears the shipment from the order and notes it. When the courier already has the parcel nothing is cancelled and the record stays.
+
+### Fixed
+- **Auto-create runs without anyone opening the order.** Marking an order Completed queues the shipment in WooCommerce's Action Scheduler, so orders completed by a bulk action, the REST API or an automation ship too. Before, the AWB was only created once an admin opened the order.
+- An automatically created shipment now shows its courier on the order panel.
+- **The blocks checkout keeps the buyer's locker.** The picker re-renders whenever the cart refreshes its rates (an address field losing focus does it) and started again at "home", so a buyer who chose a locker could place an order that recorded home delivery and no locker. It now keeps the pick.
+
 ## [1.2.0] - 2026-10-29
 
 **Read first, it changes what shipments cost:** an order is now quoted as ONE

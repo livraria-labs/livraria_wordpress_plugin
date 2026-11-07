@@ -35,6 +35,12 @@
         }
     }
 
+    // The buyer's last pick. The slot re-renders whenever the cart refreshes
+    // its rates (an address field losing focus does it), which remounts the
+    // picker; without this it starts again at "home" and emits that, so the
+    // locker the buyer chose never reached the order.
+    var lastPick = null;
+
     // One picker per page, whatever the number of fills the slot renders
     var owner = null;
     var nextId = 1;
@@ -74,7 +80,10 @@
         }, [shown]);
         useEffect(function () {
             if (!mine || !ref.current) { return undefined; }
-            var picker = window.LivrariaLockerPicker.mount(ref.current, Object.assign({}, config, { onChange: send }));
+            var picker = window.LivrariaLockerPicker.mount(ref.current, Object.assign({}, config, {
+                pick: lastPick,
+                onChange: function (pick) { lastPick = pick; send(pick); }
+            }));
             return function () {
                 picker.destroy();
             };
