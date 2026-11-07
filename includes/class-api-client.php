@@ -795,6 +795,17 @@ class Livraria_API_Client {
     }
     
     /**
+     * Cancel an AWB at Livraria, and at the courier when it has not taken the
+     * parcel. A 409 (the courier has it) means nothing was cancelled.
+     *
+     * @param string $awb_number
+     * @return array|false API response or false on failure
+     */
+    public function cancel_awb($awb_number) {
+        return $this->api_request('PATCH', '/public/awb/cancel/' . rawurlencode($awb_number));
+    }
+
+    /**
      * Get expedition by ID
      * 
      * @param string $expedition_id Expedition ID

@@ -93,6 +93,8 @@ class LivrariaPlugin {
         add_action('wp_ajax_livraria_update_option', array($this, 'ajax_update_option'));
         add_action('wp_ajax_livraria_download_awb_pdf', array($this, 'ajax_download_awb_pdf'));
         add_action('wp_ajax_livraria_delete_expedition', array($this, 'ajax_delete_expedition'));
+        add_action('wp_ajax_livraria_cancel_awb', array($this, 'ajax_cancel_awb'));
+        add_action(self::AUTO_CREATE_ACTION, array($this, 'run_scheduled_auto_create'));
         add_action('wp_ajax_livraria_update_order_contact', array($this, 'ajax_update_order_contact'));
         add_action('wp_ajax_livraria_reload_sender_profiles', array($this, 'ajax_reload_sender_profiles'));
         // Locker list: the order panel (merchant) and the checkout (buyer, logged in or not)
@@ -403,6 +405,12 @@ class LivrariaPlugin {
                 </div>
             <?php endif; ?>
             <div class="lp-card__danger">
+                <?php if ($awb_number): ?>
+                <button type="button" id="livraria-cancel-awb-btn" class="button"
+                        data-order-id="<?php echo absint($order_id); ?>"
+                        data-awb="<?php echo esc_attr($awb_number); ?>"
+                        data-nonce="<?php echo esc_attr(wp_create_nonce('courier_expedition_nonce')); ?>"><?php esc_html_e('Cancel shipment', 'livraria-shipping-for-woocommerce'); ?></button>
+                <?php endif; ?>
                 <button type="button" id="livraria-delete-expedition-btn" class="button-link button-link-delete"
                         data-order-id="<?php echo absint($order_id); ?>"
                         data-nonce="<?php echo esc_attr(wp_create_nonce('courier_expedition_nonce')); ?>"><?php esc_html_e('Remove local record', 'livraria-shipping-for-woocommerce'); ?></button>
@@ -987,21 +995,43 @@ class LivrariaPlugin {
     }
     
     /**
-     * Handle order status change
-     * Sets a flag that JavaScript can check to trigger auto-create
+     * Action Scheduler hook that creates the shipment for an order (one arg: the order id)
+     */
+    const AUTO_CREATE_ACTION = 'livraria_auto_create_expedition';
+
+    /**
+     * Order marked Completed with auto-create on: queue the shipment in the
+     * background (WooCommerce's Action Scheduler), so an order completed by a
+     * bulk action, the REST API or an automation ships without anyone opening
+     * it. Without Action Scheduler, fall back to the flag the order screen's
+     * script picks up.
      */
     public function handle_order_status_change($order_id, $old_status, $new_status) {
-        if ($new_status === 'completed' && get_option('courier_auto_create')) {
-            // Set a transient flag that JavaScript can check
-            // This allows JS to run auto-create without page refresh interrupting
-            set_transient('livraria_auto_create_order_' . $order_id, true, 60); // Expires in 60 seconds
-            if (self::is_development_mode()) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug logging only in development mode
-                error_log('Livraria Debug: Order ' . $order_id . ' status changed to completed, flag set for JS');
-            }
+        if ($new_status !== 'completed' || !get_option('courier_auto_create')) {
+            return;
         }
+
+        if (function_exists('as_enqueue_async_action')) {
+            $args = array((int) $order_id);
+            if (!function_exists('as_has_scheduled_action') || !as_has_scheduled_action(self::AUTO_CREATE_ACTION, $args, 'livraria')) {
+                as_enqueue_async_action(self::AUTO_CREATE_ACTION, $args, 'livraria');
+            }
+            return;
+        }
+
+        set_transient('livraria_auto_create_order_' . $order_id, true, 60);
     }
-    
+
+    /**
+     * The queued run. The order claim taken by get_quotes_for_order() stops a
+     * second run, and an order that already has a shipment.
+     *
+     * @param int $order_id
+     */
+    public function run_scheduled_auto_create($order_id) {
+        $this->run_auto_create_expedition((int) $order_id);
+    }
+
     /**
      * Legacy method - kept for backward compatibility
      */
@@ -1474,6 +1504,55 @@ class LivrariaPlugin {
     }
 
     /**
+     * AJAX: cancel the order's AWB at Livraria (and at the courier, if it has
+     * not taken the parcel), then clear the shipment from the order so it can
+     * be shipped again. A 409 means the courier already has the parcel and
+     * nothing was cancelled: the record stays.
+     */
+    public function ajax_cancel_awb() {
+        check_ajax_referer('courier_expedition_nonce', 'nonce');
+        $this->require_capability('edit_shop_orders');
+
+        $order_id = isset($_POST['order_id']) ? absint(wp_unslash($_POST['order_id'])) : 0;
+        $awb_number = $order_id ? (string) Livraria_Order_Handler::get_order_meta($order_id, '_courier_awb_number') : '';
+        if ($awb_number === '') {
+            wp_send_json_error('This order has no AWB to cancel.');
+        }
+
+        if ($this->api_client->cancel_awb($awb_number) === false) {
+            if ($this->api_client->last_error_status() === 409) {
+                wp_send_json_error('The courier already has the parcel, so nothing was cancelled. The AWB stays active.');
+            }
+            wp_send_json_error($this->order_handler->api_error_message('Could not cancel the AWB'));
+        }
+
+        $order = wc_get_order($order_id);
+        if ($order) {
+            /* translators: %s: AWB number */
+            $order->add_order_note(sprintf(__('Livraria: AWB %s cancelled.', 'livraria-shipping-for-woocommerce'), $awb_number));
+        }
+        Livraria_Order_Handler::delete_order_meta($order_id, self::SHIPMENT_META_KEYS);
+
+        wp_send_json_success(array('message' => 'AWB cancelled'));
+    }
+
+    /**
+     * Order meta that make up the order's shipment record
+     */
+    const SHIPMENT_META_KEYS = array(
+        '_courier_expedition_id',
+        '_courier_awb_number',
+        '_courier_name',
+        '_courier_quote_id',
+        '_courier_price',
+        '_courier_status',
+        '_courier_expedition_created',
+        '_courier_quote_request_id',
+        '_courier_selected_quote_id',
+        '_courier_selected_quote_name',
+    );
+
+    /**
      * AJAX handler for deleting expedition association (does NOT cancel AWB with courier)
      */
     public function ajax_delete_expedition() {
@@ -1488,20 +1567,7 @@ class LivrariaPlugin {
             wp_send_json_error('Invalid order ID');
         }
 
-        $meta_keys = array(
-            '_courier_expedition_id',
-            '_courier_awb_number',
-            '_courier_name',
-            '_courier_quote_id',
-            '_courier_price',
-            '_courier_status',
-            '_courier_expedition_created',
-            '_courier_quote_request_id',
-            '_courier_selected_quote_id',
-            '_courier_selected_quote_name',
-        );
-
-        Livraria_Order_Handler::delete_order_meta($order_id, $meta_keys);
+        Livraria_Order_Handler::delete_order_meta($order_id, self::SHIPMENT_META_KEYS);
 
         wp_send_json_success();
     }
