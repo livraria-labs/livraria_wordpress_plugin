@@ -404,13 +404,15 @@ class LivrariaPlugin {
                     <a href="<?php echo esc_url($download('A6')); ?>" class="button download-awb-pdf" data-awb="<?php echo esc_attr($awb_number); ?>" data-size="A6"><?php esc_html_e('Download A6', 'livraria-shipping-for-woocommerce'); ?></a>
                 </div>
             <?php endif; ?>
-            <div class="lp-card__danger">
-                <?php if ($awb_number): ?>
+            <?php if ($awb_number): ?>
+                <div class="lp-card__actions">
                 <button type="button" id="livraria-cancel-awb-btn" class="button"
                         data-order-id="<?php echo absint($order_id); ?>"
                         data-awb="<?php echo esc_attr($awb_number); ?>"
                         data-nonce="<?php echo esc_attr(wp_create_nonce('courier_expedition_nonce')); ?>"><?php esc_html_e('Cancel shipment', 'livraria-shipping-for-woocommerce'); ?></button>
-                <?php endif; ?>
+                </div>
+            <?php endif; ?>
+            <div class="lp-card__danger">
                 <button type="button" id="livraria-delete-expedition-btn" class="button-link button-link-delete"
                         data-order-id="<?php echo absint($order_id); ?>"
                         data-nonce="<?php echo esc_attr(wp_create_nonce('courier_expedition_nonce')); ?>"><?php esc_html_e('Remove local record', 'livraria-shipping-for-woocommerce'); ?></button>

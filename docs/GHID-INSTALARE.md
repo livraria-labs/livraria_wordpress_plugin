@@ -90,7 +90,7 @@ Secțiunea **Lockers at checkout** le permite cumpărătorilor să aleagă într
 2. Sub **Show the locker choice for these shipping methods** bifează metodele de livrare WooCommerce la care apare alegerea. Dacă nu ai nicio metodă pentru locker, creează-o la **WooCommerce → Settings → Shipping** și revino.
 3. Dacă nu bifezi nicio metodă, alegerea de locker nu apare la checkout.
 
-La checkout, când cumpărătorul alege o metodă bifată, sub metodele de livrare apare **Metodă de livrare** (*Livrare la adresă* / *Livrare la locker*). La locker alege județul, apoi poate filtra după curier (*easybox Sameday*, *locker DPD*), oraș sau nume și apasă **Alege** pe un locker; rândul „Locker ales: …” confirmă alegerea, iar **Schimbă** o reia. Comanda nu poate fi plasată în modul locker fără un locker ales.
+La checkout, când cumpărătorul alege o metodă bifată, sub metodele de livrare apare **Metodă de livrare** (*Livrare la adresă* / *Livrare la locker*). La locker alege județul, apoi poate filtra după curier (*easybox Sameday*, *locker DPD*), oraș sau nume și apasă **Alege** pe un locker; rândul „Locker ales: …” confirmă alegerea, iar **Schimbă** o reia. Comanda nu poate fi plasată în modul locker fără un locker ales. Alegerea funcționează atât pe checkout-ul cu blocuri (implicit în WooCommerce), cât și pe cel clasic (`[woocommerce_checkout]`).
 
 ![Alegerea lockerului la checkout](images/09-lockere-checkout.png)
 
@@ -127,7 +127,9 @@ După creare, panoul arată insigna **AWB created**, curierul, numărul AWB și 
 
 ### Anularea unui AWB
 
-În versiunile de după 1.2.0, panoul are butonul **Cancel shipment**. După confirmare, AWB-ul se anulează la Livraria și, dacă curierul nu a ridicat încă coletul, și la curier. Pe comandă apare nota „Livraria: AWB … cancelled.”, iar panoul revine la formularul de cotare, deci poți expedia comanda din nou. Dacă curierul are deja coletul, nu se anulează nimic, AWB-ul rămâne activ și panoul îți spune asta.
+În versiunile de după 1.2.0, panoul are butonul **Cancel shipment**. După confirmare, AWB-ul se anulează la Livraria și, dacă curierul nu a ridicat încă coletul, și la curier. Pe comandă apare nota „Livraria: AWB … cancelled.”, iar panoul revine la formularul de cotare, deci poți expedia comanda din nou.
+
+![Nota de anulare pe comandă](images/10-nota-anulare.png) Dacă curierul are deja coletul, nu se anulează nimic, AWB-ul rămâne activ și panoul îți spune asta.
 
 În 1.2.0 pluginul **nu poate anula** un AWB: anulează-l din contul tău Livraria, la livraria.ro.
 
