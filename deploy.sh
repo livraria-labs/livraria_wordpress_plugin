@@ -157,6 +157,12 @@ Service provider: Livraria Hub S.R.L.
 
 == Changelog ==
 
+= 1.3.0 =
+* Cancel shipment on the order screen: cancels the AWB at Livraria and, if the courier has not collected the parcel yet, at the courier, then clears it from the order so the order can be shipped again
+* Automatic creation runs in the background (WooCommerce Action Scheduler) when an order is marked Completed, also for orders completed in bulk, through the REST API or by an automation, without anyone opening the order
+* The block checkout keeps the buyer's locker when the address is edited after choosing it
+* An automatically created shipment shows its courier on the order screen
+
 = 1.2.0 =
 * Quotes are now for ONE parcel per order (summed weight, largest length and width, summed height), in kg and cm from the shop's units; a computed parcel is at least 1 kg and 10 x 10 x 10 cm. Edit or add parcels on the order screen before quoting
 * Lockers: for the shipping methods you tick under Settings > Livraria, buyers choose home or locker delivery at checkout (classic and block checkout), pick the county, then one Sameday easybox or DPD locker from one list

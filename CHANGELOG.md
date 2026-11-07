@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-07
+
 ### Added
 - **Cancel shipment** on the order panel: cancels the AWB at Livraria and, if the courier has not collected the parcel yet, at the courier; then clears the shipment from the order and notes it. When the courier already has the parcel nothing is cancelled and the record stays.
 
