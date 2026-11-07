@@ -90,6 +90,14 @@ Secțiunea **Lockers at checkout** le permite cumpărătorilor să aleagă într
 2. Sub **Show the locker choice for these shipping methods** bifează metodele de livrare WooCommerce la care apare alegerea. Dacă nu ai nicio metodă pentru locker, creează-o la **WooCommerce → Settings → Shipping** și revino.
 3. Dacă nu bifezi nicio metodă, alegerea de locker nu apare la checkout.
 
+La checkout, când cumpărătorul alege o metodă bifată, sub metodele de livrare apare **Metodă de livrare** (*Livrare la adresă* / *Livrare la locker*). La locker alege județul, apoi poate filtra după curier (*easybox Sameday*, *locker DPD*), oraș sau nume și apasă **Alege** pe un locker; rândul „Locker ales: …” confirmă alegerea, iar **Schimbă** o reia. Comanda nu poate fi plasată în modul locker fără un locker ales.
+
+![Alegerea lockerului la checkout](images/09-lockere-checkout.png)
+
+Pe comandă, panoul **Deliver with Livraria** preia lockerul ales: la *Route → To* apare „The buyer's locker: …”.
+
+> În 1.2.0, pe checkout-ul cu blocuri (implicit în WooCommerce), lockerul ales se putea pierde dacă cumpărătorul modifica adresa după ce l-a ales: comanda se înregistra cu livrare la adresă. Corectat în versiunile de după 1.2.0.
+
 ---
 
 ## 4. Folosire zilnică: expedierea unei comenzi
