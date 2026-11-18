@@ -14,8 +14,15 @@
  *
  * window.LivrariaLockerPicker.mount(element, options) -> { setPick, getPick, destroy }
  * options: ajaxUrl, action, nonce, couriers [{slug, label}], requireLocker,
- *          showModeChoice, strings, pick {mode, id, name, courier}, onChange(pick),
- *          modal, ratesAction, rate (sent with ratesAction)
+ *          showModeChoice, strings, pick {mode, id, name, courier},
+ *          onChange(pick, locker), modal, ratesAction, rate (sent with ratesAction),
+ *          loadPrices(ctx, cb)
+ * onChange's second argument is the full locker row the buyer picked (street,
+ * postcode, city, ... as the server sent it), null when there is no pick.
+ * loadPrices(ctx, cb), optional, replaces the ratesAction request for shops
+ * that price in the browser: ctx = {county, city, postcode, rate}, and cb is
+ * called once with {slug: {amount, label}} (a slug with an empty label stays
+ * offered, unpriced) or null for no prices.
  */
 (function (window, document) {
     'use strict';
@@ -67,8 +74,12 @@
                     id: state.mode === 'locker' && state.pick ? state.pick.id : '',
                     name: state.mode === 'locker' && state.pick ? state.pick.name : '',
                     courier: state.mode === 'locker' && state.pick ? state.pick.courier : ''
-                });
+                }, state.mode === 'locker' && state.pick && state.pick.locker ? state.pick.locker : null);
             }
+        }
+
+        function pricesWanted() {
+            return !!(o.ratesAction || typeof o.loadPrices === 'function');
         }
 
         // GET the proxy: no county = the county list; a county = its lockers
@@ -143,10 +154,28 @@
         }
 
         function loadPrices() {
-            if (!o.ratesAction || !state.county || state.prices[priceKey()]) { return; }
+            if (!pricesWanted() || !state.county || state.prices[priceKey()]) { return; }
             var key = priceKey();
             var entry = { loading: true, map: null };
             state.prices[key] = entry;
+            if (typeof o.loadPrices === 'function') {
+                var city = pricingCity();
+                var postcode = '';
+                (state.byCounty[state.county] || []).forEach(function (l) {
+                    if (!postcode && l.city === city && l.postcode) { postcode = l.postcode; }
+                });
+                var finished = false;
+                var done = function (map) {
+                    if (finished) { return; }
+                    finished = true;
+                    entry.loading = false;
+                    entry.map = map && typeof map === 'object' ? map : null;
+                    render();
+                };
+                try { o.loadPrices({ county: state.county, city: city, postcode: postcode, rate: o.rate || '' }, done); }
+                catch (e) { done(null); }
+                return;
+            }
             var url = o.ajaxUrl + (o.ajaxUrl.indexOf('?') === -1 ? '?' : '&') + 'action=' + encodeURIComponent(o.ratesAction) +
                 '&nonce=' + encodeURIComponent(o.nonce || '') + '&rate=' + encodeURIComponent(o.rate || '') +
                 '&county=' + encodeURIComponent(state.county) + '&city=' + encodeURIComponent(pricingCity());
@@ -165,7 +194,7 @@
 
         // null: no prices (not asked, loading or failed): every courier shows, without a price
         function priceMap() {
-            var entry = o.ratesAction && state.county ? state.prices[priceKey()] : null;
+            var entry = pricesWanted() && state.county ? state.prices[priceKey()] : null;
             return entry && entry.map ? entry.map : null;
         }
 
@@ -313,7 +342,7 @@
 
             // 2. within the county: courier chips (with prices), city, search
             loadPrices();
-            var priced = o.ratesAction ? state.prices[priceKey()] : null;
+            var priced = pricesWanted() ? state.prices[priceKey()] : null;
             if (priced && priced.loading) { box.appendChild(el('p', { className: 'livraria-lp-prices-loading', text: s.pricesLoading || '…' })); }
             var inCounty = state.byCounty[state.county].filter(function (l) { return offered(l.courier); });
             if (state.courier && !offered(state.courier)) { state.courier = ''; }
