@@ -898,12 +898,17 @@ class Livraria_API_Client {
      * or nobody ticked "remember me") still gets the list anonymously: the
      * checkout picker must not go blank until the merchant logs in again.
      *
+     * Asked for with view=compact (no opening hours, contact or compartment
+     * counts: 2.2 MB instead of 6.4 MB for Sameday); a backend that predates
+     * it ignores the parameter and sends the full list.
+     *
      * @param string $courier "sameday" or "dpd"
      * @return array|false
      */
     public function get_pudo_points_by_courier($courier) {
-        $endpoint = '/pudo-points/by-courier?' . http_build_query(array('courier' => (string) $courier));
-        // The full list decodes to about 70 MB (Sameday: some 7,500 lockers),
+        $endpoint = '/pudo-points/by-courier?' . http_build_query(array('courier' => (string) $courier, 'view' => 'compact'));
+        // A full list (a backend without view=compact) decodes to about 70 MB
+        // (Sameday: some 7,500 lockers),
         // more than a 64M host allows: raise it for this request, as WordPress
         // does for its own heavy ones (to WP_MAX_MEMORY_LIMIT, 256M by default).
         if (function_exists('wp_raise_memory_limit')) {
