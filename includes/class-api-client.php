@@ -894,11 +894,25 @@ class Livraria_API_Client {
     /**
      * One courier's lockers (GET /pudo-points/by-courier), with the merchant's session
      *
+     * The route is public on the backend, so a shop with no session (it ended,
+     * or nobody ticked "remember me") still gets the list anonymously: the
+     * checkout picker must not go blank until the merchant logs in again.
+     *
      * @param string $courier "sameday" or "dpd"
      * @return array|false
      */
     public function get_pudo_points_by_courier($courier) {
-        return $this->api_request('GET', '/pudo-points/by-courier?' . http_build_query(array('courier' => (string) $courier)));
+        $endpoint = '/pudo-points/by-courier?' . http_build_query(array('courier' => (string) $courier));
+        $response = $this->api_request('GET', $endpoint);
+        if ($response !== false || !$this->base_url_allowed()) {
+            return $response;
+        }
+        // 401: the session is over; 0: no token to send (or no answer, asked once more)
+        $status = $this->last_error_status();
+        if ($status !== 401 && $status !== 0) {
+            return $response;
+        }
+        return $this->raw_api_request('GET', $endpoint);
     }
 
     /**

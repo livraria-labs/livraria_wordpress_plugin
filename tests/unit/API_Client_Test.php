@@ -135,6 +135,29 @@ class API_Client_Test extends Livraria_TestCase {
     }
     
     /**
+     * A shop with no session still gets the lockers: the route is public, so
+     * the checkout picker is asked anonymously instead of going blank.
+     */
+    public function test_pudo_points_load_anonymously_without_a_session() {
+        $sent_auth = null;
+        $mock_response = $this->create_mock_response(200, array(array('id' => '1'), array('id' => '2')));
+
+        add_filter('pre_http_request', function($preempt, $args, $url) use ($mock_response, &$sent_auth) {
+            if (strpos($url, '/pudo-points/by-courier') !== false) {
+                $sent_auth = isset($args['headers']['Authorization']);
+                return $mock_response;
+            }
+            return $preempt;
+        }, 10, 3);
+
+        $lockers = $this->api_client->get_pudo_points_by_courier('dpd');
+
+        $this->assertIsArray($lockers);
+        $this->assertCount(2, $lockers);
+        $this->assertFalse($sent_auth);
+    }
+
+    /**
      * Test get_sender_profile
      */
     public function test_get_sender_profile() {
