@@ -747,6 +747,18 @@ class Livraria_API_Client {
     }
     
     /**
+     * What a locker of each courier costs the shop for a parcel (POST
+     * /public/awb/locker-rates): to each courier's locker nearest the
+     * destination, or, with courier and lockerId, to that locker
+     *
+     * @param array $body sender, destination {county, city, postcode}, packages[, courier, lockerId]
+     * @return array|false rates [{courier, amount, ...}], unavailable; false on failure
+     */
+    public function get_locker_rates($body) {
+        return $this->api_request('POST', '/public/awb/locker-rates', $body);
+    }
+
+    /**
      * Get courier quotes for a quote request
      * NOTE: This method is deprecated - quotes are now returned directly from create_quote_request()
      * 

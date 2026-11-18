@@ -473,6 +473,10 @@ if (!class_exists('WooCommerce')) {
             global $wp_test_wc_session;
             return isset($wp_test_wc_session[$key]) ? $wp_test_wc_session[$key] : $default;
         }
+        public function set($key, $value) {
+            global $wp_test_wc_session;
+            $wp_test_wc_session[$key] = $value;
+        }
     }
     class Livraria_Test_Countries {
         public function get_states($country) {

@@ -45,8 +45,9 @@ class Lockers_Proxy_Test extends Livraria_Quote_Flow_TestCase {
         foreach ($answer['body']['lockers'] as $locker) {
             $this->assertSame(array('id', 'name', 'county', 'city', 'street', 'courier'), array_keys($locker));
         }
-        // with the merchant's session, server-side
-        $this->assertStringContainsString('/pudo-points/by-courier?courier=sameday', $this->requests[0]['url']);
+        // with the merchant's session, server-side, after Livraria's courier list
+        $this->assertStringContainsString('/public/couriers', $this->requests[0]['url']);
+        $this->assertStringContainsString('/pudo-points/by-courier?courier=sameday', $this->requests[1]['url']);
     }
 
     public function test_the_list_is_cached_for_15_minutes() {

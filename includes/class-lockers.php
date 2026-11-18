@@ -17,11 +17,19 @@ class Livraria_Lockers {
 
     /**
      * Couriers whose lockers can be picked, at either end of the route.
-     * product: how one of its lockers is named on screen.
+     * product: how one of its lockers is named on screen. on: whether the
+     * shop offers it until the merchant says otherwise; couriers whose lockers
+     * Livraria has not opened yet start off. Which of them the buyer sees is
+     * also Livraria's call: a courier Livraria has switched off is left out
+     * (checkout_couriers()) and one whose lockers are off comes back with an
+     * empty list.
      */
     const COURIERS = array(
-        'sameday' => array('slug' => 'sameday', 'name' => 'Sameday', 'product' => 'easybox Sameday'),
-        'dpd' => array('slug' => 'dpd', 'name' => 'DPD', 'product' => 'locker DPD'),
+        'sameday' => array('slug' => 'sameday', 'name' => 'Sameday', 'product' => 'easybox Sameday', 'on' => true),
+        'dpd' => array('slug' => 'dpd', 'name' => 'DPD', 'product' => 'locker DPD', 'on' => true),
+        'gls' => array('slug' => 'gls', 'name' => 'GLS', 'product' => 'locker GLS', 'on' => false),
+        'cargus' => array('slug' => 'cargus', 'name' => 'Cargus', 'product' => 'Ship & Go Cargus', 'on' => false),
+        'fan-courier' => array('slug' => 'fan-courier', 'name' => 'FAN Courier', 'product' => 'FANbox', 'on' => false),
     );
 
     /** Order meta written by both checkouts (same keys as the Shopify cart attributes) */
@@ -30,7 +38,7 @@ class Livraria_Lockers {
     const META_NAME = '_livraria_locker_name';
     const META_COURIER = '_livraria_locker_courier';
 
-    /** Settings: lockers per courier (on by default) and "require locker" (off) */
+    /** Settings: lockers per courier (COURIERS on) and "require locker" (off) */
     const OPT_ENABLED_PREFIX = 'livraria_lockers_';
     const OPT_REQUIRE_LOCKER = 'livraria_require_locker';
 
@@ -45,13 +53,13 @@ class Livraria_Lockers {
 
     /**
      * @param string $courier
-     * @return bool Whether the shop offers this courier's lockers (default: yes)
+     * @return bool Whether the shop offers this courier's lockers (default: COURIERS on)
      */
     public static function courier_enabled($courier) {
         if (!isset(self::COURIERS[$courier])) {
             return false;
         }
-        return (string) get_option(self::OPT_ENABLED_PREFIX . $courier, '1') !== '0';
+        return (string) get_option(self::OPT_ENABLED_PREFIX . $courier, self::COURIERS[$courier]['on'] ? '1' : '0') !== '0';
     }
 
     /**
@@ -59,6 +67,49 @@ class Livraria_Lockers {
      */
     public static function enabled_couriers() {
         return array_values(array_filter(array_keys(self::COURIERS), array(__CLASS__, 'courier_enabled')));
+    }
+
+    /**
+     * GET /public/couriers, cached for an hour (the Route resolves courier ids from the same copy)
+     *
+     * @param Livraria_API_Client $api_client
+     * @return array[] Active couriers; empty when Livraria did not answer
+     */
+    public static function platform_couriers($api_client) {
+        $cached = get_transient('livraria_couriers');
+        if (is_array($cached)) {
+            return $cached;
+        }
+        $couriers = $api_client->get_available_couriers();
+        if (!is_array($couriers)) {
+            return array();
+        }
+        if (isset($couriers['data']) && is_array($couriers['data'])) {
+            $couriers = $couriers['data'];
+        }
+        set_transient('livraria_couriers', $couriers, HOUR_IN_SECONDS);
+        return $couriers;
+    }
+
+    /**
+     * The couriers the buyer can pick from: the shop's, less those Livraria
+     * does not run right now. When Livraria's list cannot be read, the shop's.
+     *
+     * @param Livraria_API_Client $api_client
+     * @return string[]
+     */
+    public static function checkout_couriers($api_client) {
+        $enabled = self::enabled_couriers();
+        $active = array();
+        foreach (self::platform_couriers($api_client) as $courier) {
+            if (is_array($courier) && !empty($courier['slug']) && (!isset($courier['active']) || $courier['active'] !== false)) {
+                $active[] = strtolower((string) $courier['slug']);
+            }
+        }
+        if (empty($active)) {
+            return $enabled;
+        }
+        return array_values(array_intersect($enabled, $active));
     }
 
     /**
@@ -113,6 +164,9 @@ class Livraria_Lockers {
         if ($rate_id === '') {
             return false;
         }
+        if (Livraria_Locker_Pricing::is_locker_rate($rate_id)) {
+            return true; // the plugin's own "Livrare la locker" method
+        }
         foreach (self::locker_methods() as $method) {
             if ($rate_id === $method || strpos($rate_id, $method . ':') === 0) {
                 return true;
@@ -123,22 +177,46 @@ class Livraria_Lockers {
 
     /**
      * Whether the checkout carries the locker choice at all: a courier on and
-     * at least one shipping method ticked. Without a ticked method nothing is
-     * shown, enqueued or checked (an untouched upgrade changes nothing).
+     * at least one shipping method ticked, or the "Livrare la locker" method
+     * in a shipping zone. Without either nothing is shown, enqueued or
+     * checked (an untouched upgrade changes nothing).
      *
      * @return bool
      */
     public static function picker_active() {
-        return !empty(self::enabled_couriers()) && !empty(self::locker_methods());
+        return !empty(self::enabled_couriers()) && (!empty(self::locker_methods()) || self::locker_method_in_use());
+    }
+
+    /** @var bool|null Memo of locker_method_in_use() for the request */
+    private static $method_in_use = null;
+
+    /**
+     * @return bool Whether an enabled "Livrare la locker" method sits in a shipping zone
+     */
+    public static function locker_method_in_use() {
+        if (self::$method_in_use === null) {
+            self::$method_in_use = false;
+            foreach (self::zone_methods() as $method) {
+                if ($method->id === Livraria_Locker_Pricing::METHOD_ID && (!isset($method->enabled) || $method->enabled === 'yes')) {
+                    self::$method_in_use = true;
+                    break;
+                }
+            }
+        }
+        return self::$method_in_use;
+    }
+
+    /** Tests: forget the memo */
+    public static function reset_memo() {
+        self::$method_in_use = null;
     }
 
     /**
-     * The shop's shipping method instances for the settings page: zone name +
-     * method title, value "method_id:instance_id"
+     * Every shipping method instance of every zone, "rest of the world" included
      *
-     * @return array[] value, label
+     * @return object[]
      */
-    public static function shop_shipping_methods() {
+    private static function zone_methods() {
         $methods = array();
         if (!class_exists('WC_Shipping_Zones')) {
             return $methods;
@@ -150,14 +228,31 @@ class Livraria_Lockers {
         }
         foreach ($zones as $zone) {
             foreach ((array) ($zone['shipping_methods'] ?? array()) as $method) {
-                if (!is_object($method) || empty($method->id) || empty($method->instance_id)) {
-                    continue;
+                if (is_object($method) && !empty($method->id) && !empty($method->instance_id)) {
+                    $method->zone_name = $zone['zone_name'] ?? '';
+                    $methods[] = $method;
                 }
-                $methods[] = array(
-                    'value' => $method->id . ':' . $method->instance_id,
-                    'label' => trim(($zone['zone_name'] ?? '') . ' — ' . (method_exists($method, 'get_title') ? $method->get_title() : $method->id)),
-                );
             }
+        }
+        return $methods;
+    }
+
+    /**
+     * The shop's shipping method instances for the settings page: zone name +
+     * method title, value "method_id:instance_id"
+     *
+     * @return array[] value, label
+     */
+    public static function shop_shipping_methods() {
+        $methods = array();
+        foreach (self::zone_methods() as $method) {
+            if ($method->id === Livraria_Locker_Pricing::METHOD_ID) {
+                continue; // always shows the lockers: nothing to tick
+            }
+            $methods[] = array(
+                'value' => $method->id . ':' . $method->instance_id,
+                'label' => trim($method->zone_name . ' — ' . (method_exists($method, 'get_title') ? $method->get_title() : $method->id)),
+            );
         }
         return $methods;
     }
@@ -391,6 +486,14 @@ class Livraria_Lockers {
         return array('lockers' => $lockers, 'status' => $status, 'failed' => $failed);
     }
 
+    private static function unsupported($courier_param, $couriers) {
+        return array(
+            'code' => 400,
+            'body' => array('error' => 'Unsupported courier: ' . sanitize_text_field((string) $courier_param) . '. Use one of: ' . implode(', ', $couriers) . '.'),
+            'cache' => '',
+        );
+    }
+
     /**
      * The answer of the locker proxy for $courier_param ('' = every enabled
      * courier): 400 for a courier we do not offer or the shop switched off,
@@ -408,16 +511,20 @@ class Livraria_Lockers {
      * @return array code, body, cache ('hit' | 'miss' | 'stale' | '')
      */
     public static function proxy_response($api_client, $courier_param, $storefront, $county = null) {
+        // A courier the shop does not offer is refused before asking Livraria anything
         $couriers = self::enabled_couriers();
-        if ((string) $courier_param !== '') {
-            $courier = self::parse_courier($courier_param);
-            if ($courier === null || !in_array($courier, $couriers, true)) {
-                return array(
-                    'code' => 400,
-                    'body' => array('error' => 'Unsupported courier: ' . sanitize_text_field((string) $courier_param) . '. Use one of: ' . implode(', ', $couriers) . '.'),
-                    'cache' => '',
-                );
+        $courier = (string) $courier_param !== '' ? self::parse_courier($courier_param) : null;
+        if ((string) $courier_param !== '' && ($courier === null || !in_array($courier, $couriers, true))) {
+            return self::unsupported($courier_param, $couriers);
+        }
+        // The buyer sees only couriers Livraria runs; the merchant's panel sees the shop's
+        if ($storefront) {
+            $couriers = self::checkout_couriers($api_client);
+            if ($courier !== null && !in_array($courier, $couriers, true)) {
+                return self::unsupported($courier_param, $couriers);
             }
+        }
+        if ($courier !== null) {
             $couriers = array($courier);
         }
         $list = self::merged_list($api_client, $couriers);
@@ -679,6 +786,20 @@ class Livraria_Lockers {
         if (!self::rate_offers_lockers($rate_id)) {
             return ''; // not a shipping method the merchant ticked: no locker choice
         }
+        if (Livraria_Locker_Pricing::is_locker_rate($rate_id)) {
+            // Locker delivery is the method: a locker, and the one it was priced for
+            if ($pick['mode'] !== 'locker' || $pick['id'] === '') {
+                return self::MSG_GATE;
+            }
+            if (!self::courier_enabled($pick['courier'])) {
+                return self::MSG_LOCKER_GONE;
+            }
+            $priced = Livraria_Locker_Pricing::session_pick();
+            if ($priced === null || (string) $priced['id'] !== $pick['id'] || $priced['courier'] !== $pick['courier']) {
+                return Livraria_Locker_Pricing::MSG_PRICE_STALE;
+            }
+            return '';
+        }
         if ($pick['mode'] === 'locker') {
             if ($pick['id'] === '') {
                 return self::MSG_GATE;
@@ -718,18 +839,28 @@ class Livraria_Lockers {
     }
 
     /**
-     * What the checkout script needs (classic and blocks)
+     * What the checkout script needs (classic and blocks). lockerMethod: the
+     * rate id prefix of "Livrare la locker", where the picker opens as a
+     * modal with prices (ratesAction) and every pick is sent to the server
+     * (selectAction) so the rate follows it.
      *
+     * @param Livraria_API_Client|null $api_client
      * @return array
      */
-    public static function checkout_config() {
+    public static function checkout_config($api_client = null) {
+        $api_client = $api_client ?: new Livraria_API_Client();
         $couriers = array();
-        foreach (self::enabled_couriers() as $slug) {
+        foreach (self::checkout_couriers($api_client) as $slug) {
             $couriers[] = array('slug' => $slug, 'label' => self::COURIERS[$slug]['product']);
         }
+        $pick = Livraria_Locker_Pricing::session_pick();
         return array(
             'ajaxUrl' => function_exists('admin_url') ? admin_url('admin-ajax.php') : '',
             'action' => 'livraria_checkout_lockers',
+            'ratesAction' => 'livraria_locker_rates',
+            'selectAction' => 'livraria_locker_select',
+            'lockerMethod' => Livraria_Locker_Pricing::METHOD_ID,
+            'pricedPick' => $pick ? array('mode' => 'locker', 'id' => $pick['id'], 'name' => $pick['name'], 'courier' => $pick['courier']) : null,
             'nonce' => function_exists('wp_create_nonce') ? wp_create_nonce('livraria_checkout') : '',
             'couriers' => $couriers,
             'requireLocker' => self::require_locker(),
@@ -757,6 +888,11 @@ class Livraria_Lockers {
                 'chosen' => 'Locker ales:',
                 'showingFirst' => 'Se afișează primele {cap} din {total} lockere — rafinează căutarea.',
                 'none' => 'Niciun locker nu corespunde căutării.',
+                'open' => 'Alege lockerul',
+                'dialogTitle' => 'Alege lockerul de livrare',
+                'close' => 'Închide',
+                'pricesLoading' => 'Se calculează prețurile…',
+                'unavailable' => 'Indisponibil pentru coș',
             ),
         );
     }

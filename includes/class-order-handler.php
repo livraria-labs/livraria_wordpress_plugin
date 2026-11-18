@@ -534,19 +534,7 @@ class Livraria_Order_Handler {
      * @return array
      */
     private function couriers() {
-        $cached = get_transient('livraria_couriers');
-        if (is_array($cached)) {
-            return $cached;
-        }
-        $couriers = $this->api_client->get_available_couriers();
-        if (!is_array($couriers)) {
-            return array();
-        }
-        if (isset($couriers['data']) && is_array($couriers['data'])) {
-            $couriers = $couriers['data'];
-        }
-        set_transient('livraria_couriers', $couriers, HOUR_IN_SECONDS);
-        return $couriers;
+        return Livraria_Lockers::platform_couriers($this->api_client);
     }
 
     /**
@@ -686,8 +674,8 @@ class Livraria_Order_Handler {
         }
         foreach ($raw as $entry) {
             $courier = is_array($entry) && isset($entry['provider']) ? strtolower((string) $entry['provider']) : '';
-            if (!isset(Livraria_Lockers::COURIERS[$courier])) {
-                continue;
+            if (!Livraria_Lockers::courier_enabled($courier)) {
+                continue; // not a courier the shop offers lockers of
             }
             $lockers = Livraria_Lockers::trim_lockers(array($entry), $courier);
             if (!empty($lockers)) {
@@ -1361,20 +1349,16 @@ class Livraria_Order_Handler {
     }
     
     /**
-     * Prepare quote request data from WooCommerce order
-     * 
-     * @param WC_Order $order
-     * @param array $custom_data Custom expedition data
-     * @param array $courier_ids Available courier IDs
-     * @param array|null $recipient build_recipient() result, built here when null
+     * The shop as sender, as every quote sends it: the Livraria sender
+     * profile, falling back to the settings page. Also used at checkout for
+     * locker prices, where there is no order yet.
+     *
+     * @param mixed $sender_profile get_sender_profile_from_api() result
      * @return array
      */
-    private function prepare_quote_request_data($order, $custom_data = array(), $courier_ids = array(), $recipient = null) {
-        $sender_profile = $this->get_sender_profile_from_api();
+    public function build_sender($sender_profile) {
         $sender_info = $this->get_sender_info();
-        $packages = $this->calculate_packages_from_order($order, $custom_data);
-        $service_options = $this->get_service_options($order, $custom_data);
-        
+
         // Parse sender phone number
         $sender_phone = $sender_info['phone'] ?: '';
         if ($sender_profile && isset($sender_profile['phoneCountryCode']) && isset($sender_profile['phoneNSN'])) {
@@ -1502,6 +1486,25 @@ class Livraria_Order_Handler {
             'companyName' => $sender_is_company ? ($sender_info['name'] ?? '') : '',
             'cui' => $sender_info['cui'] ?? '',
         );
+
+        return $sender_obj;
+    }
+
+    /**
+     * Prepare quote request data from WooCommerce order
+     *
+     * @param WC_Order $order
+     * @param array $custom_data Custom expedition data
+     * @param array $courier_ids Available courier IDs
+     * @param array|null $recipient build_recipient() result, built here when null
+     * @return array
+     */
+    private function prepare_quote_request_data($order, $custom_data = array(), $courier_ids = array(), $recipient = null) {
+        $sender_profile = $this->get_sender_profile_from_api();
+        $packages = $this->calculate_packages_from_order($order, $custom_data);
+        $service_options = $this->get_service_options($order, $custom_data);
+        $sender_obj = $this->build_sender($sender_profile);
+        $sender_profile = $sender_profile ? (array) $sender_profile : $sender_profile;
         
         // Build recipient object (build_recipient() stops on an unusable phone)
         $recipient_obj = $recipient !== null ? $recipient : $this->build_recipient($order);
@@ -1527,6 +1530,26 @@ class Livraria_Order_Handler {
         );
     }
     
+    /**
+     * The sender of a checkout-time locker price: the cached sender profile
+     * (one API call when nothing is cached), else the settings page
+     *
+     * @return array|null Null when the shop has no usable sender address
+     */
+    public function checkout_sender() {
+        $profiles = Livraria_API_Client::cached_sender_profiles();
+        if (is_array($profiles)) {
+            $profile = isset($profiles[0]) && is_array($profiles[0]) ? $profiles[0] : (empty($profiles) ? null : $profiles);
+        } else {
+            $profile = $this->get_sender_profile_from_api();
+        }
+        try {
+            return $this->build_sender($profile);
+        } catch (Exception $e) {
+            return null;
+        }
+    }
+
     /**
      * Get sender profile from API
      * Falls back to settings if API profile not available
@@ -1826,9 +1849,31 @@ class Livraria_Order_Handler {
             'length' => floatval(get_option('courier_default_package_length', 10)) ?: 10.0,
         );
 
-        $lines = array();
+        $items = array();
         foreach ($order->get_items() as $item) {
-            $product = $item->get_product();
+            $items[] = array('product' => $item->get_product(), 'quantity' => $item->get_quantity());
+        }
+        return self::packages_from_items($items);
+    }
+
+    /**
+     * Parcels for a list of products, by the same rules as an order's (the
+     * checkout prices lockers from the cart with it)
+     *
+     * @param array[] $items product (WC_Product|null), quantity
+     * @return array[]
+     */
+    public static function packages_from_items($items) {
+        $defaults = array(
+            'weight' => floatval(get_option('courier_default_package_weight', 1)) ?: 1.0,
+            'width' => floatval(get_option('courier_default_package_width', 10)) ?: 10.0,
+            'height' => floatval(get_option('courier_default_package_height', 10)) ?: 10.0,
+            'length' => floatval(get_option('courier_default_package_length', 10)) ?: 10.0,
+        );
+
+        $lines = array();
+        foreach ($items as $item) {
+            $product = $item['product'];
             if (!$product) {
                 continue;
             }
@@ -1837,7 +1882,7 @@ class Livraria_Order_Handler {
             $width = self::to_centimetres($product->get_width());
             $height = self::to_centimetres($product->get_height());
             $lines[] = array(
-                'quantity' => max(1, (int) $item->get_quantity()),
+                'quantity' => max(1, (int) $item['quantity']),
                 'weight' => $weight > 0 ? $weight : $defaults['weight'],
                 'length' => $length > 0 ? $length : $defaults['length'],
                 'width' => $width > 0 ? $width : $defaults['width'],
