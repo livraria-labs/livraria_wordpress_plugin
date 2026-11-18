@@ -351,7 +351,7 @@ class Routes_Test extends Livraria_Quote_Flow_TestCase {
         ));
         $this->assertSame(array('id' => 'SD-1', 'courier' => 'sameday', 'name' => 'x'), $route['origin']['locker']);
         $this->assertSame('buyer', $route['destination']['mode']);
-        $this->assertSame('', LivrariaPlugin::sanitize_route(array('origin' => array('mode' => 'locker', 'locker' => array('id' => '1', 'courier' => 'cargus'))))['origin']['locker']['courier']);
+        $this->assertSame('', LivrariaPlugin::sanitize_route(array('origin' => array('mode' => 'locker', 'locker' => array('id' => '1', 'courier' => 'posta-romana'))))['origin']['locker']['courier']);
     }
 
     public function test_the_panel_renders_the_route_from_the_order_without_an_api_call() {

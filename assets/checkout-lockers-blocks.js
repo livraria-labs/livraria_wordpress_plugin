@@ -5,8 +5,10 @@
  * as Store API extension data, namespace "livraria". It shows only while the
  * selected rate is a shipping method the merchant ticked (settings data
  * "methods"); otherwise it hides and clears the pick. If the slot renders once
- * per shipping package, only the first instance shows the picker. No build
- * step: plain wp.element calls.
+ * per shipping package, only the first instance shows the picker. On the
+ * plugin's "Livrare la locker" rate it is a modal with prices, and each pick
+ * also goes through extensionCartUpdate (namespace "livraria") so the server
+ * prices the rate for that locker. No build step: plain wp.element calls.
  */
 (function (wp, wc) {
     if (!wp || !wc || !wc.blocksCheckout || !wc.blocksCheckout.ExperimentalOrderShippingPackages || !wp.plugins || !window.LivrariaLockerPicker) {
@@ -39,17 +41,39 @@
     // its rates (an address field losing focus does it), which remounts the
     // picker; without this it starts again at "home" and emits that, so the
     // locker the buyer chose never reached the order.
-    var lastPick = null;
+    var lastPick = config.pricedPick || null;
+    var sent = pickKey(config.pricedPick);
+
+    function pickKey(pick) {
+        return pick && pick.mode === 'locker' && pick.id ? pick.courier + ':' + pick.id : '';
+    }
+
+    // "Livrare la locker": the server keeps the locker and prices the rate for it
+    function price(pick) {
+        var key = pickKey(pick);
+        if (key === sent || typeof wc.blocksCheckout.extensionCartUpdate !== 'function') { return; }
+        sent = key;
+        wc.blocksCheckout.extensionCartUpdate({
+            namespace: 'livraria',
+            data: { delivery_mode: pick.mode, locker_id: pick.id, locker_name: pick.name, locker_courier: pick.courier }
+        });
+    }
 
     // One picker per page, whatever the number of fills the slot renders
     var owner = null;
     var nextId = 1;
 
     var methods = config.methods || [];
+    var lockerMethod = config.lockerMethod || '';
+
+    function isLockerRate(rate) {
+        rate = String(rate || '');
+        return lockerMethod !== '' && (rate === lockerMethod || rate.indexOf(lockerMethod + ':') === 0);
+    }
 
     function offersLockers(rate) {
         rate = String(rate || '');
-        return methods.some(function (m) { return rate === m || rate.indexOf(m + ':') === 0; });
+        return isLockerRate(rate) || methods.some(function (m) { return rate === m || rate.indexOf(m + ':') === 0; });
     }
 
     // The selected rate of the first package, from the cart store
@@ -70,6 +94,8 @@
         var rate = wp.data.useSelect(function (select) { return selectedRate(select); }, []);
         var shown = offersLockers(rate);
         var mine = owner === id.current && shown;
+        var priced = isLockerRate(rate);
+        var kind = priced ? String(rate) : 'ticked';
         useEffect(function () {
             return function () { if (owner === id.current) { owner = null; } };
         }, []);
@@ -80,14 +106,18 @@
         }, [shown]);
         useEffect(function () {
             if (!mine || !ref.current) { return undefined; }
-            var picker = window.LivrariaLockerPicker.mount(ref.current, Object.assign({}, config, {
+            var picker = window.LivrariaLockerPicker.mount(ref.current, Object.assign({}, config, priced ? {
+                modal: true, showModeChoice: false, requireLocker: true, rate: rate,
+                pick: lastPick,
+                onChange: function (pick) { lastPick = pick; send(pick); price(pick); }
+            } : {
                 pick: lastPick,
                 onChange: function (pick) { lastPick = pick; send(pick); }
             }));
             return function () {
                 picker.destroy();
             };
-        }, [mine]);
+        }, [mine, kind]);
         return mine ? el('div', { ref: ref, className: 'livraria-locker-picker', 'data-context': 'blocks' }) : null;
     }
 

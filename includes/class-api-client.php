@@ -747,6 +747,18 @@ class Livraria_API_Client {
     }
     
     /**
+     * What a locker of each courier costs the shop for a parcel (POST
+     * /public/awb/locker-rates): to each courier's locker nearest the
+     * destination, or, with courier and lockerId, to that locker
+     *
+     * @param array $body sender, destination {county, city, postcode}, packages[, courier, lockerId]
+     * @return array|false rates [{courier, amount, ...}], unavailable; false on failure
+     */
+    public function get_locker_rates($body) {
+        return $this->api_request('POST', '/public/awb/locker-rates', $body);
+    }
+
+    /**
      * Get courier quotes for a quote request
      * NOTE: This method is deprecated - quotes are now returned directly from create_quote_request()
      * 
@@ -882,11 +894,36 @@ class Livraria_API_Client {
     /**
      * One courier's lockers (GET /pudo-points/by-courier), with the merchant's session
      *
+     * The route is public on the backend, so a shop with no session (it ended,
+     * or nobody ticked "remember me") still gets the list anonymously: the
+     * checkout picker must not go blank until the merchant logs in again.
+     *
+     * Asked for with view=compact (no opening hours, contact or compartment
+     * counts: 2.2 MB instead of 6.4 MB for Sameday); a backend that predates
+     * it ignores the parameter and sends the full list.
+     *
      * @param string $courier "sameday" or "dpd"
      * @return array|false
      */
     public function get_pudo_points_by_courier($courier) {
-        return $this->api_request('GET', '/pudo-points/by-courier?' . http_build_query(array('courier' => (string) $courier)));
+        $endpoint = '/pudo-points/by-courier?' . http_build_query(array('courier' => (string) $courier, 'view' => 'compact'));
+        // A full list (a backend without view=compact) decodes to about 70 MB
+        // (Sameday: some 7,500 lockers),
+        // more than a 64M host allows: raise it for this request, as WordPress
+        // does for its own heavy ones (to WP_MAX_MEMORY_LIMIT, 256M by default).
+        if (function_exists('wp_raise_memory_limit')) {
+            wp_raise_memory_limit('livraria_lockers');
+        }
+        $response = $this->api_request('GET', $endpoint);
+        if ($response !== false || !$this->base_url_allowed()) {
+            return $response;
+        }
+        // 401: the session is over; 0: no token to send (or no answer, asked once more)
+        $status = $this->last_error_status();
+        if ($status !== 401 && $status !== 0) {
+            return $response;
+        }
+        return $this->raw_api_request('GET', $endpoint);
     }
 
     /**

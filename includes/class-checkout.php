@@ -14,7 +14,11 @@
  * woocommerce_store_api_checkout_update_order_from_request refuses the order
  * on the gate and writes the pick.
  *
- * Shipping methods stay the merchant's: this class creates none.
+ * Shipping methods stay the merchant's, plus the plugin's own "Livrare la
+ * locker" (Livraria_Locker_Shipping_Method): on that one the picker is a
+ * modal with each courier's price (livraria_locker_rates) and every pick is
+ * kept in the WC session (livraria_locker_select on the classic checkout,
+ * the Store API update callback on the blocks one) so the rate follows it.
  */
 
 if (!defined('ABSPATH')) {
@@ -36,6 +40,92 @@ class Livraria_Checkout {
         add_action('wp_enqueue_scripts', array($this, 'enqueue_classic'));
         add_action('woocommerce_blocks_loaded', array($this, 'register_blocks'));
         add_action('woocommerce_store_api_checkout_update_order_from_request', array($this, 'save_blocks'), 10, 2);
+
+        // "Livrare la locker"
+        add_action('woocommerce_shipping_init', array(__CLASS__, 'load_shipping_method'));
+        add_filter('woocommerce_shipping_methods', array(__CLASS__, 'add_shipping_method'));
+        add_filter('woocommerce_cart_shipping_packages', array('Livraria_Locker_Pricing', 'tag_packages'));
+        add_action('wp_ajax_livraria_locker_rates', array($this, 'ajax_locker_rates'));
+        add_action('wp_ajax_nopriv_livraria_locker_rates', array($this, 'ajax_locker_rates'));
+        add_action('wp_ajax_livraria_locker_select', array($this, 'ajax_locker_select'));
+        add_action('wp_ajax_nopriv_livraria_locker_select', array($this, 'ajax_locker_select'));
+    }
+
+    // -------------------------------------------------------------------------
+    // "Livrare la locker"
+    // -------------------------------------------------------------------------
+
+    public static function load_shipping_method() {
+        if (!class_exists('Livraria_Locker_Shipping_Method') && class_exists('WC_Shipping_Method')) {
+            require_once dirname(__FILE__) . '/class-locker-shipping-method.php';
+        }
+    }
+
+    /**
+     * @param array $methods
+     * @return array
+     */
+    public static function add_shipping_method($methods) {
+        $methods[Livraria_Locker_Pricing::METHOD_ID] = 'Livraria_Locker_Shipping_Method';
+        return $methods;
+    }
+
+    /**
+     * The modal's prices: what each courier's locker costs this cart in a
+     * county and city, on the locker rate the buyer chose
+     *
+     * @param Livraria_API_Client $api_client
+     * @param string $rate Chosen rate id, "livraria_locker:<instance>"
+     * @param string $county
+     * @param string $city
+     * @return array prices: slug => {amount, label}; null when the rate is not a locker rate
+     */
+    public static function locker_prices($api_client, $rate, $county, $city) {
+        $instance = Livraria_Locker_Pricing::instance_of($rate);
+        self::load_shipping_method();
+        if ($instance <= 0 || !class_exists('Livraria_Locker_Shipping_Method')) {
+            return array('prices' => null);
+        }
+        $settings = (new Livraria_Locker_Shipping_Method($instance))->pricing_settings();
+        if (function_exists('wc_load_cart') && function_exists('WC') && WC() && empty(WC()->cart)) {
+            wc_load_cart();
+        }
+        $cart = function_exists('WC') && WC() && !empty(WC()->cart) ? WC()->cart : null;
+        $live = null;
+        if ($settings['price_mode'] === 'live') {
+            $items = Livraria_Locker_Pricing::items_of($cart ? $cart->get_cart() : array());
+            $live = Livraria_Locker_Pricing::live_for_cart($api_client, $items, array('county' => $county, 'city' => $city));
+        }
+        $subtotal = $cart ? (float) $cart->get_subtotal() : 0.0;
+        $prices = array();
+        foreach (Livraria_Locker_Pricing::buyer_prices($settings, Livraria_Lockers::checkout_couriers($api_client), $subtotal, $live) as $slug => $amount) {
+            $prices[$slug] = array('amount' => $amount, 'label' => Livraria_Locker_Pricing::format($amount));
+        }
+        return array('prices' => $prices);
+    }
+
+    /**
+     * AJAX (checkout, nonce livraria_checkout): locker_prices() for GET rate, county, city
+     */
+    public function ajax_locker_rates() {
+        check_ajax_referer('livraria_checkout', 'nonce');
+        $read = function($key) {
+            return isset($_GET[$key]) && is_scalar($_GET[$key]) ? sanitize_text_field(wp_unslash((string) $_GET[$key])) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- checked above
+        };
+        wp_send_json_success(self::locker_prices(new Livraria_API_Client(), $read('rate'), $read('county'), $read('city')));
+    }
+
+    /**
+     * AJAX (classic checkout, nonce livraria_checkout): keep the buyer's
+     * locker for the price; the script then refreshes the checkout
+     */
+    public function ajax_locker_select() {
+        check_ajax_referer('livraria_checkout', 'nonce');
+        $input = array();
+        foreach (self::FIELDS as $field) {
+            $input[$field] = isset($_POST[$field]) ? wp_unslash($_POST[$field]) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing -- checked above
+        }
+        wp_send_json_success(array('pick' => Livraria_Locker_Pricing::select(new Livraria_API_Client(), $input)));
     }
 
     // -------------------------------------------------------------------------
@@ -147,6 +237,15 @@ class Livraria_Checkout {
                 'namespace' => self::STORE_NAMESPACE,
                 'schema_callback' => array(__CLASS__, 'store_api_schema'),
                 'schema_type' => ARRAY_A,
+            ));
+        }
+        if (function_exists('woocommerce_store_api_register_update_callback')) {
+            // extensionCartUpdate({ namespace: 'livraria', data: pick }): the rate follows the locker
+            woocommerce_store_api_register_update_callback(array(
+                'namespace' => self::STORE_NAMESPACE,
+                'callback' => function($data) {
+                    Livraria_Locker_Pricing::select(new Livraria_API_Client(), is_array($data) ? $data : array());
+                },
             ));
         }
         if (interface_exists('\Automattic\WooCommerce\Blocks\Integrations\IntegrationInterface')) {

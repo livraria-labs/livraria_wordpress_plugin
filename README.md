@@ -61,13 +61,29 @@ Buyers can have the parcel delivered to a Sameday easybox or a DPD locker.
 
 Under **Settings > Livraria**, "Lockers at checkout":
 
-- **Offer easybox Sameday lockers** and **Offer locker DPD lockers**: both on by default.
+- **Offer easybox Sameday lockers** and **Offer locker DPD lockers**: both on by default. GLS, Cargus and FAN Courier (1.4.0): off by default.
 - **Require locker**: hides home delivery at checkout. It does not decide the gate: a buyer who chose locker delivery without picking a locker cannot place the order either way.
 - **Show the locker choice for these shipping methods**: one checkbox per shipping method of your shop (zone and method title, e.g. `free_shipping:1`). The locker choice appears at checkout only while the buyer's chosen shipping rate is one ticked here. **None ticked = no locker choice at checkout**, and nothing is loaded on the checkout.
 
 ### Your step
 
-The plugin creates no shipping method. Create a shipping method for locker delivery in **WooCommerce > Settings > Shipping** (for example a flat rate named "Livrare la locker") and tick it in the list above.
+Two ways to charge for locker delivery:
+
+- **Livraria locker delivery** (1.4.0, recommended): add it to a shipping zone in **WooCommerce > Settings > Shipping**. It needs no ticking in the list above. See below.
+- Your own shipping method (for example a flat rate named "Livrare la locker"), ticked in the list above. It costs what that method costs, whichever locker is picked.
+
+### Livraria locker delivery (1.4.0)
+
+The buyer chooses "Livrare la locker" among the shipping options and opens the locker list in a dialog: the county, then the lockers of every courier the shop offers, each courier's price on its chip and next to each locker. Couriers with no price for the cart are left out. After the pick the rate is named after the locker and costs that locker's price; before it, the rate shows the lowest price. The order is refused if its locker is not the one the price was worked out for (the buyer reviews the price and places the order again).
+
+Settings of the method:
+
+- **Price**: the same price for every courier, a price per courier (blank: the common price), or your Livraria price for the chosen locker (live). The live price is your own account's price for that courier's locker, asked from the shop's server and cached for 10 minutes.
+- **Markup on the live price**: none, a fixed amount or a percent; **Rounding**: none, up to a whole leu, or up to .99.
+- **When Livraria cannot price**: charge the common price, or hide locker delivery.
+- **Free above (RON)**: a cart subtotal from which lockers are free.
+
+Which couriers show is the intersection of the couriers you offer (Settings > Livraria) and the couriers Livraria runs right now. GLS, Cargus and FAN Courier start off; turn one on once Livraria has opened its lockers (a courier whose lockers are off at Livraria has an empty list).
 
 ### What the buyer sees
 

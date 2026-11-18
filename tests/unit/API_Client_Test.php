@@ -135,6 +135,51 @@ class API_Client_Test extends Livraria_TestCase {
     }
     
     /**
+     * A shop with no session still gets the lockers: the route is public, so
+     * the checkout picker is asked anonymously instead of going blank.
+     */
+    public function test_pudo_points_load_anonymously_without_a_session() {
+        $sent_auth = null;
+        $mock_response = $this->create_mock_response(200, array(array('id' => '1'), array('id' => '2')));
+
+        add_filter('pre_http_request', function($preempt, $args, $url) use ($mock_response, &$sent_auth) {
+            if (strpos($url, '/pudo-points/by-courier') !== false) {
+                $sent_auth = isset($args['headers']['Authorization']);
+                return $mock_response;
+            }
+            return $preempt;
+        }, 10, 3);
+
+        $lockers = $this->api_client->get_pudo_points_by_courier('dpd');
+
+        $this->assertIsArray($lockers);
+        $this->assertCount(2, $lockers);
+        $this->assertFalse($sent_auth);
+    }
+
+    /**
+     * The list is fetched with the memory limit raised: a full courier list
+     * does not decode within 64M.
+     */
+    public function test_pudo_points_fetch_raises_the_memory_limit() {
+        $GLOBALS['livraria_test_raised_memory'] = array();
+        add_filter('pre_http_request', function($preempt, $args, $url) {
+            return strpos($url, '/pudo-points/by-courier') !== false ? $this->create_mock_response(200, array()) : $preempt;
+        }, 10, 3);
+
+        $asked = null;
+        add_filter('pre_http_request', function($preempt, $args, $url) use (&$asked) {
+            $asked = $asked ?: $url;
+            return $preempt;
+        }, 5, 3);
+
+        $this->api_client->get_pudo_points_by_courier('sameday');
+
+        $this->assertSame(array('livraria_lockers'), $GLOBALS['livraria_test_raised_memory']);
+        $this->assertStringContainsString('/pudo-points/by-courier?courier=sameday&view=compact', $asked);
+    }
+
+    /**
      * Test get_sender_profile
      */
     public function test_get_sender_profile() {

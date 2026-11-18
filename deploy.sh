@@ -149,6 +149,8 @@ When an admin creates or manages a shipment from the WooCommerce order screen, t
 
 When the checkout offers locker delivery, the shop's own server fetches the Sameday and DPD locker lists from the Livraria API (cached for 15 minutes); the buyer's browser talks only to the shop. No buyer data is sent to fetch the list.
 
+With the "Livraria locker delivery" method set to the live Livraria price, the shop's server asks Livraria the price of the buyer's locker: it sends the sender address of the shop, the county, city and postcode of the locker (or of the buyer's shipping address before a locker is picked) and the weight and dimensions of the parcel. No name, email or phone of the buyer is sent.
+
 Every request to the Livraria API also carries the plugin version and the WordPress, WooCommerce and PHP versions of this site, so that Livraria support can tell which plugin version a shop runs. No other site data is sent.
 
 Service provider: Livraria Hub S.R.L.
@@ -156,6 +158,12 @@ Service provider: Livraria Hub S.R.L.
 - Privacy Policy: https://www.livraria.ro/en/privacy-policy
 
 == Changelog ==
+
+= 1.4.0 =
+* New shipping method "Livraria locker delivery": the buyer picks a locker of any courier you offer from one list in a dialog, each with its price; the rate costs what the chosen locker costs
+* Prices: the same for every courier, one per courier, or your live Livraria price for the chosen locker with an optional markup and rounding; free above a cart subtotal
+* GLS, Cargus and FAN Courier lockers can be offered (off until you turn them on)
+* The checkout offers only couriers Livraria runs right now
 
 = 1.3.0 =
 * Cancel shipment on the order screen: cancels the AWB at Livraria and, if the courier has not collected the parcel yet, at the courier, then clears it from the order so the order can be shipped again

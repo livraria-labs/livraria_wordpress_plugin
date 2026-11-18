@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-18
+
+### Added
+- **"Livraria locker delivery" shipping method** (WooCommerce > Settings > Shipping > a zone > Add shipping method). The buyer picks a locker from one list of every courier the shop offers, in a dialog, with each courier's price on its chip and on each locker; the rate then costs what the chosen locker costs and is named after it ("Livrare la locker: easybox Sameday …"). Before a pick the rate shows the lowest price. Prices, per method instance:
+  - the same price for every courier, or one per courier (blank: the common price);
+  - or the shop's own live Livraria price for the chosen locker (`POST /public/awb/locker-rates`, cached 10 minutes), with an optional fixed or percent markup and rounding up to a whole leu or to .99; when Livraria cannot price, the common price is charged or the method is hidden (your choice). Couriers Livraria cannot price for the cart are not offered;
+  - free above a cart subtotal.
+  The method needs no ticking under "Show the locker choice for these shipping methods". The order is refused when its locker is not the one the price was worked out for.
+- GLS, Cargus and FAN Courier lockers can be offered (Settings > Livraria). They start off; turn one on once Livraria has opened its lockers.
+
+### Changed
+- The checkout offers only couriers Livraria runs right now (`GET /public/couriers`, cached for an hour); the order screen keeps the shop's list.
+- The order screen suggests a locker only of a courier the shop offers.
+
 ## [1.3.0] - 2026-11-07
 
 ### Added
