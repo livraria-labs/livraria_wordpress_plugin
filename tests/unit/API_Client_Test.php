@@ -158,6 +158,21 @@ class API_Client_Test extends Livraria_TestCase {
     }
 
     /**
+     * The list is fetched with the memory limit raised: a full courier list
+     * does not decode within 64M.
+     */
+    public function test_pudo_points_fetch_raises_the_memory_limit() {
+        $GLOBALS['livraria_test_raised_memory'] = array();
+        add_filter('pre_http_request', function($preempt, $args, $url) {
+            return strpos($url, '/pudo-points/by-courier') !== false ? $this->create_mock_response(200, array()) : $preempt;
+        }, 10, 3);
+
+        $this->api_client->get_pudo_points_by_courier('sameday');
+
+        $this->assertSame(array('livraria_lockers'), $GLOBALS['livraria_test_raised_memory']);
+    }
+
+    /**
      * Test get_sender_profile
      */
     public function test_get_sender_profile() {

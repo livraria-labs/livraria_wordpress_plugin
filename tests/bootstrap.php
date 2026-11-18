@@ -104,6 +104,13 @@ if (!function_exists('apply_filters')) {
     }
 }
 
+if (!function_exists('wp_raise_memory_limit')) {
+    function wp_raise_memory_limit($context = 'admin') {
+        $GLOBALS['livraria_test_raised_memory'][] = $context;
+        return false;
+    }
+}
+
 if (!function_exists('add_filter')) {
     function add_filter($tag, $callback, $priority = 10, $accepted_args = 1) {
         global $wp_test_filters;

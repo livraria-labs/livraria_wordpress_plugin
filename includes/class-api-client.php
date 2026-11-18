@@ -903,6 +903,12 @@ class Livraria_API_Client {
      */
     public function get_pudo_points_by_courier($courier) {
         $endpoint = '/pudo-points/by-courier?' . http_build_query(array('courier' => (string) $courier));
+        // The full list decodes to about 70 MB (Sameday: some 7,500 lockers),
+        // more than a 64M host allows: raise it for this request, as WordPress
+        // does for its own heavy ones (to WP_MAX_MEMORY_LIMIT, 256M by default).
+        if (function_exists('wp_raise_memory_limit')) {
+            wp_raise_memory_limit('livraria_lockers');
+        }
         $response = $this->api_request('GET', $endpoint);
         if ($response !== false || !$this->base_url_allowed()) {
             return $response;
